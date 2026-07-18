@@ -1,0 +1,35 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+*.test
+*.out
+coverage.txt
+
+# Node
+node_modules/
+web/dist/
+web/build/
+.next/
+
+# Generated
+atlas-graph.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
