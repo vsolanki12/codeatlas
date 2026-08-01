@@ -9,6 +9,7 @@ type Graph struct {
 	Commit        string         `json:"commit"`
 	Branch        string         `json:"branch"`
 	ScanDuration  string         `json:"scanDuration"`
-	Entities      []Entity       `json:"entities"`
-	Relationship  []Relationship `json:"relationship"`
+	Entities       []Entity          `json:"entities"`
+	Relationship   []Relationship    `json:"relationship"`
+	FileTimestamps map[string]string `json:"fileTimestamps,omitempty"`
 }

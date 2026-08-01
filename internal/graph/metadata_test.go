@@ -20,8 +20,8 @@ func TestBuildGraph_Metadata(t *testing.T) {
 	if g.Schema != "codeatlas" {
 		t.Errorf("Schema = %q, want %q", g.Schema, "codeatlas")
 	}
-	if g.SchemaVersion != "1.2.0" {
-		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.2.0")
+	if g.SchemaVersion != "1.3.0" {
+		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.3.0")
 	}
 	if g.GeneratedAt == "" {
 		t.Error("GeneratedAt should not be empty")

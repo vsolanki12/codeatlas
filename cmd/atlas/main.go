@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/vsolanki12/codeatlas/internal/mcpserver"
@@ -45,14 +46,26 @@ func runScan(args []string) {
 	temporal := fs.Bool("temporal", false, "enrich entities with git history")
 	fs.Parse(args)
 
-	result, err := scanner.Scan(*repo, *output, scanner.ScanOptions{Temporal: *temporal})
+	opts := scanner.ScanOptions{Temporal: *temporal}
+	if absOut, err := filepath.Abs(*output); err == nil {
+		if _, err := os.Stat(absOut); err == nil {
+			opts.PreviousGraph = absOut
+		}
+	}
+
+	result, err := scanner.Scan(*repo, *output, opts)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "scan failed: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Scan complete: %d entities, %d relationships (%s)\n",
-		result.EntityCount, result.RelCount, result.Duration.Round(time.Millisecond))
+	if result.Incremental {
+		fmt.Printf("Incremental scan: %d changed, %d reused, %d deleted (%s)\n",
+			result.ChangedFiles, result.ReusedFiles, result.DeletedFiles, result.Duration.Round(time.Millisecond))
+	} else {
+		fmt.Printf("Full scan (%s)\n", result.Duration.Round(time.Millisecond))
+	}
+	fmt.Printf("%d entities, %d relationships\n", result.EntityCount, result.RelCount)
 
 	if len(result.Warnings) > 0 {
 		fmt.Printf("Warnings (%d):\n", len(result.Warnings))

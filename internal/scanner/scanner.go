@@ -17,15 +17,20 @@ import (
 
 // Result holds the output of a scan — the graph and summary stats.
 type Result struct {
-	Graph       domain.Graph
-	EntityCount int
-	RelCount    int
-	Duration    time.Duration
-	Warnings    []string
+	Graph        domain.Graph
+	EntityCount  int
+	RelCount     int
+	Duration     time.Duration
+	Warnings     []string
+	Incremental  bool
+	ChangedFiles int
+	ReusedFiles  int
+	DeletedFiles int
 }
 
 type ScanOptions struct {
-	Temporal bool
+	Temporal      bool
+	PreviousGraph string
 }
 
 func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error) {
@@ -47,6 +52,33 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	files, err := disc.Scan()
 	if err != nil {
 		return nil, fmt.Errorf("file discovery: %w", err)
+	}
+
+	// Step 1b: Incremental detection — skip unchanged files
+	allFiles := files
+	var incremental bool
+	var changedCount, reusedCount, deletedCount int
+	var oldEntities []domain.Entity
+
+	if opts.PreviousGraph != "" {
+		prev, err := storage.ReadGraph(opts.PreviousGraph)
+		if err == nil && len(prev.FileTimestamps) > 0 {
+			changed, unchanged, deleted := changedFiles(files, prev.FileTimestamps)
+			if len(changed) < len(files) {
+				incremental = true
+				changedCount = len(changed)
+				reusedCount = len(unchanged)
+				deletedCount = len(deleted)
+				files = changed
+
+				unchangedSet := make(map[string]bool, len(unchanged))
+				for _, f := range unchanged {
+					unchangedSet[f.RelativePath] = true
+				}
+				oldEntities = entitiesFromFiles(prev.Entities, unchangedSet)
+				_ = deleted
+			}
+		}
 	}
 
 	// Step 2: Classify files by extension
@@ -119,6 +151,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		entities = append(entities, ents...)
 	}
 
+	// Step 3b: Merge old entities from unchanged files
+	if incremental {
+		entities = append(oldEntities, entities...)
+	}
+
 	// Step 4: Deduplicate entities by ID, merging Files and Imports.
 	seenIdx := make(map[string]int)
 	deduped := entities[:0]
@@ -151,6 +188,13 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	duration := time.Since(start)
 	g := graph.BuildGraph(repoPath, entities, relationships, duration)
 
+	// Step 7b: Store file timestamps for incremental scanning
+	timestamps := make(map[string]string, len(allFiles))
+	for _, f := range allFiles {
+		timestamps[f.RelativePath] = f.ModifiedTime.UTC().Format(time.RFC3339)
+	}
+	g.FileTimestamps = timestamps
+
 	// Step 8: Validate
 	if err := graph.ValidateGraph(g); err != nil {
 		return nil, fmt.Errorf("graph validation: %w", err)
@@ -162,12 +206,56 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	return &Result{
-		Graph:       g,
-		EntityCount: len(entities),
-		RelCount:    len(relationships),
-		Duration:    duration,
-		Warnings:    warnings,
+		Graph:        g,
+		EntityCount:  len(entities),
+		RelCount:     len(relationships),
+		Duration:     duration,
+		Warnings:     warnings,
+		Incremental:  incremental,
+		ChangedFiles: changedCount,
+		ReusedFiles:  reusedCount,
+		DeletedFiles: deletedCount,
 	}, nil
+}
+
+func changedFiles(files []domain.File, oldTimestamps map[string]string) (changed, unchanged []domain.File, deleted []string) {
+	currentPaths := make(map[string]bool, len(files))
+	for _, f := range files {
+		currentPaths[f.RelativePath] = true
+		oldTS, exists := oldTimestamps[f.RelativePath]
+		if !exists {
+			changed = append(changed, f)
+			continue
+		}
+		if f.ModifiedTime.UTC().Format(time.RFC3339) != oldTS {
+			changed = append(changed, f)
+		} else {
+			unchanged = append(unchanged, f)
+		}
+	}
+	for path := range oldTimestamps {
+		if !currentPaths[path] {
+			deleted = append(deleted, path)
+		}
+	}
+	return
+}
+
+func entitiesFromFiles(entities []domain.Entity, unchangedPaths map[string]bool) []domain.Entity {
+	var result []domain.Entity
+	for _, e := range entities {
+		if unchangedPaths[e.Source.File] {
+			result = append(result, e)
+			continue
+		}
+		for p := range unchangedPaths {
+			if strings.HasPrefix(p, e.Source.File+"/") {
+				result = append(result, e)
+				break
+			}
+		}
+	}
+	return result
 }
 
 func appendUnique(existing, additions []string) []string {
