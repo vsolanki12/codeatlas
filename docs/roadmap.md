@@ -170,6 +170,18 @@ Deterministic graph analyses that surface architectural changes — no AI requir
 
 **Depends on:** Incremental Scanning (Phase 9). `commit` and `branch` fields already in schema.
 
+### Intent-Based Tools
+
+Replace tool-picking with intent declaration. AI says what it wants; CodeAtlas handles traversal.
+
+- `atlas_understand` — "how does X work?" → chains search + explain + investigate internally
+- `atlas_review` — "what does this PR break?" → impact + callers + test coverage in one call
+- `atlas_change` — "where should I add X?" → search + where + explain to find extension points
+- `atlas_test` — "is X tested?" → impact test section + hotspots + tested_by edges
+- AI makes 1 call instead of 2-3. CodeAtlas orchestrates the graph traversal.
+
+**Depends on:** Phase 8 (intent descriptions provide usage data on which intents are real). Existing compound tools (investigate, explain, impact) become internal building blocks.
+
 ### Multi-Repository Knowledge
 
 CodeAtlas scans any Go repository.
