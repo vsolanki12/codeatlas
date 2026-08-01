@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/query"
 )
 
@@ -25,43 +26,22 @@ func Run(ctx context.Context, graphPath string) error {
 }
 
 func registerTools(s *mcp.Server, idx *query.Index) {
-	registerLookup(s, idx)
-	registerEntity(s, idx)
-	registerEntities(s, idx)
-	registerRelationships(s, idx)
-	registerContext(s, idx)
 	registerSearch(s, idx)
+	registerEntity(s, idx)
+	registerContext(s, idx)
 	registerWhere(s, idx)
 	registerStats(s, idx)
-	registerHotspots(s, idx)
-	registerCallers(s, idx)
-	registerCommits(s, idx)
+	registerTemporal(s, idx)
 	registerInvestigate(s, idx)
 	registerExplain(s, idx)
 	registerImpact(s, idx)
 }
 
-type lookupInput struct {
-	Kind string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource"`
-	Name string `json:"name,omitempty" jsonschema:"name substring to match (case-insensitive)"`
-}
-
-func registerLookup(s *mcp.Server, idx *query.Index) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_lookup",
-		Description: "Find entities in the codebase by kind and/or name. Returns matching entities with file locations.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input lookupInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Lookup(input.Kind, input.Name, 20)
-		text := query.FormatEntityList(results)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
-		}, nil, nil
-	})
-}
 
 type entityInput struct {
-	ID    string `json:"id" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
-	Brief bool   `json:"brief,omitempty" jsonschema:"if true, return only ID, file, line, description (saves tokens)"`
+	ID    string   `json:"id,omitempty" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
+	IDs   []string `json:"ids,omitempty" jsonschema:"list of entity IDs to fetch"`
+	Brief bool     `json:"brief,omitempty" jsonschema:"if true, return only ID, file, line, description (saves tokens)"`
 }
 
 func registerEntity(s *mcp.Server, idx *query.Index) {
@@ -69,6 +49,21 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 		Name:        "atlas_entity",
 		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, and calls. Use brief=true for compact output (ID, file, line only).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entityInput) (*mcp.CallToolResult, any, error) {
+		if len(input.IDs) > 0 {
+			var lines []string
+			for _, id := range input.IDs {
+				if e := idx.GetEntity(id); e != nil {
+					lines = append(lines, query.FormatEntity(e))
+				}
+			}
+			text := query.FormatEntityList(nil)
+			if len(lines) > 0 {
+				text = joinLines(lines)
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			}, nil, nil
+		}
 		e := idx.GetEntity(input.ID)
 		if e == nil {
 			return &mcp.CallToolResult{
@@ -91,50 +86,6 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 	})
 }
 
-type entitiesInput struct {
-	IDs []string `json:"ids" jsonschema:"list of entity IDs to fetch"`
-}
-
-func registerEntities(s *mcp.Server, idx *query.Index) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_entities",
-		Description: "Get brief details for multiple CodeAtlas entities by ID list. Returns ID, file, line for each. Use for batch lookups instead of multiple atlas_entity calls.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input entitiesInput) (*mcp.CallToolResult, any, error) {
-		var lines []string
-		for _, id := range input.IDs {
-			e := idx.GetEntity(id)
-			if e != nil {
-				lines = append(lines, query.FormatEntity(e))
-			}
-		}
-		text := query.FormatEntityList(nil)
-		if len(lines) > 0 {
-			text = joinLines(lines)
-		}
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
-		}, nil, nil
-	})
-}
-
-type relationshipsInput struct {
-	EntityID  string `json:"entity_id" jsonschema:"entity ID to get relationships for"`
-	Direction string `json:"direction,omitempty" jsonschema:"filter: from (outgoing), to (incoming), or both (default)"`
-	Type      string `json:"type,omitempty" jsonschema:"filter by relationship type: reconciles, calls, tested_by, creates"`
-}
-
-func registerRelationships(s *mcp.Server, idx *query.Index) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_relationships",
-		Description: "Get relationships for a CodeAtlas entity. Shows connections like reconciles, calls, tested_by, creates.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input relationshipsInput) (*mcp.CallToolResult, any, error) {
-		rels := idx.GetRelationships(input.EntityID, input.Direction, input.Type)
-		text := query.FormatRelationshipList(rels)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
-		}, nil, nil
-	})
-}
 
 type contextInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to center the subgraph on"`
@@ -159,15 +110,21 @@ func registerContext(s *mcp.Server, idx *query.Index) {
 }
 
 type searchInput struct {
-	Query string `json:"query" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
+	Query string `json:"query,omitempty" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
+	Kind  string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource"`
 }
 
 func registerSearch(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
-		Description: "Search all entities by text. Matches across name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match).",
+		Description: "Find entities in the codebase by kind and/or name. Returns matching entities with file locations.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Search(input.Query, 20)
+		var results []*domain.Entity
+		if input.Kind != "" {
+			results = idx.Lookup(input.Kind, input.Query, 20)
+		} else {
+			results = idx.Search(input.Query, 20)
+		}
 		text := query.FormatEntityList(results)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},
@@ -198,17 +155,20 @@ func registerWhere(s *mcp.Server, idx *query.Index) {
 	})
 }
 
-type hotspotsInput struct {
-	Kind  string `json:"kind,omitempty" jsonschema:"entity kind filter: controller, function, package, etc."`
-	Stale bool   `json:"stale,omitempty" jsonschema:"if true, sort by oldest modification instead of most changes"`
+type temporalInput struct {
+	Kind   string `json:"kind,omitempty" jsonschema:"entity kind filter: controller, function, package, etc."`
+	Name   string `json:"name,omitempty" jsonschema:"function/entity name substring to filter"`
+	Since  string `json:"since,omitempty" jsonschema:"ISO date cutoff, e.g. 2026-05-01"`
+	Author string `json:"author,omitempty" jsonschema:"author email/name substring"`
+	Stale  bool   `json:"stale,omitempty" jsonschema:"if true, sort by oldest modification instead of most changes"`
 }
 
-func registerHotspots(s *mcp.Server, idx *query.Index) {
+func registerTemporal(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_hotspots",
-		Description: "Find most-changed or stalest entities by git history. Requires --temporal scan.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input hotspotsInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Hotspots(input.Kind, input.Stale, 20)
+		Name:        "atlas_temporal",
+		Description: "Search entities by git history: who changed what and when. Requires --temporal scan.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input temporalInput) (*mcp.CallToolResult, any, error) {
+		results := idx.Temporal(input.Kind, input.Name, input.Since, input.Author, input.Stale, 20)
 		if len(results) == 0 {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "No temporal data. Re-scan with --temporal flag."}},
@@ -219,7 +179,7 @@ func registerHotspots(s *mcp.Server, idx *query.Index) {
 			lines = append(lines, fmt.Sprintf("%s | %s:%d | changes=%d last=%s by=%s",
 				e.ID, e.Source.File, e.Source.Line, e.ChangeCount, e.LastModified, e.LastAuthor))
 		}
-		text := fmt.Sprintf("%d hotspots:\n%s\n", len(results), joinLines(lines))
+		text := joinLines(lines)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
@@ -248,51 +208,6 @@ func registerStats(s *mcp.Server, idx *query.Index) {
 	})
 }
 
-type callersInput struct {
-	EntityID string `json:"entity_id" jsonschema:"entity ID to find callers of"`
-}
-
-func registerCallers(s *mcp.Server, idx *query.Index) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_callers",
-		Description: "Find all functions/methods that call the function at a position. Returns callers with file locations.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input callersInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Callers(input.EntityID)
-		text := query.FormatEntityList(results)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
-		}, nil, nil
-	})
-}
-
-type commitsInput struct {
-	Name   string `json:"name,omitempty" jsonschema:"function/entity name substring to filter"`
-	Since  string `json:"since,omitempty" jsonschema:"ISO date cutoff, e.g. 2026-05-01"`
-	Author string `json:"author,omitempty" jsonschema:"author email/name substring"`
-}
-
-func registerCommits(s *mcp.Server, idx *query.Index) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        "atlas_commits",
-		Description: "Search entities by git history: who changed what and when. Requires --temporal scan.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input commitsInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Commits(input.Name, input.Since, input.Author, 20)
-		if len(results) == 0 {
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "No matching entities with temporal data.\n"}},
-			}, nil, nil
-		}
-		var lines []string
-		for _, e := range results {
-			lines = append(lines, fmt.Sprintf("%s | %s:%d | changes=%d last=%s by=%s",
-				e.ID, e.Source.File, e.Source.Line, e.ChangeCount, e.LastModified, e.LastAuthor))
-		}
-		text := joinLines(lines)
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
-		}, nil, nil
-	})
-}
 
 type investigateInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to investigate"`

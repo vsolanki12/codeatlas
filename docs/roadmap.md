@@ -1,6 +1,8 @@
 # Roadmap
 
-CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks the next. A phase is done when its success metric passes.
+CodeAtlas is a **deterministic reasoning engine for software architecture**. It derives higher-level engineering knowledge from code — without AI — so that AI assistants become presentation layers, not reasoning layers.
+
+Development progresses in phases. Each builds on the previous.
 
 ---
 
@@ -51,7 +53,7 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 - `internal/temporal` — `Enrich()` runs `git log` + `git rev-list` per unique file
 - Fields: LastAuthor, LastModified, ChangeCount per entity
 - File-level cache avoids redundant git calls
-- `atlas_hotspots` MCP tool — most-changed or stalest entities
+- `atlas_temporal` MCP tool — most-changed or stalest entities
 
 **Result:** 10,567 entities with temporal data. Top hotspot: `package:hostedcontrolplane` (2,129 commits).
 
@@ -76,10 +78,10 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 
 - AND search: space-separated terms, all must match
 - `atlas_entity` brief mode (~90% token reduction)
-- `atlas_entities` batch fetch (N calls → 1)
+- `atlas_entity` batch fetch via `ids` param (N calls → 1)
 - `atlas_where` detail mode (N entity lookups → 1)
 
-**Result:** 10 MCP tools. ~8-10 calls for bug investigations (was 22).
+**Result:** ~8-10 calls for bug investigations (was 22).
 
 ---
 
@@ -88,11 +90,11 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 **Delivered:** Relevance scoring, reverse call graph, selector extraction, temporal search.
 
 - Relevance-ranked search: Name=100, ID=90, Description=70, Package=60, Import=40, Literal=30, Property=20
-- `atlas_callers` — reverse call graph lookup
+- Reverse call graph (now in `atlas_investigate`)
 - Selector/constant extraction for Go AST
-- `atlas_commits` — temporal search by name/since/author
+- Temporal search by name/since/author (now `atlas_temporal`)
 
-**Result:** 12 MCP tools. ~6-7 calls for bug investigations.
+**Result:** ~6-7 calls for bug investigations.
 
 ---
 
@@ -104,7 +106,7 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 - `Explain` — DFS tree following reconciles → creates → calls → tested_by chain
 - Caps: 100 nodes, depth 3, cycle-safe via visited set
 
-**Result:** 14 MCP tools. 1-2 calls for entity investigation (was 4-5).
+**Result:** 1-2 calls for entity investigation (was 4-5).
 
 ---
 
@@ -116,7 +118,7 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 - Collects: controllers, tests, resources, files, owners, recent changes
 - One-call PR review preparation
 
-**Result:** 15 MCP tools.
+**Result:** One-call PR review preparation.
 
 ---
 
@@ -148,52 +150,54 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 
 ---
 
+### Phase 10: Tool Consolidation
+
+**Delivered:** 14 MCP tools → 9. Reduced per-turn schema cost by ~900 tokens.
+
+- `atlas_lookup` merged into `atlas_search` (added `kind` param)
+- `atlas_entities` merged into `atlas_entity` (added `ids` array param)
+- `atlas_relationships` removed (subsumed by `atlas_investigate`)
+- `atlas_callers` removed (subsumed by `atlas_investigate`)
+- `atlas_hotspots` + `atlas_commits` merged into `atlas_temporal`
+
+**Result:** 9 MCP tools. ~1,200 schema tokens per turn (was ~2,100).
+
+---
+
+## Vision: Deterministic Reasoning Engine
+
+CodeAtlas is not a graph queried by AI. It is a **deterministic reasoning engine for software architecture**.
+
+A graph stores facts. A reasoning engine derives higher-level, reusable engineering knowledge from those facts — without inventing anything. Claude (or any AI assistant) becomes the presentation layer, turning deterministic results into natural language.
+
+### Evolution
+
+**Stage 1** (done): Graph → MCP → Claude. ~70-80% token reduction vs grep+read.
+
+**Stage 2**: Move orchestration into Atlas. One call replaces search → investigate → explain → impact chain. Atlas traverses internally, returns one structured object. Claude receives the answer, not raw graph data.
+
+**Stage 3**: Pre-computed views at scan time. Entity views, lifecycle views, subsystem views, impact views — generated during `atlas scan`, not traversed during inference. Query becomes pure lookup. No graph traversal during AI inference.
+
+**Stage 4**: Question → answer storage. During scan, discover patterns (e.g., "NodePool lifecycle") and derive deterministic answers. At query time, look up the pre-computed answer. Claude only rewrites into English. Target: ~95% reduction in architecture-related reasoning tokens.
+
+---
+
 ## Future
 
-Capabilities not yet scheduled. Captured so they're not lost.
-
-### Phase 10: Architecture Intelligence
+### Architecture Intelligence
 
 Deterministic graph analyses that surface architectural changes — no AI required.
 
-- Version intelligence: `atlas diff old.json new.json` — compare graphs across branches/releases
-- PR-level architecture diff — what relationships changed in this PR?
-- Dependency drift detection — new imports, removed calls between versions
-- Orphan detection — entities with no incoming relationships
+- `atlas diff old.json new.json` — compare graphs across branches/releases
 - Dead code identification — functions with no callers and no tests
 - Missing test coverage — high-change entities without tested_by edges
-- Architecture regression — broken relationships between releases
+- Orphan detection — entities with no incoming relationships
 
-**Depends on:** Incremental Scanning (Phase 9). `commit` and `branch` fields already in schema.
-
-### Intent-Based Tools
-
-Replace tool-picking with intent declaration. AI says what it wants; CodeAtlas handles traversal.
-
-- `atlas_understand` — "how does X work?" → chains search + explain + investigate internally
-- `atlas_review` — "what does this PR break?" → impact + callers + test coverage in one call
-- `atlas_change` — "where should I add X?" → search + where + explain to find extension points
-- `atlas_test` — "is X tested?" → impact test section + hotspots + tested_by edges
-- AI makes 1 call instead of 2-3. CodeAtlas orchestrates the graph traversal.
-
-**Depends on:** Phase 8 (intent descriptions provide usage data on which intents are real). Existing compound tools (investigate, explain, impact) become internal building blocks.
+**Depends on:** Incremental Scanning (done). Aligns with Stage 2.
 
 ### Multi-Repository Knowledge
 
-CodeAtlas scans any Go repository.
-
-- Any large Go project with controllers, CRDs, and complex call graphs
 - Cross-repo relationship tracking (e.g., HyperShift → cluster-api → machine-api)
 - Federated graph queries across multiple repositories
 
 **Depends on:** Origin classifier (done). Import path tracking (done).
-
-### AI Consumer Ecosystem
-
-Every AI assistant understands codebases by querying CodeAtlas instead of reading thousands of files.
-
-- Claude Code (current)
-- VS Code / Cursor / Continue.dev / Copilot Chat (any MCP client)
-- CodeAtlas API for non-MCP consumers
-
-**Depends on:** MCP server (done). Intent guidance (Phase 8).

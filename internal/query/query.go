@@ -312,6 +312,54 @@ func (idx *Index) Hotspots(kind string, stale bool, limit int) []*domain.Entity 
 	return results
 }
 
+func (idx *Index) Temporal(kind string, name string, since string, author string, stale bool, limit int) []*domain.Entity {
+	nameLower := strings.ToLower(name)
+	authorLower := strings.ToLower(author)
+	var results []*domain.Entity
+
+	for i := range idx.graph.Entities {
+		e := &idx.graph.Entities[i]
+		if e.ChangeCount == 0 && e.LastModified == "" {
+			continue
+		}
+		if kind != "" {
+			k, ok := ParseKind(kind)
+			if !ok || e.Kind != k {
+				continue
+			}
+		}
+		if name != "" && !strings.Contains(strings.ToLower(e.Name), nameLower) {
+			continue
+		}
+		if since != "" && e.LastModified < since {
+			continue
+		}
+		if author != "" && !strings.Contains(strings.ToLower(e.LastAuthor), authorLower) {
+			continue
+		}
+		results = append(results, e)
+	}
+
+	if stale {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].LastModified < results[j].LastModified
+		})
+	} else if since != "" || author != "" {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].LastModified > results[j].LastModified
+		})
+	} else {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].ChangeCount > results[j].ChangeCount
+		})
+	}
+
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	return results
+}
+
 func (idx *Index) Callers(entityID string) []*domain.Entity {
 	var results []*domain.Entity
 	for _, r := range idx.toEntity[entityID] {
