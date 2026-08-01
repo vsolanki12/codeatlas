@@ -133,20 +133,24 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 
 ---
 
+### Phase 9: Incremental Scanning
+
+**Delivered:** Skip unchanged files during re-scans using stored timestamps.
+
+- `FileTimestamps` field in graph (schema 1.3.0) — stores per-file RFC3339 timestamps
+- `changedFiles()` compares filesystem mtime against stored values
+- `entitiesFromFiles()` extracts entities from previous graph for unchanged files
+- CLI auto-detects previous graph at output path
+- Relationships always rebuilt globally (pure function, ~50ms)
+- Handles directory-based Source.File (package entities)
+
+**Result:** HyperShift re-scan: 1.5s → 400ms (3 files changed out of 4,896). Schema 1.3.0.
+
+---
+
 ## Future
 
 Capabilities not yet scheduled. Captured so they're not lost.
-
-### Phase 9: Incremental Scanning
-
-Keep the graph up to date without full re-scans.
-
-- `atlas watch` — filesystem monitoring, re-scan changed files only
-- Graph patching — update entities/relationships in-place instead of rebuilding
-- Partial re-scan — scope to specific packages or directories
-- Live MCP refresh — consumers see updated graph without server restart
-
-**Depends on:** Discovery metadata (ModifiedTime already captured). Scanner pipeline modularization.
 
 ### Phase 10: Architecture Intelligence
 
