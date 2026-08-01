@@ -105,6 +105,14 @@ atlas scan -repo /path/to/your/project -output atlas-graph.json -temporal
 
 # Start the MCP server
 atlas serve --graph atlas-graph.json
+
+# CLI queries (same capabilities as MCP tools)
+atlas stats --graph atlas-graph.json
+atlas search --graph atlas-graph.json reconcileEtcd
+atlas explain --graph atlas-graph.json controller:hostedcluster.HostedClusterReconciler
+atlas impact --graph atlas-graph.json reconcileEtcd
+atlas ask --graph atlas-graph.json NodePool --intent understand
+atlas view --graph atlas-graph.json HostedClusterReconciler
 ```
 
 ### Connect to Claude Code
@@ -157,6 +165,29 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 | `atlas_context` | BFS subgraph around an entity |
 | `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities |
 | `atlas_stats` | Graph statistics |
+
+---
+
+## CLI Commands
+
+The CLI mirrors MCP tools — same queries, same output, no server needed.
+
+| Command | What it does |
+|---------|-------------|
+| `atlas scan` | Parse a repository and generate the graph |
+| `atlas search <query>` | Text search across all entities (with optional `--kind` filter) |
+| `atlas explain <entity>` | Reconciliation chain: reconciles, creates, calls, tested_by |
+| `atlas impact <entity>` | Blast radius: upstream callers, controllers, tests, files, owners |
+| `atlas investigate <entity>` | Full entity details, relationships, callers, tests, siblings |
+| `atlas ask <entity>` | View + deep analysis (with optional `--intent understand\|impact\|debug`) |
+| `atlas view <entity>` | Pre-computed engineering view for a controller or CRD |
+| `atlas context <entity-id>` | BFS subgraph around an entity |
+| `atlas where <path>` | Find entities by file path |
+| `atlas stats` | Graph statistics |
+| `atlas serve` | Start the MCP server |
+| `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.) |
+
+All commands accept `--graph path` (defaults to `atlas.json`). Flags must come before positional arguments.
 
 ---
 

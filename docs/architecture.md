@@ -54,7 +54,8 @@ internal/domain               The vocabulary of CodeAtlas
     │
     ▲ (every package imports domain)
     │
-cmd/atlas                     CLI entry point (scan, query, serve, stats, where, context)
+cmd/atlas                     CLI entry point (scan, search, explain, impact, investigate,
+                                ask, view, context, where, stats, serve, query)
     │
     ├──► internal/scanner      Orchestrator — coordinates the full scan pipeline
     │       │
@@ -84,7 +85,7 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
 | Package | Responsibility | Depends On |
 |---|---|---|
 | `internal/domain` | Defines the vocabulary: Entity, Relationship, Evidence, Graph, Source | Nothing |
-| `cmd/atlas` | CLI: scan, query, serve, stats, where, context subcommands | `scanner`, `query`, `mcpserver` |
+| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query | `domain`, `scanner`, `query`, `mcpserver` |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `origin`, `temporal` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
 | `internal/parser` | Parses individual files into entities; extracts imports, literals, embeds, properties | `domain` |
@@ -212,7 +213,7 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
                 ▼
 ┌─ 10. Graph Writing ─────────────────────────┐
 │  Serialize to atlas-graph.json                │
-│  Include: schema version (1.3.0), commit,     │
+│  Include: schema version (1.4.0), commit,     │
 │           branch, scan duration, stats        │
 └───────────────┬───────────────────────────────┘
                 ▼
