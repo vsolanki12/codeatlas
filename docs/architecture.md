@@ -34,8 +34,8 @@ Four-layer model:
 | Layer | What | Purpose |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
-| **Retrieval** | 15 MCP tools (primitives + compounds) | Answer questions about the graph |
-| **Guidance** | Tool descriptions with intent hints | Teach consumers which engineering intent a tool serves |
+| **Retrieval** | 9 MCP tools (primitives + compounds) | Answer questions about the graph |
+| **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
 CodeAtlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
@@ -76,7 +76,7 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
     │
     ├──► internal/query        Query engine — Index, search, traversal, compound queries
     │
-    └──► internal/mcpserver    MCP server — 15 tools served via stdio transport
+    └──► internal/mcpserver    MCP server — 9 tools served via stdio transport
 ```
 
 | Package | Responsibility | Depends On |
@@ -90,8 +90,8 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
 | `internal/origin` | Classifies import paths (stdlib, known repos, external) | Nothing |
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
-| `internal/query` | Query engine: Index, Lookup, Search (relevance-scored), Where, Neighbors, Hotspots, Callers, Commits, Investigate, Explain, Impact | `domain`, `storage` |
-| `internal/mcpserver` | MCP server: 15 tools via go-sdk stdio transport | `query` |
+| `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
+| `internal/mcpserver` | MCP server: 9 tools via go-sdk stdio transport | `query` |
 
 Key constraints:
 - **Every package imports `domain`.** It is the shared vocabulary. `docs/data-model.md` is this vocabulary in English. `internal/domain` is the same vocabulary in Go. They match exactly.
@@ -201,14 +201,14 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
                 ▼
 ┌─ 10. Graph Writing ─────────────────────────┐
 │  Serialize to atlas-graph.json                │
-│  Include: schema version (1.2.0), commit,     │
+│  Include: schema version (1.3.0), commit,     │
 │           branch, scan duration, stats        │
 └───────────────┬───────────────────────────────┘
                 ▼
 ┌─ 11. Summary ────────────────────────────────┐
 │  Atlas scan complete.                         │
 │  (entity and relationship counts vary by scan) │
-│  Schema 1.2.0                                 │
+│  Schema 1.3.0                                 │
 └───────────────────────────────────────────────┘
 ```
 
@@ -247,9 +247,11 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 6c | Search quality + call reduction (relevance scoring, callers, commits) | Implemented |
 | 7 | Compound queries (atlas_investigate, atlas_explain) | Implemented |
 | 7b | Blast radius analysis (atlas_impact) | Implemented |
-| 8 | Intent-based tool guidance (enriched MCP descriptions) | Planned |
+| 8 | Intent-based tool guidance (enriched MCP descriptions) | Attempted, reverted |
+| 9 | Incremental scanning (skip unchanged files) | Implemented |
+| 10 | Tool consolidation (14 → 9 tools) | Implemented |
 
-Current state: 15 MCP tools, schema 1.2.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 9 MCP tools, schema 1.3.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 

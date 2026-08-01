@@ -323,7 +323,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "atlas-graph",
-  "schemaVersion": "1.2.0",
+  "schemaVersion": "1.3.0",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "https://github.com/openshift/hypershift",
   "commit": "abc1234def5678",
@@ -332,6 +332,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 
   "entities": [],
   "relationships": [],
+  "fileTimestamps": {},
 
   "stats": {
     "entities": {
@@ -361,6 +362,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `branch` — git branch. Enables comparing `release-4.19` vs `release-4.20`.
 - `entities` — flat array of all entities (all kinds mixed together, distinguished by `kind`).
 - `relationships` — flat array of all relationships.
+- `fileTimestamps` — per-file RFC3339 timestamps, used for incremental scanning (skip unchanged files on re-scan). Optional; omitted on first scan.
 
 ---
 

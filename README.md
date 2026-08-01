@@ -1,6 +1,6 @@
 # CodeAtlas
 
-**Turn any Go codebase into a queryable architecture graph.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of every entity and relationship — then serves it to AI assistants through 15 [MCP](https://modelcontextprotocol.io/) tools.
+**A deterministic reasoning engine for software architecture.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of every entity and relationship — then serves it to AI assistants through 9 [MCP](https://modelcontextprotocol.io/) tools.
 
 Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Same answers, fraction of the cost, backed by evidence from the code itself.
 
@@ -122,7 +122,7 @@ Add to `~/.mcp.json`:
 }
 ```
 
-Restart Claude Code. All 15 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
+Restart Claude Code. All 9 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
 
 ---
 
@@ -134,30 +134,24 @@ Restart Claude Code. All 15 tools are now available. Works with any MCP-compatib
 | "What breaks if I change X?" | `atlas_impact` | Every upstream controller, test, resource, file, and owner affected |
 | "Tell me everything about X" | `atlas_investigate` | Full entity details, all relationships, callers, tests, siblings — one call |
 | "Where is X defined?" | `atlas_search` | Relevance-ranked matches across names, packages, imports, literals |
-| "What changed the most?" | `atlas_hotspots` | Most-changed or stalest entities by git history |
-| "Who changed X recently?" | `atlas_commits` | Authors, dates, and change counts from git history |
+| "What changed the most?" | `atlas_temporal` | Most-changed, stalest, or recently-modified entities by git history |
 
 ---
 
 ## All MCP Tools
 
-15 tools served via `atlas serve`:
+9 tools served via `atlas serve`:
 
 | Tool | Purpose |
 |------|---------|
-| `atlas_investigate` | Everything about one entity in 1 call (replaces 4-5 primitives) |
+| `atlas_investigate` | Everything about one entity in 1 call: details, relationships, callers, tests, siblings |
 | `atlas_explain` | Architectural narrative: reconciles → creates → calls → tested_by tree |
 | `atlas_impact` | Blast radius: upstream callers, controllers, tests, resources, owners |
-| `atlas_search` | Relevance-ranked text search across all entity fields |
+| `atlas_search` | Find entities by text or kind. Relevance-ranked across all fields |
+| `atlas_entity` | Full entity detail by ID, or batch fetch multiple IDs |
 | `atlas_where` | Find entities by file path |
-| `atlas_lookup` | Find entities by kind and/or name |
-| `atlas_entity` | Full entity detail by exact ID |
-| `atlas_entities` | Batch fetch multiple entities |
-| `atlas_relationships` | Relationships for an entity |
 | `atlas_context` | BFS subgraph around an entity |
-| `atlas_callers` | Reverse call graph |
-| `atlas_hotspots` | Most-changed or stalest entities (requires `-temporal` scan) |
-| `atlas_commits` | Search by name, date, or author in git history |
+| `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities |
 | `atlas_stats` | Graph statistics |
 
 ---
@@ -190,6 +184,6 @@ Restart Claude Code. All 15 tools are now available. Works with any MCP-compatib
 
 ## Status
 
-**Schema:** 1.2.0 · **MCP Tools:** 15 · **Parsers:** Go AST, YAML, Markdown, Test · **In Progress:** Phase 8 (Intent-Based Tool Guidance)
+**Schema:** 1.3.0 · **MCP Tools:** 9 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 10 (Tool Consolidation)
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.
