@@ -60,6 +60,10 @@ func runScan(args []string) {
 	temporal := fs.Bool("temporal", false, "enrich entities with git history")
 	fs.Parse(args)
 
+	if fs.NArg() > 0 {
+		*repo = fs.Arg(0)
+	}
+
 	opts := scanner.ScanOptions{Temporal: *temporal}
 	if absOut, err := filepath.Abs(*output); err == nil {
 		if _, err := os.Stat(absOut); err == nil {
