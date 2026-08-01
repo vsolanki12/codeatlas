@@ -283,3 +283,174 @@ func TestBuild_NoEntities(t *testing.T) {
 		t.Errorf("Expected 0 relationships for nil input, got %d", len(rels))
 	}
 }
+
+func TestBuild_FunctionCalls(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:      "function:helpers.helperA",
+			Name:    "helperA",
+			Kind:    domain.KindFunction,
+			Package: "helpers",
+			Calls:   []string{"helperB", "processItem"},
+			Source:  domain.Source{Parser: "go", File: "helpers.go", Line: 3},
+		},
+		{
+			ID:      "function:helpers.helperB",
+			Name:    "helperB",
+			Kind:    domain.KindFunction,
+			Package: "helpers",
+			Source:  domain.Source{Parser: "go", File: "helpers.go", Line: 8},
+		},
+		{
+			ID:      "function:helpers.processItem",
+			Name:    "processItem",
+			Kind:    domain.KindFunction,
+			Package: "helpers",
+			Source:  domain.Source{Parser: "go", File: "helpers.go", Line: 12},
+		},
+	}
+
+	b := NewRelationshipBuilder("")
+	rels := b.Build(entities)
+
+	callRels := 0
+	for _, r := range rels {
+		if r.Type == domain.RelCalls {
+			callRels++
+		}
+	}
+	if callRels != 2 {
+		t.Errorf("Expected 2 function call relationships, got %d", callRels)
+		for _, r := range rels {
+			t.Logf("  %s", r.ID)
+		}
+	}
+}
+
+func TestBuild_SkipsGenericNames(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:      "function:pkg.doWork",
+			Name:    "doWork",
+			Kind:    domain.KindFunction,
+			Package: "pkg",
+			Calls:   []string{"Error", "String", "helperB"},
+			Source:  domain.Source{Parser: "go", File: "work.go", Line: 1},
+		},
+		{
+			ID:      "function:pkg.Error",
+			Name:    "Error",
+			Kind:    domain.KindFunction,
+			Package: "pkg",
+			Source:  domain.Source{Parser: "go", File: "work.go", Line: 10},
+		},
+		{
+			ID:      "function:pkg.helperB",
+			Name:    "helperB",
+			Kind:    domain.KindFunction,
+			Package: "pkg",
+			Source:  domain.Source{Parser: "go", File: "work.go", Line: 15},
+		},
+	}
+
+	b := NewRelationshipBuilder("")
+	rels := b.Build(entities)
+
+	callRels := 0
+	for _, r := range rels {
+		if r.Type == domain.RelCalls {
+			callRels++
+			if r.To == "function:pkg.Error" {
+				t.Error("Should not create call edge for generic name 'Error'")
+			}
+		}
+	}
+	if callRels != 1 {
+		t.Errorf("Expected 1 call relationship (helperB only), got %d", callRels)
+	}
+}
+
+func TestBuild_Embeds(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:     "package:assets",
+			Name:   "assets",
+			Kind:   domain.KindPackage,
+			Embeds: []string{"*/*.yaml"},
+			Source: domain.Source{Parser: "go", File: "v2/assets", Line: 1},
+		},
+		{
+			ID:   "resource:service.etcd-client",
+			Name: "etcd-client",
+			Kind: domain.KindResource,
+			Source: domain.Source{Parser: "yaml", File: "v2/assets/etcd/service.yaml", Line: 1},
+		},
+		{
+			ID:   "resource:service.etcd-discovery",
+			Name: "etcd-discovery",
+			Kind: domain.KindResource,
+			Source: domain.Source{Parser: "yaml", File: "v2/assets/etcd/discovery-service.yaml", Line: 1},
+		},
+		{
+			ID:   "resource:deployment.other",
+			Name: "other",
+			Kind: domain.KindResource,
+			Source: domain.Source{Parser: "yaml", File: "somewhere-else/deploy.yaml", Line: 1},
+		},
+	}
+
+	b := NewRelationshipBuilder("")
+	rels := b.Build(entities)
+
+	embedRels := 0
+	for _, r := range rels {
+		if r.Type == domain.RelEmbeds {
+			embedRels++
+			if r.From != "package:assets" {
+				t.Errorf("Embed from wrong entity: %s", r.From)
+			}
+		}
+	}
+	if embedRels != 2 {
+		t.Errorf("Expected 2 embeds relationships (etcd-client + etcd-discovery), got %d", embedRels)
+		for _, r := range rels {
+			t.Logf("  %s --%s--> %s", r.From, r.Type, r.To)
+		}
+	}
+}
+
+func TestBuild_Implements(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:         "function:mycomp.myComponent.IsRequestServing",
+			Name:       "IsRequestServing",
+			Kind:       domain.KindFunction,
+			Package:    "mycomp",
+			Implements: []string{"ComponentOptions"},
+			Source:     domain.Source{Parser: "go", File: "component.go", Line: 16},
+		},
+		{
+			ID:      "function:mycomp.ComponentOptions",
+			Name:    "ComponentOptions",
+			Kind:    domain.KindFunction,
+			Package: "mycomp",
+			Source:  domain.Source{Parser: "go", File: "component.go", Line: 3},
+		},
+	}
+
+	b := NewRelationshipBuilder("")
+	rels := b.Build(entities)
+
+	implRels := 0
+	for _, r := range rels {
+		if r.Type == domain.RelImplements {
+			implRels++
+			if r.Evidence.Reason != "var _ assertion declares interface implementation" {
+				t.Errorf("Wrong reason: %q", r.Evidence.Reason)
+			}
+		}
+	}
+	if implRels != 1 {
+		t.Errorf("Expected 1 implements relationship, got %d", implRels)
+	}
+}

@@ -6,3 +6,8 @@ spec:
   group: hypershift.openshift.io
   names:
     kind: HostedCluster
+  versions:
+  - name: v1beta1
+    schema:
+      openAPIV3Schema:
+        description: HostedCluster is the primary resource for a HyperShift-managed cluster.

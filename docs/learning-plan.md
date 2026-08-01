@@ -31,8 +31,8 @@
 | 2. Domain Types + Go Parsing | 6-19 | Jul 17 - Aug 5 | Parser extracts functions, packages, controllers. Classification routes files to parsers. | **Cap 1 (routing) complete at Day 14** |
 | 3. Relationships | 20-24 | Aug 6-12 | Every edge has file + line + snippet evidence | Cap 3 |
 | 4. Atlas Graph | 25-30 | Aug 13-20 | `atlas scan` → deterministic JSON | Cap 4 |
-| 5. Viewer V1 | 31-34 | Aug 21-26 | Open HTML, click HostedCluster, see everything | Cap 5 |
-| Buffer | — | Aug 27-29 | Stuck days, polish, demo prep | — |
+| 5. Viewer V1 | 31-34 | Jul 18 - TBD | Open HTML, click HostedCluster, see everything | Cap 5 |
+| Buffer | — | — | Stuck days, polish, demo prep | — |
 
 **Capability 1 fully complete = Day 14 (Jul 29)** — discovery returns files, validation catches bad paths, Parser interface + classification routes files to correct parser.
 
@@ -70,12 +70,12 @@
 | 26 | Aug 14 (Thu) | JSON storage: Write + Read | Done |
 | 27 | Aug 15 (Fri) | Scanner orchestrator | Done |
 | 28 | Aug 18 (Mon) | CLI: `atlas scan` command | Done |
-| 29 | Aug 19 (Tue) | End-to-end: scan test repo | |
-| 30 | Aug 20 (Wed) | Push to GitHub | |
-| 31 | Aug 21 (Thu) | HTML viewer: load JSON + list entities | |
-| 32 | Aug 22 (Fri) | HTML viewer: entity detail page | |
-| 33 | Aug 25 (Mon) | Scan real HyperShift + fix issues | |
-| 34 | Aug 26 (Tue) | Demo prep + polish | |
+| 29 | Jul 18 (Fri) | End-to-end: scan real HyperShift (11,290 entities, 432 rels, 4.3MB JSON) | Done |
+| 30 | Jul 18 (Fri) | Viewer: topic-centric HTML, relationship flow diagrams, group filters | Done |
+| 31 | Jul 18 (Fri) | Viewer: sub-component discovery, component topics, navigation history | Done |
+| 32 | Jul 18 (Fri) | Scanner: CRD descriptions from YAML `openAPIV3Schema.description` | Done |
+| 33 | Jul 18 (Fri) | Scanner: Go type doc comments from `ast.GenDecl`/`ast.TypeSpec` | Done |
+| 34 | Jul 18 (Fri) | Scanner: Parse Reconcile() body calls + output path fix | Done |
 
 Buffer: Aug 27-29 (Wed-Fri) — 3 days for stuck days or overflow.
 
@@ -683,33 +683,47 @@ Hint level: **Light → Solo**
 - Task: Create `cmd/atlas/main.go`. Use cobra (or just `flag` package) for `atlas scan /path`. Call scanner, print summary.
 - Interview Q: "What is cobra in Go? How do CLI tools typically handle subcommands?"
 
-### Day 29 (Aug 19) — End-to-End Test
-- Task: Scan a small test repository. Verify the output JSON is valid and contains expected entities.
-- Interview Q: "What is an end-to-end test and how does it differ from a unit test?"
+### Day 29 (Jul 18) — DONE
 
-### Day 30 (Aug 20) — Push to GitHub
-- Task: Clean up README, add LICENSE, verify `go build` and `go test ./...` pass. Push.
-- No interview question. This is a ship day.
+**End-to-end: scan real HyperShift.** Pointed `atlas scan` at the full HyperShift repo. Produced 4.3MB JSON with 11,290 entities and 432 relationships.
 
 ---
 
-# MILESTONE 5 — VIEWER (Days 31-34)
+### Day 30 (Jul 18) — DONE
+
+**Viewer: topic-centric HTML.** Built `web/viewer.html` — loads atlas-graph.json, shows CRDs as browsable topics grouped by project (HyperShift, CAPI, Karpenter, etc.), relationship flow diagrams (controller → reconciles → CRD → creates → resources), clickable entity details, document ToC rendering, GitHub source links.
+
+---
+
+### Day 31 (Jul 18) — DONE
+
+**Viewer: sub-components + navigation.** Added v2/ control plane component discovery (etcd, KAS, oauth, etc.) as top-level browsable topics. Implemented navigation history stack for proper Back button behavior. Added fallback controller matching by name and package.
+
+---
+
+# MILESTONE 5 — SCANNER IMPROVEMENTS (Days 32-34)
 
 Hint level: **Solo** — just the task.
 
-### Day 31 (Aug 21) — HTML Viewer: Load JSON + List
-- Task: Create `web/index.html`. Load `atlas-graph.json` via fetch. Render entity list grouped by kind.
+### Day 32 (Jul 18) — DONE
 
-### Day 32 (Aug 22) — HTML Viewer: Detail Page
-- Task: Click an entity → show its details, relationships, evidence with links to source files.
+**Scanner: CRD descriptions from YAML.** Updated `yamlparser.go` to extract `spec.versions[].schema.openAPIV3Schema.description`. Result: 114/116 CRDs now have descriptions (up from 0).
 
-### Day 33 (Aug 25) — Scan Real HyperShift
-- Task: Point `atlas scan` at your HyperShift checkout. Fix parser issues. Generate real graph.
+---
 
-### Day 34 (Aug 26) — Demo Prep + Polish
-- Polish, fix edge cases, prepare for quarterly demo.
+### Day 33 (Jul 18) — DONE
 
-**Buffer: Aug 27-29 (3 working days) for overflow or stuck days.**
+**Scanner: Go type doc comments.** Updated `goparser.go` to extract doc comments from `ast.GenDecl`/`ast.TypeSpec` and attach them to controller entities. Result: 18/47 controllers now have descriptions (those with doc comments on their struct).
+
+---
+
+### Day 34 (Jul 18) — DONE
+
+**Scanner: Reconcile() body calls.** Walk `Reconcile()` function bodies, extract `ast.CallExpr` targets (both `selector.Method()` and bare `Function()` calls), store them in a new `Calls` field on controller entities. Relationship builder emits `calls` edges to matching function entities. Also fixed scanner output path bug (relative paths resolved against repo dir after `os.Chdir`).
+
+Result: 936 relationships (up from 432). New breakdown: 504 calls, 394 tested_by, 20 creates, 18 reconciles. All 47 controllers have calls data.
+
+**The original 34-day learning plan is now complete.** All 68 tests pass across 7 packages.
 
 ---
 

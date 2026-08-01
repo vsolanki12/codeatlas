@@ -20,8 +20,8 @@ func TestBuildGraph_Metadata(t *testing.T) {
 	if g.Schema != "hypershift-atlas" {
 		t.Errorf("Schema = %q, want %q", g.Schema, "hypershift-atlas")
 	}
-	if g.SchemaVersion != "1.0.0" {
-		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.0.0")
+	if g.SchemaVersion != "1.2.0" {
+		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.2.0")
 	}
 	if g.GeneratedAt == "" {
 		t.Error("GeneratedAt should not be empty")

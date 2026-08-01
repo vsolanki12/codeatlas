@@ -1,8 +1,15 @@
 package fake
 
-type FakeReconciler struct{}
+// FakeReconciler reconciles Fake resources.
+type FakeReconciler struct {
+	client Client
+}
 
-func (r *FakeReconciler) Reconcile() {}
+func (r *FakeReconciler) Reconcile() {
+	r.client.Get()
+	CreateOrUpdate()
+	validateConfig()
+}
 
 func (r *FakeReconciler) SetupWithManager(mgr Manager) error {
 	return NewControllerManagedBy(mgr).
@@ -16,6 +23,13 @@ type HostedCluster struct{}
 type Secret struct{}
 
 func NewControllerManagedBy(mgr Manager) *Builder { return &Builder{} }
+
+type Client struct{}
+
+func (c Client) Get() {}
+
+func CreateOrUpdate()  {}
+func validateConfig()  {}
 
 type Builder struct{}
 

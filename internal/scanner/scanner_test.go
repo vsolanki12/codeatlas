@@ -63,7 +63,7 @@ func TestScan_EndToEnd(t *testing.T) {
 	repoDir := setupTestRepo(t)
 	outPath := filepath.Join(t.TempDir(), "atlas.json")
 
-	result, err := Scan(repoDir, outPath)
+	result, err := Scan(repoDir, outPath, ScanOptions{})
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
 	}
@@ -87,8 +87,8 @@ func TestScan_EndToEnd(t *testing.T) {
 	if g.Schema != "hypershift-atlas" {
 		t.Errorf("schema = %q, want %q", g.Schema, "hypershift-atlas")
 	}
-	if g.SchemaVersion != "1.0.0" {
-		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.0.0")
+	if g.SchemaVersion != "1.2.0" {
+		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.2.0")
 	}
 	if len(g.Entities) == 0 {
 		t.Error("graph has no entities")
@@ -96,7 +96,7 @@ func TestScan_EndToEnd(t *testing.T) {
 }
 
 func TestScan_InvalidRepo(t *testing.T) {
-	_, err := Scan("/nonexistent/path", "/tmp/out.json")
+	_, err := Scan("/nonexistent/path", "/tmp/out.json", ScanOptions{})
 	if err == nil {
 		t.Error("expected error for invalid repo path")
 	}
@@ -106,7 +106,7 @@ func TestScan_EmptyRepo(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "out.json")
 
-	result, err := Scan(dir, outPath)
+	result, err := Scan(dir, outPath, ScanOptions{})
 	if err != nil {
 		t.Fatalf("empty repo should not error: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestScan_WarningsOnBadFile(t *testing.T) {
 	}
 
 	outPath := filepath.Join(t.TempDir(), "out.json")
-	result, err := Scan(dir, outPath)
+	result, err := Scan(dir, outPath, ScanOptions{})
 	if err != nil {
 		t.Fatalf("scan should succeed with warnings, got error: %v", err)
 	}

@@ -17,6 +17,7 @@ const (
 	RelEmits        RelationshipType = "emits"
 	RelContains     RelationshipType = "contains"
 	RelPartOf       RelationshipType = "part_of"
+	RelEmbeds       RelationshipType = "embeds"
 )
 
 // How certain Atlas is that a relationship exists.

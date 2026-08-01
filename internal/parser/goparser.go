@@ -1,4 +1,3 @@
-// Package parser extracts domain entities from Go source files using the AST.
 package parser
 
 import (
@@ -14,19 +13,16 @@ import (
 
 var _ Parser = (*GoParser)(nil)
 
-// GoParser extracts entities from Go source files.
 type GoParser struct {
 	fset *token.FileSet
 }
 
-// NewGoParser returns a ready-to-use GoParser.
 func NewGoParser() *GoParser {
 	return &GoParser{
 		fset: token.NewFileSet(),
 	}
 }
 
-// Parse parses a Go source file and returns all discovered entities.
 func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	astFile, err := p.parseFile(file.RelativePath)
 	if err != nil {
@@ -38,7 +34,37 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	var entities []domain.Entity
 	var controllerTypeName string
 	var controllerSource domain.Source
-	var watches []string
+	var controllerWatches []string
+	var controllerCalls []string
+
+	typeComments := make(map[string]string)
+	implPairs := make(map[string][]string) // structName -> []interfaceName
+
+	for _, decl := range astFile.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			switch s := spec.(type) {
+			case *ast.TypeSpec:
+				doc := ""
+				if s.Doc != nil {
+					doc = strings.TrimSpace(s.Doc.Text())
+				} else if genDecl.Doc != nil && len(genDecl.Specs) == 1 {
+					doc = strings.TrimSpace(genDecl.Doc.Text())
+				}
+				if doc != "" {
+					typeComments[s.Name.Name] = doc
+				}
+			case *ast.ValueSpec:
+				if genDecl.Tok != token.VAR {
+					continue
+				}
+				detectImplements(s, implPairs)
+			}
+		}
+	}
 
 	entities = append(entities, domain.Entity{
 		ID:      fmt.Sprintf("package:%s", packageName),
@@ -46,6 +72,8 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		Kind:    domain.KindPackage,
 		Package: packageName,
 		Files:   []string{file.RelativePath},
+		Imports: extractImports(astFile),
+		Embeds:  extractEmbeds(astFile),
 		Source: domain.Source{
 			Parser: "go",
 			File:   dirPath,
@@ -72,12 +100,29 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			id = fmt.Sprintf("function:%s.%s", packageName, fn.Name.Name)
 		}
 
+		var calls []string
+		var envVars []string
+		var literals []string
+		if fn.Body != nil {
+			calls, envVars = extractCallsAndEnvVars(fn.Body)
+			literals = extractLiterals(fn.Body)
+		}
+
+		var implements []string
+		if recv != "" {
+			implements = implPairs[recv]
+		}
+
 		entities = append(entities, domain.Entity{
 			ID:          id,
 			Name:        fn.Name.Name,
 			Kind:        domain.KindFunction,
 			Description: description,
 			Package:     packageName,
+			Calls:       calls,
+			Implements:  implements,
+			EnvVars:     envVars,
+			Literals:    literals,
 			Source: domain.Source{
 				Parser: "go",
 				File:   file.RelativePath,
@@ -92,6 +137,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 				File:   file.RelativePath,
 				Line:   p.fset.Position(fn.Pos()).Line,
 			}
+			controllerCalls = calls
 		}
 
 		if fn.Name.Name == "SetupWithManager" && fn.Body != nil {
@@ -105,15 +151,15 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 					if methodName == "For" || methodName == "Owns" || methodName == "Watches" {
 						if len(callExpr.Args) > 0 {
 							if typeName := extractTypeName(callExpr.Args[0]); typeName != "" {
-								watches = append(watches, typeName)
+								controllerWatches = append(controllerWatches, typeName)
 							}
 						}
 					}
 				}
 				return true
 			})
-			for i, j := 0, len(watches)-1; i < j; i, j = i+1, j-1 {
-				watches[i], watches[j] = watches[j], watches[i]
+			for i, j := 0, len(controllerWatches)-1; i < j; i, j = i+1, j-1 {
+				controllerWatches[i], controllerWatches[j] = controllerWatches[j], controllerWatches[i]
 			}
 		}
 
@@ -122,16 +168,120 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 
 	if controllerTypeName != "" {
 		entities = append(entities, domain.Entity{
-			ID:      fmt.Sprintf("controller:%s.%s", packageName, controllerTypeName),
-			Name:    controllerTypeName,
-			Kind:    domain.KindController,
-			Package: packageName,
-			Source:  controllerSource,
-			Watches: watches,
+			ID:          fmt.Sprintf("controller:%s.%s", packageName, controllerTypeName),
+			Name:        controllerTypeName,
+			Kind:        domain.KindController,
+			Description: typeComments[controllerTypeName],
+			Package:     packageName,
+			Source:      controllerSource,
+			Watches:     controllerWatches,
+			Calls:       controllerCalls,
+			Implements:  implPairs[controllerTypeName],
 		})
 	}
 
 	return entities, nil
+}
+
+func extractCallsAndEnvVars(body *ast.BlockStmt) ([]string, []string) {
+	seen := make(map[string]bool)
+	var calls []string
+	seenEnv := make(map[string]bool)
+	var envVars []string
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		callExpr, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		var name string
+		switch fun := callExpr.Fun.(type) {
+		case *ast.SelectorExpr:
+			if ident, ok := fun.X.(*ast.Ident); ok {
+				// os.Getenv detection
+				if ident.Name == "os" && fun.Sel.Name == "Getenv" && len(callExpr.Args) > 0 {
+					if lit, ok := callExpr.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+						envName := strings.Trim(lit.Value, `"`)
+						if envName != "" && !seenEnv[envName] {
+							seenEnv[envName] = true
+							envVars = append(envVars, envName)
+						}
+					}
+				}
+				name = ident.Name + "." + fun.Sel.Name
+			} else {
+				name = fun.Sel.Name
+			}
+		case *ast.Ident:
+			name = fun.Name
+		}
+
+		if name != "" && !seen[name] {
+			seen[name] = true
+			calls = append(calls, name)
+		}
+		return true
+	})
+	return calls, envVars
+}
+
+func detectImplements(spec *ast.ValueSpec, pairs map[string][]string) {
+	if len(spec.Names) == 0 || spec.Names[0].Name != "_" {
+		return
+	}
+	if spec.Type == nil || len(spec.Values) == 0 {
+		return
+	}
+
+	var ifaceName string
+	switch t := spec.Type.(type) {
+	case *ast.Ident:
+		ifaceName = t.Name
+	case *ast.SelectorExpr:
+		ifaceName = t.Sel.Name
+	case *ast.StarExpr:
+		switch inner := t.X.(type) {
+		case *ast.Ident:
+			ifaceName = inner.Name
+		case *ast.SelectorExpr:
+			ifaceName = inner.Sel.Name
+		}
+	}
+	if ifaceName == "" {
+		return
+	}
+
+	expr := spec.Values[0]
+	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
+		expr = unary.X
+	}
+	if paren, ok := expr.(*ast.ParenExpr); ok {
+		expr = paren.X
+	}
+
+	var structName string
+	switch v := expr.(type) {
+	case *ast.CompositeLit:
+		switch t := v.Type.(type) {
+		case *ast.Ident:
+			structName = t.Name
+		case *ast.SelectorExpr:
+			structName = t.Sel.Name
+		}
+	case *ast.Ident:
+		if v.Name == "nil" {
+			return
+		}
+		structName = v.Name
+	case *ast.CallExpr:
+		return
+	}
+	if structName == "" {
+		return
+	}
+
+	pairs[structName] = append(pairs[structName], ifaceName)
 }
 
 func (p *GoParser) parseFile(path string) (*ast.File, error) {
@@ -167,25 +317,73 @@ func Classify(files []domain.File) map[string][]domain.File {
 	return group
 }
 
+func extractImports(astFile *ast.File) []string {
+	var imports []string
+	for _, imp := range astFile.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		imports = append(imports, path)
+	}
+	return imports
+}
+
+func extractLiterals(body *ast.BlockStmt) []string {
+	seen := make(map[string]bool)
+	var literals []string
+	ast.Inspect(body, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			s := strings.Trim(lit.Value, `"`+"`")
+			if len(s) >= 4 && strings.ContainsAny(s, "./-_:") && !seen[s] {
+				seen[s] = true
+				literals = append(literals, s)
+			}
+			return true
+		}
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			name := sel.Sel.Name
+			if len(name) >= 8 && ast.IsExported(name) && !seen[name] {
+				seen[name] = true
+				literals = append(literals, name)
+			}
+			return true
+		}
+		return true
+	})
+	if len(literals) > 50 {
+		literals = literals[:50]
+	}
+	return literals
+}
+
+func extractEmbeds(astFile *ast.File) []string {
+	var embeds []string
+	for _, cg := range astFile.Comments {
+		for _, c := range cg.List {
+			if strings.HasPrefix(c.Text, "//go:embed ") {
+				pattern := strings.TrimPrefix(c.Text, "//go:embed ")
+				pattern = strings.TrimSpace(pattern)
+				if pattern != "" {
+					embeds = append(embeds, pattern)
+				}
+			}
+		}
+	}
+	return embeds
+}
+
 func extractTypeName(expr ast.Expr) string {
-	// 1. Unwrap reference pointers (&Object{}) if present
 	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op == token.AND {
 		expr = unary.X
 	}
 
-	// 2. Check if it's a structural composite initialization block
 	compLit, ok := expr.(*ast.CompositeLit)
 	if !ok {
 		return ""
 	}
 
-	// 3. Resolve the underlying text layout type names
 	switch t := compLit.Type.(type) {
 	case *ast.SelectorExpr:
-		// Handles cross-package structs like: hyperv1.HostedCluster
 		return t.Sel.Name
 	case *ast.Ident:
-		// Handles internal local package declarations like: LocalResource
 		return t.Name
 	}
 

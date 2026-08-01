@@ -19,6 +19,8 @@ web/build/
 
 # Generated
 atlas-graph.json
+atlas.json
+/atlas
 
 # IDE
 .vscode/
@@ -33,3 +35,4 @@ Thumbs.db
 # Environment
 .env
 .env.local
+web/hypershift-atlas-graph.json

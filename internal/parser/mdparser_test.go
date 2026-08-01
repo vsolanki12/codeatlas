@@ -38,4 +38,10 @@ func TestMarkdownParser_Parse(t *testing.T) {
 	if doc.Description != expectedSummary {
 		t.Errorf("Extracted summary details mismatch.\nExpected: %q\nGot: %q", expectedSummary, doc.Description)
 	}
+
+	// 3. Assert content captures first paragraph after title
+	expectedContent := "Welcome to the HyperShift Atlas project interface. Run the standard toolchain scripts to compile targets. Execute core scans using CLI argument hooks."
+	if doc.Content != expectedContent {
+		t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", expectedContent, doc.Content)
+	}
 }

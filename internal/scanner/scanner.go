@@ -3,6 +3,7 @@ package scanner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/vsolanki12/hypershift-atlas/internal/graph"
 	"github.com/vsolanki12/hypershift-atlas/internal/parser"
 	"github.com/vsolanki12/hypershift-atlas/internal/storage"
+	"github.com/vsolanki12/hypershift-atlas/internal/temporal"
 )
 
 // Result holds the output of a scan — the graph and summary stats.
@@ -22,11 +24,19 @@ type Result struct {
 	Warnings    []string
 }
 
-// Scan runs the full Atlas pipeline: discover files, classify by type,
-// parse with the appropriate parser, build relationships, validate the
-// graph, and write it to outputPath as JSON.
-func Scan(repoPath string, outputPath string) (*Result, error) {
+type ScanOptions struct {
+	Temporal bool
+}
+
+func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error) {
 	start := time.Now()
+
+	// Resolve output path before chdir changes working directory
+	absOutput, err := filepath.Abs(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve output path: %w", err)
+	}
+	outputPath = absOutput
 
 	// Step 1: Validate repo and discover files
 	disc, err := discovery.New(domain.Repository{RootPath: repoPath})
@@ -109,34 +119,44 @@ func Scan(repoPath string, outputPath string) (*Result, error) {
 		entities = append(entities, ents...)
 	}
 
-	// Step 4: Deduplicate entities by ID.
-	// The GoParser emits a package entity per file — 5 files in the same
-	// package produce 5 identical package:pkg entries. Keep the first seen.
-	seen := make(map[string]bool)
+	// Step 4: Deduplicate entities by ID, merging Files and Imports.
+	seenIdx := make(map[string]int)
 	deduped := entities[:0]
 	for _, e := range entities {
-		if seen[e.ID] {
+		if idx, ok := seenIdx[e.ID]; ok {
+			deduped[idx].Files = appendUnique(deduped[idx].Files, e.Files)
+			deduped[idx].Imports = appendUnique(deduped[idx].Imports, e.Imports)
+			deduped[idx].Literals = appendUnique(deduped[idx].Literals, e.Literals)
+			deduped[idx].Properties = appendUnique(deduped[idx].Properties, e.Properties)
+			deduped[idx].Embeds = appendUnique(deduped[idx].Embeds, e.Embeds)
 			continue
 		}
-		seen[e.ID] = true
+		seenIdx[e.ID] = len(deduped)
 		deduped = append(deduped, e)
 	}
 	entities = deduped
 
-	// Step 5: Build relationships
+	// Step 5: Temporal enrichment (optional)
+	if opts.Temporal {
+		if err := temporal.Enrich(repoPath, entities); err != nil {
+			warnings = append(warnings, fmt.Sprintf("temporal: %v", err))
+		}
+	}
+
+	// Step 6: Build relationships
 	builder := graph.NewRelationshipBuilder(repoPath)
 	relationships := builder.Build(entities)
 
-	// Step 6: Assemble graph with metadata
+	// Step 7: Assemble graph with metadata
 	duration := time.Since(start)
 	g := graph.BuildGraph(repoPath, entities, relationships, duration)
 
-	// Step 7: Validate
+	// Step 8: Validate
 	if err := graph.ValidateGraph(g); err != nil {
 		return nil, fmt.Errorf("graph validation: %w", err)
 	}
 
-	// Step 8: Write JSON
+	// Step 9: Write JSON
 	if err := storage.WriteGraph(outputPath, g); err != nil {
 		return nil, fmt.Errorf("write graph: %w", err)
 	}
@@ -148,4 +168,18 @@ func Scan(repoPath string, outputPath string) (*Result, error) {
 		Duration:    duration,
 		Warnings:    warnings,
 	}, nil
+}
+
+func appendUnique(existing, additions []string) []string {
+	set := make(map[string]bool, len(existing))
+	for _, s := range existing {
+		set[s] = true
+	}
+	for _, s := range additions {
+		if !set[s] {
+			set[s] = true
+			existing = append(existing, s)
+		}
+	}
+	return existing
 }

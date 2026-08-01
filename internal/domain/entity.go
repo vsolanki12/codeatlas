@@ -35,7 +35,18 @@ type Entity struct {
 	Description string     `json:"description,omitempty"`
 	Package     string     `json:"package,omitempty"`
 	Files       []string   `json:"files,omitempty"`
-	Watches     []string   `json:"watches,omitempty"`
+	Watches    []string   `json:"watches,omitempty"`
+	Calls      []string   `json:"calls,omitempty"`
+	Implements []string   `json:"implements,omitempty"`
+	EnvVars      []string `json:"env_vars,omitempty"`
+	Imports      []string `json:"imports,omitempty"`
+	Literals     []string `json:"literals,omitempty"`
+	Properties   []string `json:"properties,omitempty"`
+	Embeds       []string `json:"embeds,omitempty"`
+	LastAuthor   string   `json:"lastAuthor,omitempty"`
+	LastModified string   `json:"lastModified,omitempty"`
+	ChangeCount  int      `json:"changeCount,omitempty"`
+	Content      string   `json:"content,omitempty"`
 	Source      Source     `json:"source"`
 }
 
