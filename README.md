@@ -24,7 +24,6 @@ Atlas never invents architecture. It extracts it.
 - Query engine (relevance-ranked search, compound queries)
 - MCP server (15 tools via Model Context Protocol)
 - Compound queries (investigate, explain, impact)
-- HTML viewer (single-file, loads JSON)
 - Architecture documentation (ADRs, roadmap, vision, overview)
 
 **In Progress:**
@@ -151,7 +150,6 @@ hypershift-atlas/
 │   ├── temporal/           Git history enrichment
 │   ├── query/              Query engine: Index, search, traversal, compound queries
 │   └── mcpserver/          MCP server: 15 tools via go-sdk
-├── web/viewer.html         Single-file HTML viewer
 └── docs/
     ├── vision.md           Why Atlas exists
     ├── overview.md         Atlas in 5 minutes

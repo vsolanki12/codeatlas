@@ -21,13 +21,12 @@ HyperShift Repository
         │
    ┌────┼────┬────────┬────┐
    ▼    ▼    ▼        ▼    ▼
-Viewer  CLI  MCP      API  Web    All consumers read the same JSON
-(V1)        Server        (Future)
-            │
-      ┌─────┼──────┬──────┐
-      ▼     ▼      ▼      ▼
-   Claude  VS Code  CLI   Web     Layer 4: Experience
-   Code    (Future)  
+  CLI    MCP Server    API    Web       All consumers read the same JSON
+              │              (Future)
+      ┌───────┼──────┬──────┐
+      ▼       ▼      ▼      ▼
+   Claude   VS Code  CLI   Web        Layer 4: Experience
+   Code     (Future)  
 ```
 
 Four-layer model:
@@ -41,7 +40,7 @@ Four-layer model:
 
 Atlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
 
-**Status:** Implemented. Scanner, Graph, Viewer (V1), CLI, and MCP Server all operational.
+**Status:** Implemented. Scanner, Graph, CLI, and MCP Server all operational.
 
 ---
 
@@ -239,7 +238,7 @@ Atlas develops in **phases** — each builds on the previous and unlocks the nex
 
 | Phase | Capability | Status |
 |-------|-----------|--------|
-| 1–2 | Core scanner + HTML viewer | Implemented |
+| 1–2 | Core scanner + CLI | Implemented |
 | 3a | Deep call graph (7,837 call edges), implements, env vars | Implemented |
 | 4 | Cross-repo intelligence (import classification, merge-aware dedup) | Implemented |
 | 5 | Temporal layer (git history: LastAuthor, LastModified, ChangeCount) | Implemented |

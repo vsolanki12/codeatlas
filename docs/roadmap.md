@@ -6,14 +6,13 @@ Atlas develops in **phases**. Each phase builds on the previous and unlocks the 
 
 ## Implemented
 
-### Phase 1–2: Core Scanner + Viewer
+### Phase 1–2: Core Scanner + CLI
 
-**Delivered:** Scanner pipeline (discovery → parsing → relationships → graph), HTML viewer, CLI.
+**Delivered:** Scanner pipeline (discovery → parsing → relationships → graph), CLI.
 
 - 4 parsers: Go AST, YAML, Markdown, Test
 - Entity kinds: controller, crd, function, package, test, document, resource
 - Typed relationships with evidence
-- Static HTML viewer (single file, loads JSON)
 - CLI: `atlas scan`, `atlas query`
 
 **Result:** 11,290 entities, 432 relationships.
@@ -162,7 +161,7 @@ Keep the graph up to date as you code.
 
 - `atlas watch /path/to/hypershift` — filesystem monitoring
 - Incremental re-scan (only changed files)
-- Auto-refresh viewer
+- Auto-refresh consumers
 
 **Depends on:** Discovery metadata (ModifiedTime already captured).
 
@@ -170,7 +169,7 @@ Keep the graph up to date as you code.
 
 React-based entity explorer with graph visualization and search.
 
-**Depends on:** Stable graph schema. Current HTML viewer sufficient for V1.
+**Depends on:** Stable graph schema.
 
 ### Additional Future Ideas
 
