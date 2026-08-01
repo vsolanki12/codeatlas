@@ -1,4 +1,4 @@
-module github.com/vsolanki12/hypershift-atlas
+module github.com/vsolanki12/codeatlas
 
 go 1.26.4
 

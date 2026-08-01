@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 func initTestRepo(t *testing.T) string {

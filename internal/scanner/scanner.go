@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/discovery"
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
-	"github.com/vsolanki12/hypershift-atlas/internal/graph"
-	"github.com/vsolanki12/hypershift-atlas/internal/parser"
-	"github.com/vsolanki12/hypershift-atlas/internal/storage"
-	"github.com/vsolanki12/hypershift-atlas/internal/temporal"
+	"github.com/vsolanki12/codeatlas/internal/discovery"
+	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/graph"
+	"github.com/vsolanki12/codeatlas/internal/parser"
+	"github.com/vsolanki12/codeatlas/internal/storage"
+	"github.com/vsolanki12/codeatlas/internal/temporal"
 )
 
 // Result holds the output of a scan — the graph and summary stats.

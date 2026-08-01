@@ -85,10 +85,10 @@ Add to `~/.claude/settings.json`:
 ```json
 {
   "mcpServers": {
-    "hypershift-atlas": {
-      "command": "/Users/vsolanki/hypershift-atlas/atlas",
-      "args": ["serve", "--graph", "/Users/vsolanki/hypershift-atlas/atlas-graph.json"],
-      "description": "HyperShift Atlas — query entities, relationships, and subgraphs from the HyperShift codebase"
+    "codeatlas": {
+      "command": "/Users/vsolanki/codeatlas/atlas",
+      "args": ["serve", "--graph", "/Users/vsolanki/codeatlas/atlas-graph.json"],
+      "description": "CodeAtlas — query entities, relationships, and subgraphs from a codebase"
     }
   }
 }

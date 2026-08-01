@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/storage"
+	"github.com/vsolanki12/codeatlas/internal/storage"
 )
 
 // setupTestRepo creates a minimal Go project with a controller file and
@@ -84,8 +84,8 @@ func TestScan_EndToEnd(t *testing.T) {
 		t.Fatalf("failed to read output graph: %v", err)
 	}
 
-	if g.Schema != "hypershift-atlas" {
-		t.Errorf("schema = %q, want %q", g.Schema, "hypershift-atlas")
+	if g.Schema != "codeatlas" {
+		t.Errorf("schema = %q, want %q", g.Schema, "codeatlas")
 	}
 	if g.SchemaVersion != "1.2.0" {
 		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.2.0")

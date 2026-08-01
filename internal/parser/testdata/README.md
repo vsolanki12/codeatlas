@@ -1,6 +1,6 @@
 # Getting Started
 
-Welcome to the HyperShift Atlas project interface.
+Welcome to the CodeAtlas project interface.
 
 ## Installation
 

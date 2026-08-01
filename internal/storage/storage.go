@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 // WriteGraph marshals a Graph to indented JSON and writes it to path.

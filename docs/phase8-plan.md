@@ -5,7 +5,7 @@
 ## Architecture Overview
 
 ```
-HyperShift Repository
+Source Repository
           │
           ▼
      Atlas Scanner
@@ -152,7 +152,7 @@ Each tool description gets three additions:
 
 ```
 atlas_investigate
-  "Get everything about a HyperShift entity in one call: full details,
+  "Get everything about an entity in one call: full details,
   all relationships grouped by type, callers, tests, and same-file siblings.
   Replaces 4-5 primitive tool calls.
 
@@ -168,7 +168,7 @@ atlas_investigate
 
 ```
 atlas_explain
-  "Follow the reconciliation chain from a HyperShift entity: reconciles,
+  "Follow the reconciliation chain from an entity: reconciles,
   creates, calls, tested_by. Returns a tree showing the architectural narrative.
 
   Best used when: Learning a subsystem, onboarding, understanding how
@@ -197,7 +197,7 @@ atlas_impact
 
 ```
 atlas_search
-  "Search all HyperShift entities by text. Matches across name, description,
+  "Search all entities by text. Matches across name, description,
   package, ID, imports, literals, and properties.
 
   Best used when: Finding where something is implemented, locating code by
@@ -208,7 +208,7 @@ atlas_search
 
 ```
 atlas_where
-  "Find HyperShift entities by file path. Returns entities defined in files
+  "Find entities by file path. Returns entities defined in files
   matching the path substring.
 
   Best used when: Exploring a specific file or directory, understanding what

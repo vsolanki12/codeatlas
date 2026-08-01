@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 // Discovery discovers files in a repository and returns their filesystem metadata.

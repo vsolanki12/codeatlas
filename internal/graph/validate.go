@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 // ValidateGraph checks a graph for duplicate entityIDs and orphan

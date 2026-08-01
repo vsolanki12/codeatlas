@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 type fileHistory struct {

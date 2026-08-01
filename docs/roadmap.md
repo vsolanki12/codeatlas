@@ -170,7 +170,7 @@ Deterministic graph analyses — no AI required.
 
 ### Multi-Repository Knowledge
 
-Atlas scans more than HyperShift.
+Atlas scans any Go repository.
 
 - Any large Go project with controllers, CRDs, and complex call graphs
 - Cross-repo relationship tracking (e.g., HyperShift → cluster-api → machine-api)
@@ -180,7 +180,7 @@ Atlas scans more than HyperShift.
 
 ### AI Consumer Ecosystem
 
-Every AI assistant understands HyperShift by querying Atlas instead of reading thousands of files.
+Every AI assistant understands codebases by querying Atlas instead of reading thousands of files.
 
 - Claude Code (current)
 - VS Code / Cursor / Continue.dev / Copilot Chat (any MCP client)

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 // GitInfo holds the commit hash and branch name from the scanned repository.
@@ -40,7 +40,7 @@ func BuildGraph(repoPath string, entities []domain.Entity, relationships []domai
 	git := GetGitInfo(repoPath)
 
 	return domain.Graph{
-		Schema:        "hypershift-atlas",
+		Schema:        "codeatlas",
 		SchemaVersion: "1.2.0",
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		Repository:    repoPath,

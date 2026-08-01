@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 func TestValidateGraph_Valid(t *testing.T) {

@@ -11,7 +11,7 @@ Detailed rationale for each decision lives in the [ADR directory](adr/).
 What Atlas is. How it fits together as a system.
 
 ```
-HyperShift Repository
+Source Repository
         │
         ▼
    Atlas Scanner          Go binary (cmd/atlas)

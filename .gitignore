@@ -36,4 +36,4 @@ Thumbs.db
 # Environment
 .env
 .env.local
-web/hypershift-atlas-graph.json
+web/codeatlas-graph.json

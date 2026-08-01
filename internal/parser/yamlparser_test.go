@@ -3,7 +3,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 func TestYAMLParser_Parse_Resource(t *testing.T) {

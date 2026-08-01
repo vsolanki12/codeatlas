@@ -7,7 +7,7 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 // Compile-Time Guard ensuring TestParser satisfies our universal interface contract

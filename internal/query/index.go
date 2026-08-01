@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
-	"github.com/vsolanki12/hypershift-atlas/internal/storage"
+	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/storage"
 )
 
 type Index struct {

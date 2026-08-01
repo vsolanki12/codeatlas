@@ -450,9 +450,9 @@ The viewer could then show corroboration — "this entity was confirmed by 3 ind
 
 ### Generalization
 
-The data model uses no HyperShift-specific concepts. Entity kinds like `controller`, `crd`, `package`, and `function` exist in any Go + Kubernetes project. A future "Code Atlas" could scan any Go repository using this same schema.
+The data model uses no HyperShift-specific concepts. Entity kinds like `controller`, `crd`, `package`, and `function` exist in any Go + Kubernetes project. CodeAtlas can scan any Go repository using this same schema.
 
-**Not a goal today.** But worth preserving — don't add HyperShift-specific fields to the core schema.
+Worth preserving — don't add target-specific fields to the core schema.
 
 ---
 

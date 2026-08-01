@@ -2,7 +2,7 @@
 
 ## Why Atlas Exists
 
-Large codebases are hostile to newcomers. HyperShift has 11,000+ entities across hundreds of packages — controllers, CRDs, functions, tests, resources — connected by relationships that only exist in the heads of people who've been there for years.
+Large codebases are hostile to newcomers. A project like HyperShift has 11,000+ entities across hundreds of packages — controllers, CRDs, functions, tests, resources — connected by relationships that only exist in the heads of people who've been there for years.
 
 A new engineer asks "how does HostedCluster reconciliation work?" and gets pointed to a directory with 40 files. They read for hours. They build a partial mental model. They miss connections. They ask a teammate, who explains from memory. That teammate leaves. The knowledge leaves with them.
 
@@ -42,7 +42,7 @@ Atlas is not for managers, PMs, or executives. It's an engineering tool that spe
 
 **The graph runs in CI.** Every PR triggers a scan. The diff between the old graph and the new graph shows exactly what changed architecturally — not just which lines moved, but which relationships were created, broken, or modified.
 
-**Multiple repositories.** HyperShift is the first repository Atlas targets, but the architecture is intentionally repository-agnostic. Over time, Atlas will support any large Go project with controllers, CRDs, and complex call graphs using the same pipeline.
+**Multiple repositories.** HyperShift was the first repository Atlas targeted, but the architecture is intentionally repository-agnostic. Over time, Atlas will support any large Go project with controllers, CRDs, and complex call graphs using the same pipeline.
 
 **AI consumer ecosystem.** Claude Code is the first AI consumer. VS Code, Cursor, Continue.dev, Copilot Chat — any MCP-compatible client can query Atlas without reading source files. The four-layer architecture (Knowledge, Retrieval, Guidance, Experience) means adding a new consumer never changes the graph or the query engine.
 

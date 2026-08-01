@@ -1,8 +1,8 @@
-# HyperShift Atlas
+# CodeAtlas
 
-> Understand any part of HyperShift in minutes instead of hours by generating architecture directly from source code.
+> Understand any codebase in minutes instead of hours by generating architecture directly from source code.
 
-Atlas is a code intelligence platform that parses Go source, Kubernetes manifests, documentation, and tests to build a structured graph of every entity and relationship in the HyperShift codebase. It answers questions like *what creates this?*, *which tests cover this?*, *what breaks if I change this?* — deterministically, backed by evidence from the source code itself.
+Atlas is a code intelligence platform that parses Go source, Kubernetes manifests, documentation, and tests to build a structured graph of every entity and relationship in a codebase. It answers questions like *what creates this?*, *which tests cover this?*, *what breaks if I change this?* — deterministically, backed by evidence from the source code itself.
 
 Atlas never invents architecture. It extracts it.
 
@@ -61,7 +61,7 @@ atlas serve --graph atlas-graph.json
 ## Architecture
 
 ```
-HyperShift Repository
+Source Repository
         │
         ▼
     Discovery          Walk the repo, classify files
@@ -137,7 +137,7 @@ Three rules:
 ## Project Structure
 
 ```
-hypershift-atlas/
+codeatlas/
 ├── cmd/atlas/              CLI: scan, query, serve, stats, where, context
 ├── internal/
 │   ├── domain/             Entity, Relationship, Evidence, Graph, Source

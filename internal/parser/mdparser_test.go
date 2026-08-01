@@ -3,7 +3,7 @@ package parser
 import (
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 func TestMarkdownParser_Parse(t *testing.T) {
@@ -40,7 +40,7 @@ func TestMarkdownParser_Parse(t *testing.T) {
 	}
 
 	// 3. Assert content captures first paragraph after title
-	expectedContent := "Welcome to the HyperShift Atlas project interface. Run the standard toolchain scripts to compile targets. Execute core scans using CLI argument hooks."
+	expectedContent := "Welcome to the CodeAtlas project interface. Run the standard toolchain scripts to compile targets. Execute core scans using CLI argument hooks."
 	if doc.Content != expectedContent {
 		t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", expectedContent, doc.Content)
 	}

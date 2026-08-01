@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 type Subgraph struct {

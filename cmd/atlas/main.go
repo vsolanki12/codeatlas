@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/mcpserver"
-	"github.com/vsolanki12/hypershift-atlas/internal/query"
-	"github.com/vsolanki12/hypershift-atlas/internal/scanner"
+	"github.com/vsolanki12/codeatlas/internal/mcpserver"
+	"github.com/vsolanki12/codeatlas/internal/query"
+	"github.com/vsolanki12/codeatlas/internal/scanner"
 )
 
 func main() {

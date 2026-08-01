@@ -1,15 +1,15 @@
-# Atlas in 5 Minutes
+# CodeAtlas in 5 Minutes
 
-Understand any part of HyperShift in minutes instead of hours by generating architecture directly from source code.
+Understand any codebase in minutes instead of hours by generating architecture directly from source code.
 
-Atlas is a code intelligence platform for the HyperShift repository. It parses Go source, YAML, docs, and tests to produce a structured graph of every entity and relationship in the codebase.
+Atlas is a code intelligence platform that works with any Go repository. It parses Go source, YAML, docs, and tests to produce a structured graph of every entity and relationship in the codebase.
 
 Atlas never invents architecture. Every entity and relationship must be traceable back to source code.
 
 ## End-to-End Pipeline
 
 ```
-HyperShift Repository
+Source Repository
         │
         ▼
     Discovery          Walk the repo, classify files

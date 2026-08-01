@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/vsolanki12/hypershift-atlas/internal/query"
+	"github.com/vsolanki12/codeatlas/internal/query"
 )
 
 func Run(ctx context.Context, graphPath string) error {
@@ -15,7 +15,7 @@ func Run(ctx context.Context, graphPath string) error {
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "hypershift-atlas",
+		Name:    "codeatlas",
 		Version: "0.2.0",
 	}, nil)
 
@@ -49,7 +49,7 @@ type lookupInput struct {
 func registerLookup(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_lookup",
-		Description: "Find entities in the HyperShift codebase by kind and/or name. Returns matching entities with file locations.",
+		Description: "Find entities in the codebase by kind and/or name. Returns matching entities with file locations.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input lookupInput) (*mcp.CallToolResult, any, error) {
 		results := idx.Lookup(input.Kind, input.Name, 20)
 		text := query.FormatEntityList(results)
@@ -67,7 +67,7 @@ type entityInput struct {
 func registerEntity(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_entity",
-		Description: "Get full details for a HyperShift entity by exact ID. Shows name, kind, package, file, description, watches, and calls. Use brief=true for compact output (ID, file, line only).",
+		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, and calls. Use brief=true for compact output (ID, file, line only).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entityInput) (*mcp.CallToolResult, any, error) {
 		e := idx.GetEntity(input.ID)
 		if e == nil {
@@ -98,7 +98,7 @@ type entitiesInput struct {
 func registerEntities(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_entities",
-		Description: "Get brief details for multiple HyperShift entities by ID list. Returns ID, file, line for each. Use for batch lookups instead of multiple atlas_entity calls.",
+		Description: "Get brief details for multiple CodeAtlas entities by ID list. Returns ID, file, line for each. Use for batch lookups instead of multiple atlas_entity calls.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entitiesInput) (*mcp.CallToolResult, any, error) {
 		var lines []string
 		for _, id := range input.IDs {
@@ -126,7 +126,7 @@ type relationshipsInput struct {
 func registerRelationships(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_relationships",
-		Description: "Get relationships for a HyperShift entity. Shows connections like reconciles, calls, tested_by, creates.",
+		Description: "Get relationships for a CodeAtlas entity. Shows connections like reconciles, calls, tested_by, creates.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input relationshipsInput) (*mcp.CallToolResult, any, error) {
 		rels := idx.GetRelationships(input.EntityID, input.Direction, input.Type)
 		text := query.FormatRelationshipList(rels)
@@ -144,7 +144,7 @@ type contextInput struct {
 func registerContext(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_context",
-		Description: "Get a subgraph around a HyperShift entity. Shows the entity and all connected entities within the given depth.",
+		Description: "Get a subgraph around a CodeAtlas entity. Shows the entity and all connected entities within the given depth.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input contextInput) (*mcp.CallToolResult, any, error) {
 		depth := input.Depth
 		if depth <= 0 {
@@ -165,7 +165,7 @@ type searchInput struct {
 func registerSearch(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
-		Description: "Search all HyperShift entities by text. Matches across name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match).",
+		Description: "Search all entities by text. Matches across name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
 		results := idx.Search(input.Query, 20)
 		text := query.FormatEntityList(results)
@@ -183,7 +183,7 @@ type whereInput struct {
 func registerWhere(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_where",
-		Description: "Find HyperShift entities by file path. Returns entities defined in files matching the path substring. Use detail=true to get full entity info (replaces multiple atlas_entity calls for single-file investigation).",
+		Description: "Find entities by file path. Returns entities defined in files matching the path substring. Use detail=true to get full entity info (replaces multiple atlas_entity calls for single-file investigation).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input whereInput) (*mcp.CallToolResult, any, error) {
 		results := idx.Where(input.Path, 30)
 		var text string
@@ -239,7 +239,7 @@ type statsInput struct{}
 func registerStats(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_stats",
-		Description: "Get HyperShift Atlas graph statistics: entity counts by kind and relationship counts by type.",
+		Description: "Get CodeAtlas graph statistics: entity counts by kind and relationship counts by type.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ statsInput) (*mcp.CallToolResult, any, error) {
 		text := query.FormatStats(idx.Stats())
 		return &mcp.CallToolResult{
@@ -301,7 +301,7 @@ type investigateInput struct {
 func registerInvestigate(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_investigate",
-		Description: "Get everything about a HyperShift entity in one call: full details, all relationships grouped by type, callers, tests, and same-file siblings. Replaces 4-5 primitive tool calls.",
+		Description: "Get everything about an entity in one call: full details, all relationships grouped by type, callers, tests, and same-file siblings. Replaces 4-5 primitive tool calls.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input investigateInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Investigate(input.EntityID)
 		if r == nil {
@@ -324,7 +324,7 @@ type explainInput struct {
 func registerExplain(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_explain",
-		Description: "Follow the reconciliation chain from a HyperShift entity: reconciles, creates, calls, tested_by. Returns a tree showing the architectural narrative. Replaces reading source files to understand flow.",
+		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a tree showing the architectural narrative. Replaces reading source files to understand flow.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input explainInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Explain(input.EntityID, input.Depth)
 		if r.Root == nil {

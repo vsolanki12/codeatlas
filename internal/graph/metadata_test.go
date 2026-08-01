@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
 func TestBuildGraph_Metadata(t *testing.T) {
@@ -17,8 +17,8 @@ func TestBuildGraph_Metadata(t *testing.T) {
 
 	g := BuildGraph("/tmp/fake-repo", entities, rels, 2*time.Second)
 
-	if g.Schema != "hypershift-atlas" {
-		t.Errorf("Schema = %q, want %q", g.Schema, "hypershift-atlas")
+	if g.Schema != "codeatlas" {
+		t.Errorf("Schema = %q, want %q", g.Schema, "codeatlas")
 	}
 	if g.SchemaVersion != "1.2.0" {
 		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.2.0")

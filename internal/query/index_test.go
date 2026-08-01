@@ -5,13 +5,13 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/vsolanki12/hypershift-atlas/internal/domain"
-	"github.com/vsolanki12/hypershift-atlas/internal/storage"
+	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/storage"
 )
 
 func testGraph() domain.Graph {
 	return domain.Graph{
-		Schema:        "hypershift-atlas",
+		Schema:        "codeatlas",
 		SchemaVersion: "1.0.0",
 		Repository:    "/test/repo",
 		Entities: []domain.Entity{
