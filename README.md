@@ -1,39 +1,44 @@
 # CodeAtlas
 
-> Understand any codebase in minutes instead of hours by generating architecture directly from source code.
+> Build a structured architecture graph from any Go codebase. Query it with 15 MCP tools. Give your AI assistant architectural knowledge instead of raw source files.
 
-CodeAtlas is a code intelligence platform that parses Go source, Kubernetes manifests, documentation, and tests to build a structured graph of every entity and relationship in a codebase. It answers questions like *what creates this?*, *which tests cover this?*, *what breaks if I change this?* — deterministically, backed by evidence from the source code itself.
+CodeAtlas parses Go source, Kubernetes manifests, documentation, and tests to produce a single JSON graph of every entity and relationship in a codebase. AI assistants query this graph through the [Model Context Protocol](https://modelcontextprotocol.io/) instead of reading thousands of source files — faster, cheaper, and more accurate.
 
-CodeAtlas never invents architecture. It extracts it.
+CodeAtlas never invents architecture. It extracts it. Every relationship is backed by evidence from the source code itself.
 
 ---
 
-## Project Status
+## The Problem
 
-**Current Release:** v0.1.0 (Atlas Core Foundation)
+Large codebases are hostile to newcomers and expensive for AI. A project with 11,000+ entities across hundreds of packages has architecture that only exists in the heads of people who've been there for years. Without a graph, an AI assistant reads source files one by one — slow, token-heavy, and incomplete. CodeAtlas solves both: engineers get a queryable architecture map on day one, and AI assistants get structured answers instead of raw code.
 
-**Completed:**
-- Repository discovery and file classification
-- Go AST parser (controllers, functions, packages, imports, literals, embeds, call graphs)
-- YAML parser (CRDs, Deployments, Services, property flattening)
-- Markdown and Test parsers
-- Typed relationships with evidence (proven/inferred)
-- Merge-aware entity deduplication
-- Temporal enrichment (git history: authorship, change counts)
-- Content indexing (string literals, YAML properties, go:embed)
-- Query engine (relevance-ranked search, compound queries)
-- MCP server (15 tools via Model Context Protocol)
-- Compound queries (investigate, explain, impact)
-- Architecture documentation (ADRs, roadmap, vision, overview)
+---
 
-**In Progress:**
-- Intent-based tool guidance (Phase 8 — enriched MCP descriptions)
+## How It Works
 
-**Planned:**
-- Version intelligence (graph diff across branches/releases)
-- Continuous architecture intelligence (PR diff, drift, orphans, dead code)
-- Multi-repository knowledge
-- AI consumer ecosystem (VS Code, Cursor, Continue.dev, any MCP client)
+```
+Source Repository
+        │
+        ▼
+   Atlas Scanner          Parses Go AST, YAML, Markdown, Tests
+        │
+        ▼
+   Atlas Graph            Single JSON file — the product
+        │
+   ┌────┼────┬────────┐
+   ▼    ▼    ▼        ▼
+  CLI  MCP Server  API (future)
+            │
+    ┌───────┼──────┐
+    ▼       ▼      ▼
+ Claude   VS Code  Any MCP
+ Code     Cursor   Client
+```
+
+Three rules:
+1. **The scanner is the only thing that parses code.** Everything else reads the graph.
+2. **The graph is the product.** Every consumer reads the same JSON.
+3. **Consumers are replaceable.** Adding a consumer never changes the graph.
 
 ---
 
@@ -43,71 +48,55 @@ CodeAtlas never invents architecture. It extracts it.
 # Build
 go build -o atlas ./cmd/atlas
 
-# Scan a repository
-atlas scan -repo ~/hypershift -output atlas-graph.json
+# Scan a Go repository
+atlas scan -repo /path/to/your/project -output atlas-graph.json
 
-# Scan with git history (slower, enables hotspot/ownership queries)
-atlas scan -repo ~/hypershift -output atlas-graph.json -temporal
+# Scan with git history (slower, enables hotspot and ownership queries)
+atlas scan -repo /path/to/your/project -output atlas-graph.json -temporal
 
-# Query
+# Query from the command line
 atlas query -graph atlas-graph.json controller HostedCluster
 
-# Serve for AI assistants (Claude Code, VS Code, etc.)
+# Start the MCP server
 atlas serve --graph atlas-graph.json
 ```
 
 ---
 
-## Architecture
+## Connect to Your AI Assistant
 
-```
-Source Repository
-        │
-        ▼
-    Discovery          Walk the repo, classify files
-        │
-        ▼
-     Parsers           Go AST, YAML, Markdown, Test
-        │
-        ▼
-   Graph Builder       Typed relationships with evidence
-        │
-        ▼
-    Atlas Graph        JSON file — the product
-        │
-        ▼
-   Query Engine        Loads graph, answers queries
-        │
-        ▼
-    MCP Server         15 tools via Model Context Protocol
-        │
-        ▼
-    Consumers          Claude Code, VS Code, Cursor, any MCP client
+Add CodeAtlas to your MCP client config. For Claude Code (`~/.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "codeatlas": {
+      "command": "/path/to/atlas",
+      "args": ["serve", "--graph", "/path/to/atlas-graph.json"]
+    }
+  }
+}
 ```
 
-Four layers:
-
-| Layer | What | Purpose |
-|-------|------|---------|
-| **Knowledge** | Scanner → Graph | Extract architecture from code |
-| **Retrieval** | 15 MCP tools | Answer questions about the graph |
-| **Guidance** | Tool descriptions | Teach consumers which tool serves which engineering intent |
-| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
-
-Three rules:
-1. **The scanner is the only thing that parses code.** Everything else reads the graph.
-2. **The graph is the product.** Every consumer reads the same JSON.
-3. **Consumers are replaceable.** Adding a consumer never changes the graph.
+Restart your AI assistant. CodeAtlas tools are now available.
 
 ---
 
-## Core Principles
+## Example Queries
 
-- **Extract, never invent.** If a parser can't determine a fact, CodeAtlas doesn't guess.
-- **Evidence for every relationship.** Every edge carries a file, line, snippet, and reason.
-- **Deterministic before intelligent.** Same commit, same graph, every time.
-- **Graph is the product.** Everything else consumes it.
-- **Consumers are replaceable.** Adding or removing a consumer never changes the graph.
+Once connected, your AI assistant can answer architecture questions directly:
+
+**"How does HostedCluster reconciliation work?"**
+→ `atlas_explain` traces the reconciliation chain: what it reconciles, what it creates, what it calls, what tests cover it.
+
+**"What breaks if I change this function?"**
+→ `atlas_impact` walks upstream callers to find every controller, test, resource, and file affected.
+
+**"Why is this controller failing?"**
+→ `atlas_investigate` returns full entity details, all relationships, callers, tests, and sibling entities in one call.
+
+**"Which code changes most often but has no tests?"**
+→ `atlas_hotspots` finds high-churn entities; `atlas_impact` checks their test coverage.
 
 ---
 
@@ -128,48 +117,9 @@ Three rules:
 | `atlas_relationships` | Relationships for an entity |
 | `atlas_context` | BFS subgraph around an entity |
 | `atlas_callers` | Reverse call graph |
-| `atlas_hotspots` | Most-changed or stalest entities |
-| `atlas_commits` | Temporal search by name/since/author |
+| `atlas_hotspots` | Most-changed or stalest entities (requires `-temporal` scan) |
+| `atlas_commits` | Search by name, date, or author in git history |
 | `atlas_stats` | Graph statistics |
-
----
-
-## Project Structure
-
-```
-codeatlas/
-├── cmd/atlas/              CLI: scan, query, serve, stats, where, context
-├── internal/
-│   ├── domain/             Entity, Relationship, Evidence, Graph, Source
-│   ├── discovery/          File walker
-│   ├── parser/             Go AST, YAML, Markdown, Test parsers
-│   ├── graph/              Relationship builder + graph validation
-│   ├── scanner/            Pipeline orchestrator with merge-aware dedup
-│   ├── storage/            JSON read/write
-│   ├── origin/             Import path classifier (stdlib vs known repos)
-│   ├── temporal/           Git history enrichment
-│   ├── query/              Query engine: Index, search, traversal, compound queries
-│   └── mcpserver/          MCP server: 15 tools via go-sdk
-└── docs/
-    ├── vision.md           Why CodeAtlas exists
-    ├── overview.md         CodeAtlas in 5 minutes
-    ├── architecture.md     Architecture deep-dive
-    ├── data-model.md       Graph schema specification
-    ├── roadmap.md          Phase-by-phase development history
-    └── adr/                15 Architecture Decision Records
-```
-
----
-
-## Non-Goals
-
-CodeAtlas will never become:
-
-- **A CI/CD platform.** CodeAtlas reads code, it doesn't build or deploy it.
-- **A Kubernetes dashboard.** CodeAtlas understands the code that manages clusters, not the clusters themselves.
-- **An IDE.** CodeAtlas provides intelligence to IDEs, it isn't one.
-- **A documentation generator.** CodeAtlas extracts architecture, it doesn't write docs.
-- **An AI that invents architecture.** If a parser can't determine it, CodeAtlas doesn't guess.
 
 ---
 
@@ -178,8 +128,16 @@ CodeAtlas will never become:
 | Document | Purpose |
 |----------|---------|
 | [Vision](docs/vision.md) | Why CodeAtlas exists, who it's for, where it's going |
-| [Overview](docs/overview.md) | CodeAtlas in 5 minutes — quick start for new readers |
+| [Overview](docs/overview.md) | CodeAtlas in 5 minutes |
 | [Architecture](docs/architecture.md) | Product, code, and pipeline architecture |
 | [Data Model](docs/data-model.md) | Entity and relationship schema specification |
 | [Roadmap](docs/roadmap.md) | Phase-by-phase development history and future plans |
 | [ADRs](docs/adr/) | 15 Architecture Decision Records |
+
+---
+
+## Project Status
+
+**Schema:** 1.2.0 · **MCP Tools:** 15 · **In Progress:** Phase 8 (Intent-Based Tool Guidance)
+
+See [roadmap.md](docs/roadmap.md) for full development history and future plans.
