@@ -122,14 +122,14 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 
 ### Phase 8: Intent-Based Tool Guidance
 
-**Delivered:** Enriched MCP tool descriptions with intent guidance — zero new code.
+**Status:** Attempted and reverted.
 
-- "Best used when" + "Examples" + "Usually followed by" on 6 tools
-- Tools enriched: atlas_investigate, atlas_explain, atlas_impact, atlas_search, atlas_where, atlas_hotspots
-- Primitives unchanged (building blocks, not entry points)
-- Four-layer model: Knowledge → Retrieval → Guidance → Experience
+- Enriched 6 tool descriptions with "Best used when", "Examples", "Usually followed by"
+- Result: longer descriptions increased token cost on every API turn (tool schemas are sent as input on every call, not just when used)
+- "Usually followed by" hints also caused AI to chain 8-11 follow-up calls instead of stopping
+- Net effect: higher cost and more calls — opposite of the goal
 
-**Result:** 15 MCP tools with intent-aware descriptions. Measures correct first-tool selection by AI consumers.
+**Lesson:** Intent guidance via descriptions is a per-turn tax. The right approach is intent-based compound tools (see future: Intent-Based Tools) that reduce both call count and schema size. Descriptions reverted to original concise form.
 
 ---
 
