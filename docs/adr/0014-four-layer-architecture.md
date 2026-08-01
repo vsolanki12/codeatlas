@@ -14,7 +14,7 @@ Atlas is organized into four layers: Knowledge, Retrieval, Guidance, Experience.
 | **Knowledge** | Scanner → Graph | Every scan |
 | **Retrieval** | 15 MCP tools (primitives + compounds) | Quarterly |
 | **Guidance** | Tool descriptions with intent hints | Rarely after Phase 8 |
-| **Experience** | Claude Code, VS Code, CLI, Web Viewer | Consumer-driven |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Consumer-driven |
 
 ## Why
 

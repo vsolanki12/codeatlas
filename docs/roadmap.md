@@ -155,6 +155,39 @@ Compare architecture across branches and releases.
 
 **Depends on:** Stable, deterministic graph (done). `commit` and `branch` fields already in schema.
 
+### Continuous Architecture Intelligence
+
+Deterministic graph analyses — no AI required.
+
+- Architecture diff on every PR (what relationships changed?)
+- Dependency drift detection (new imports, removed calls)
+- Orphan detection (entities with no incoming relationships)
+- Dead code identification (functions with no callers and no tests)
+- Missing test coverage (high-change entities without tested_by edges)
+- Architecture regression detection (broken relationships between releases)
+
+**Depends on:** Version Intelligence (graph diff).
+
+### Multi-Repository Knowledge
+
+Atlas scans more than HyperShift.
+
+- Any large Go project with controllers, CRDs, and complex call graphs
+- Cross-repo relationship tracking (e.g., HyperShift → cluster-api → machine-api)
+- Federated graph queries across multiple repositories
+
+**Depends on:** Origin classifier (done). Import path tracking (done).
+
+### AI Consumer Ecosystem
+
+Every AI assistant understands HyperShift by querying Atlas instead of reading thousands of files.
+
+- Claude Code (current)
+- VS Code / Cursor / Continue.dev / Copilot Chat (any MCP client)
+- Atlas API for non-MCP consumers
+
+**Depends on:** MCP server (done). Intent guidance (Phase 8).
+
 ### Live Repository Monitoring
 
 Keep the graph up to date as you code.
@@ -164,17 +197,3 @@ Keep the graph up to date as you code.
 - Auto-refresh consumers
 
 **Depends on:** Discovery metadata (ModifiedTime already captured).
-
-### Interactive Web UI
-
-React-based entity explorer with graph visualization and search.
-
-**Depends on:** Stable graph schema.
-
-### Additional Future Ideas
-
-- **Atlas API** — serve the graph over HTTP for non-MCP consumers
-- **PR integration** — diff the graph on every PR, comment with impact
-- **VS Code extension** — show Atlas context inline while reading code
-- **Staleness detection** — flag when docs and code are out of sync
-- **Export** — generate SVG/PNG of any graph view

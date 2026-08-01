@@ -31,9 +31,9 @@ Atlas never invents architecture. It extracts it.
 
 **Planned:**
 - Version intelligence (graph diff across branches/releases)
-- CI integration (graph diff on every PR)
-- Multi-repository support
-- Interactive web UI
+- Continuous architecture intelligence (PR diff, drift, orphans, dead code)
+- Multi-repository knowledge
+- AI consumer ecosystem (VS Code, Cursor, Continue.dev, any MCP client)
 
 ---
 
@@ -82,7 +82,7 @@ HyperShift Repository
     MCP Server         15 tools via Model Context Protocol
         │
         ▼
-    Consumers          Claude Code, VS Code, CLI, Web Viewer
+    Consumers          Claude Code, VS Code, Cursor, any MCP client
 ```
 
 Four layers:
@@ -92,7 +92,7 @@ Four layers:
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools | Answer questions about the graph |
 | **Guidance** | Tool descriptions | Teach consumers which tool serves which engineering intent |
-| **Experience** | Claude Code, CLI, Web Viewer | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
 
 Three rules:
 1. **The scanner is the only thing that parses code.** Everything else reads the graph.
@@ -156,7 +156,7 @@ hypershift-atlas/
     ├── architecture.md     Architecture deep-dive
     ├── data-model.md       Graph schema specification
     ├── roadmap.md          Phase-by-phase development history
-    └── adr/                14 Architecture Decision Records
+    └── adr/                15 Architecture Decision Records
 ```
 
 ---
@@ -182,4 +182,4 @@ Atlas will never become:
 | [Architecture](docs/architecture.md) | Product, code, and pipeline architecture |
 | [Data Model](docs/data-model.md) | Entity and relationship schema specification |
 | [Roadmap](docs/roadmap.md) | Phase-by-phase development history and future plans |
-| [ADRs](docs/adr/) | 14 Architecture Decision Records |
+| [ADRs](docs/adr/) | 15 Architecture Decision Records |

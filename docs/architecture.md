@@ -19,14 +19,14 @@ HyperShift Repository
         ▼
    Atlas Graph            JSON file (atlas-graph.json)
         │
-   ┌────┼────┬────────┬────┐
-   ▼    ▼    ▼        ▼    ▼
-  CLI    MCP Server    API    Web       All consumers read the same JSON
-              │              (Future)
-      ┌───────┼──────┬──────┐
-      ▼       ▼      ▼      ▼
-   Claude   VS Code  CLI   Web        Layer 4: Experience
-   Code     (Future)  
+   ┌────┼────┬────────┐
+   ▼    ▼    ▼        ▼
+  CLI    MCP Server    API           All consumers read the same JSON
+              │        (Future)
+      ┌───────┼──────┐
+      ▼       ▼      ▼
+   Claude   VS Code  Any MCP        Layer 4: Experience
+   Code     Cursor   Client  
 ```
 
 Four-layer model:
@@ -36,7 +36,7 @@ Four-layer model:
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools (primitives + compounds) | Answer questions about the graph |
 | **Guidance** | Tool descriptions with intent hints | Teach consumers which engineering intent a tool serves |
-| **Experience** | Claude Code, VS Code, CLI, Web Viewer | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
 
 Atlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
 
@@ -271,3 +271,4 @@ Current state: 11,056 entities, 8,671 relationships, 15 MCP tools, 164 tests, sc
 | [0012](adr/0012-temporal-as-opt-in.md) | Temporal enrichment as opt-in |
 | [0013](adr/0013-intent-guidance-over-workflow-code.md) | Intent guidance over workflow code |
 | [0014](adr/0014-four-layer-architecture.md) | Four-layer architecture model |
+| [0015](adr/0015-atlas-is-ai-infrastructure.md) | Atlas is an AI infrastructure platform |

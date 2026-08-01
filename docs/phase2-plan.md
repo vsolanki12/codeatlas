@@ -87,7 +87,7 @@ Add to `~/.claude/settings.json`:
   "mcpServers": {
     "hypershift-atlas": {
       "command": "/Users/vsolanki/hypershift-atlas/atlas",
-      "args": ["serve", "--graph", "/Users/vsolanki/hypershift-atlas/web/hypershift-atlas-graph.json"],
+      "args": ["serve", "--graph", "/Users/vsolanki/hypershift-atlas/atlas-graph.json"],
       "description": "HyperShift Atlas — query entities, relationships, and subgraphs from the HyperShift codebase"
     }
   }

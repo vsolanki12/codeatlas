@@ -20,7 +20,7 @@ HyperShift Repository
       MCP Server
           │
           ▼
-  Claude / VS Code / CLI / Web
+  Claude / VS Code / Cursor / Any MCP Client
           │
           ▼
       Engineering Tasks
@@ -35,11 +35,11 @@ Atlas has 15 MCP tools across four layers:
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools | Answer questions about the graph |
 | **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves and what the natural next query is |
-| **Experience** | Claude Code, VS Code, CLI, Web Viewer | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
 
-Atlas itself doesn't decide anything. The consumer does. Today that's Claude. Tomorrow it could be a VS Code extension, Cursor, Windsurf, Continue.dev, a web UI, or a CLI. The four-layer model makes this future-proof.
+Atlas itself doesn't decide anything. The consumer does. Today that's Claude. Tomorrow it could be VS Code, Cursor, Windsurf, Continue.dev, or any MCP-compatible client. The four-layer model makes this future-proof.
 
-Layers 1 and 2 are built. Layer 3 is Phase 8. Layer 4 is the consumer — already exists (Claude Code + CLI + Web Viewer), grows organically.
+Layers 1 and 2 are built. Layer 3 is Phase 8. Layer 4 is the consumer — already exists (Claude Code + CLI), grows organically.
 
 The gap isn't capability — it's intent recognition. When a user asks "why is reconciliation failing?", Claude shouldn't think "which tool do I call?" It should think "the engineer wants to **investigate** — `atlas_investigate` is the right entry point."
 

@@ -5,11 +5,11 @@
 
 ## Decision
 
-The graph is not an internal data structure — it's the product. The scanner produces it. Every consumer (viewer, web app, CLI, API, AI) reads the same JSON file.
+The graph is not an internal data structure — it's the product. The scanner produces it. Every consumer (CLI, MCP server, AI assistants, future API) reads the same JSON file.
 
 ## Why
 
-Improving the graph improves every consumer automatically. A new entity kind or relationship type requires no frontend changes — the viewer just renders what it finds. This also means the graph must be a stable, well-documented format, not an implementation detail.
+Improving the graph improves every consumer automatically. A new entity kind or relationship type requires no consumer changes — they render what they find. This also means the graph must be a stable, well-documented format, not an implementation detail.
 
 ## Future Implication
 

@@ -44,8 +44,12 @@ Atlas is not for managers, PMs, or executives. It's an engineering tool that spe
 
 **Multiple repositories.** HyperShift is the first repository Atlas targets, but the architecture is intentionally repository-agnostic. Over time, Atlas will support any large Go project with controllers, CRDs, and complex call graphs using the same pipeline.
 
-**Multiple consumers.** Claude Code is the first AI consumer. VS Code extensions, Cursor, and web dashboards follow. The four-layer architecture (Knowledge, Retrieval, Guidance, Experience) means adding a new consumer never changes the graph or the query engine.
+**AI consumer ecosystem.** Claude Code is the first AI consumer. VS Code, Cursor, Continue.dev, Copilot Chat — any MCP-compatible client can query Atlas without reading source files. The four-layer architecture (Knowledge, Retrieval, Guidance, Experience) means adding a new consumer never changes the graph or the query engine.
+
+**Continuous architecture intelligence.** The graph enables deterministic analyses that don't require AI: architecture diff across branches, dependency drift detection, orphan detection, dead code identification, missing test coverage, architecture regression. These are graph operations, not LLM tasks.
 
 **The standard way to onboard.** "Read the Atlas graph" replaces "ask someone who's been here a while." New engineers get productive in days, not weeks. The graph becomes living architecture documentation, generated directly from source code instead of maintained by hand.
+
+Atlas is not an AI framework. Atlas provides deterministic architectural knowledge that AI assistants can consume. As AI models evolve, Atlas remains stable because the graph — not the model — is the source of truth.
 
 Atlas won't become smarter. It will become more complete. More entities extracted, more relationships proven, more consumers served — all grounded in the same principle: extract what exists, never invent what doesn't.

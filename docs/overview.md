@@ -30,7 +30,7 @@ HyperShift Repository
     MCP Server         15 tools via Model Context Protocol
         │
         ▼
-    Consumers          Claude Code, VS Code, CLI, Web
+    Consumers          Claude Code, VS Code, Cursor, any MCP client
 ```
 
 ## Four Layers
@@ -40,7 +40,7 @@ HyperShift Repository
 | **Knowledge** | Scanner → Graph | Every scan |
 | **Retrieval** | 15 MCP tools | Quarterly |
 | **Guidance** | Tool descriptions with intent hints | Rarely |
-| **Experience** | Claude Code, CLI, Web | Consumer-driven |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Consumer-driven |
 
 ## Key Numbers
 
