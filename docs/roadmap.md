@@ -120,24 +120,16 @@ CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks 
 
 ---
 
-## In Progress
-
 ### Phase 8: Intent-Based Tool Guidance
 
-**Goal:** Teach AI consumers which tool to use via enriched descriptions — zero new code.
+**Delivered:** Enriched MCP tool descriptions with intent guidance — zero new code.
 
-- Six engineering intents: Understand, Investigate, Review, Navigate, Test, Implement
-- "Best used when" + "Usually followed by" in tool descriptions
+- "Best used when" + "Examples" + "Usually followed by" on 6 tools
+- Tools enriched: atlas_investigate, atlas_explain, atlas_impact, atlas_search, atlas_where, atlas_hotspots
+- Primitives unchanged (building blocks, not entry points)
 - Four-layer model: Knowledge → Retrieval → Guidance → Experience
 
-| Goal | Target |
-|------|--------|
-| Correct first tool | ≥80% |
-| Average Atlas calls | ≤3 |
-| Source file reads | 0 for architecture questions |
-| New code | 0 |
-
-**Plan:** `docs/phase8-plan.md`
+**Result:** 15 MCP tools with intent-aware descriptions. Measures correct first-tool selection by AI consumers.
 
 ---
 
