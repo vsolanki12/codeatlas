@@ -1,6 +1,6 @@
 # Architecture
 
-Atlas has three architectures. Most projects describe one. Atlas needs three because the product, the code, and the execution pipeline solve different problems and evolve at different rates.
+CodeAtlas has three architectures. Most projects describe one. CodeAtlas needs three because the product, the code, and the execution pipeline solve different problems and evolve at different rates.
 
 Detailed rationale for each decision lives in the [ADR directory](adr/).
 
@@ -8,7 +8,7 @@ Detailed rationale for each decision lives in the [ADR directory](adr/).
 
 ## Architecture 1: Product Architecture
 
-What Atlas is. How it fits together as a system.
+What CodeAtlas is. How it fits together as a system.
 
 ```
 Source Repository
@@ -36,9 +36,9 @@ Four-layer model:
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools (primitives + compounds) | Answer questions about the graph |
 | **Guidance** | Tool descriptions with intent hints | Teach consumers which engineering intent a tool serves |
-| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
-Atlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
+CodeAtlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
 
 **Status:** Implemented. Scanner, Graph, CLI, and MCP Server all operational.
 
@@ -49,7 +49,7 @@ Atlas itself doesn't decide anything. The consumer does. Adding a new consumer n
 How the Go code is organized. Which package owns which responsibility.
 
 ```
-internal/domain               The vocabulary of Atlas
+internal/domain               The vocabulary of CodeAtlas
     │                         Entity, Relationship, Evidence, Graph, Source
     │
     ▲ (every package imports domain)
@@ -96,7 +96,7 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
 Key constraints:
 - **Every package imports `domain`.** It is the shared vocabulary. `docs/data-model.md` is this vocabulary in English. `internal/domain` is the same vocabulary in Go. They match exactly.
 - **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, `origin`, and `temporal` are independent. Only `scanner` composes them.
-- **`domain` depends on nothing.** Zero imports from other Atlas packages. If `domain` ever imports another Atlas package, the architecture is broken.
+- **`domain` depends on nothing.** Zero imports from other CodeAtlas packages. If `domain` ever imports another CodeAtlas package, the architecture is broken.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
 - **`mcpserver` depends only on `query`.** It's a thin MCP wrapper over the query engine.
 
@@ -234,7 +234,7 @@ Each step maps to code:
 
 ## Phases
 
-Atlas develops in **phases** — each builds on the previous and unlocks the next.
+CodeAtlas develops in **phases** — each builds on the previous and unlocks the next.
 
 | Phase | Capability | Status |
 |-------|-----------|--------|
@@ -271,4 +271,4 @@ Current state: 11,056 entities, 8,671 relationships, 15 MCP tools, 164 tests, sc
 | [0012](adr/0012-temporal-as-opt-in.md) | Temporal enrichment as opt-in |
 | [0013](adr/0013-intent-guidance-over-workflow-code.md) | Intent guidance over workflow code |
 | [0014](adr/0014-four-layer-architecture.md) | Four-layer architecture model |
-| [0015](adr/0015-atlas-is-ai-infrastructure.md) | Atlas is an AI infrastructure platform |
+| [0015](adr/0015-atlas-is-ai-infrastructure.md) | CodeAtlas is an AI infrastructure platform |

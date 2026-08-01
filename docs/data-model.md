@@ -1,12 +1,12 @@
 # Data Model
 
-This document is the contract between the scanner and everything that consumes the Atlas Graph. If an entity or field isn't defined here, it doesn't exist in Atlas.
+This document is the contract between the scanner and everything that consumes the Atlas Graph. If an entity or field isn't defined here, it doesn't exist in CodeAtlas.
 
 ---
 
 ## Core Concept: Everything is an Entity
 
-Atlas does not have separate types for Component, Controller, CRD, etc. It has one type: **Entity**.
+CodeAtlas does not have separate types for Component, Controller, CRD, etc. It has one type: **Entity**.
 
 An Entity's `kind` field determines what it represents. A controller is an Entity with `kind: controller`. A CRD is an Entity with `kind: crd`. This avoids duplication — HostedClusterReconciler is one object, not a Component and a Controller that must stay in sync.
 
@@ -21,7 +21,7 @@ Different kinds carry different optional fields. The scanner populates only the 
 | `id` | string | yes | Unique, deterministic identifier (see ID rules below) |
 | `name` | string | yes | Human-readable name (e.g., "HostedClusterReconciler") |
 | `kind` | enum | yes | What this entity represents (see Kind table) |
-| `description` | string | no | Extracted from GoDoc or documentation. Never written by Atlas. |
+| `description` | string | no | Extracted from GoDoc or documentation. Never written by CodeAtlas. |
 | `package` | string | no | Go package path (e.g., `pkg/controllers/hostedcluster`) |
 | `files` | string[] | no | Files that implement this entity |
 | `source` | Source | yes | Where this entity was discovered |
@@ -210,7 +210,7 @@ Relationships are the edges of the Atlas Graph. They are first-class citizens �
 
 ### Evidence
 
-This is what makes Atlas trustworthy. Every relationship carries proof — not just "where" it was found, but "what" was found.
+This is what makes CodeAtlas trustworthy. Every relationship carries proof — not just "where" it was found, but "what" was found.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -220,7 +220,7 @@ This is what makes Atlas trustworthy. Every relationship carries proof — not j
 | `snippet` | string | no | The actual code or text that proves the relationship (1-2 lines max) |
 | `reason` | string | no | Human-readable explanation of why this relationship exists |
 
-When a user clicks a relationship and asks "why does Atlas think HostedCluster creates HostedControlPlane?" — the `evidence` answers it.
+When a user clicks a relationship and asks "why does CodeAtlas think HostedCluster creates HostedControlPlane?" — the `evidence` answers it.
 
 ### Confidence Levels
 
@@ -382,7 +382,7 @@ These are documented but not resolved. They don't block V1.
 
 ### Workflows
 
-Eventually Atlas should model reconciliation workflows:
+Eventually CodeAtlas should model reconciliation workflows:
 
 ```
 HostedCluster Reconcile()
@@ -401,7 +401,7 @@ A workflow would be an ordered sequence of steps, each pointing to a function en
 
 Today, kind-specific fields (`reconciles`, `watches`, `conditions`, `group`, `version`) live directly on the Entity. This works for V1 because HyperShift is the only target.
 
-Eventually, if Atlas supports other projects (controller-runtime, Operator SDK, Kubebuilder, plain Kubernetes), the schema should split:
+Eventually, if CodeAtlas supports other projects (controller-runtime, Operator SDK, Kubebuilder, plain Kubernetes), the schema should split:
 
 ```
 Entity (core — universal)
@@ -444,7 +444,7 @@ A future `discoveredBy` field would replace the single `source` with an array:
 }
 ```
 
-The viewer could then show corroboration — "this entity was confirmed by 3 independent parsers" — making Atlas's claims visibly stronger.
+The viewer could then show corroboration — "this entity was confirmed by 3 independent parsers" — making CodeAtlas's claims visibly stronger.
 
 **Not in V1.** Today `source` is a single object pointing to the primary discovery. But the scanner should already be aware that multiple parsers may find the same entity — it needs a merge strategy (first-wins, highest-confidence-wins, or merge-all). Designing that merge is the prerequisite for `discoveredBy`.
 

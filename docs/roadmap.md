@@ -1,6 +1,6 @@
 # Roadmap
 
-Atlas develops in **phases**. Each phase builds on the previous and unlocks the next. A phase is done when its success metric passes.
+CodeAtlas develops in **phases**. Each phase builds on the previous and unlocks the next. A phase is done when its success metric passes.
 
 ---
 
@@ -145,32 +145,34 @@ Atlas develops in **phases**. Each phase builds on the previous and unlocks the 
 
 Capabilities not yet scheduled. Captured so they're not lost.
 
-### Version Intelligence
+### Phase 9: Incremental Scanning
 
-Compare architecture across branches and releases.
+Keep the graph up to date without full re-scans.
 
-- Scan different branches (e.g., `release-4.19` vs `release-4.20`)
-- `atlas diff release-4.19.json release-4.20.json`
-- Highlight added, removed, and changed entities and relationships
+- `atlas watch` — filesystem monitoring, re-scan changed files only
+- Graph patching — update entities/relationships in-place instead of rebuilding
+- Partial re-scan — scope to specific packages or directories
+- Live MCP refresh — consumers see updated graph without server restart
 
-**Depends on:** Stable, deterministic graph (done). `commit` and `branch` fields already in schema.
+**Depends on:** Discovery metadata (ModifiedTime already captured). Scanner pipeline modularization.
 
-### Continuous Architecture Intelligence
+### Phase 10: Architecture Intelligence
 
-Deterministic graph analyses — no AI required.
+Deterministic graph analyses that surface architectural changes — no AI required.
 
-- Architecture diff on every PR (what relationships changed?)
-- Dependency drift detection (new imports, removed calls)
-- Orphan detection (entities with no incoming relationships)
-- Dead code identification (functions with no callers and no tests)
-- Missing test coverage (high-change entities without tested_by edges)
-- Architecture regression detection (broken relationships between releases)
+- Version intelligence: `atlas diff old.json new.json` — compare graphs across branches/releases
+- PR-level architecture diff — what relationships changed in this PR?
+- Dependency drift detection — new imports, removed calls between versions
+- Orphan detection — entities with no incoming relationships
+- Dead code identification — functions with no callers and no tests
+- Missing test coverage — high-change entities without tested_by edges
+- Architecture regression — broken relationships between releases
 
-**Depends on:** Version Intelligence (graph diff).
+**Depends on:** Incremental Scanning (Phase 9). `commit` and `branch` fields already in schema.
 
 ### Multi-Repository Knowledge
 
-Atlas scans any Go repository.
+CodeAtlas scans any Go repository.
 
 - Any large Go project with controllers, CRDs, and complex call graphs
 - Cross-repo relationship tracking (e.g., HyperShift → cluster-api → machine-api)
@@ -180,20 +182,10 @@ Atlas scans any Go repository.
 
 ### AI Consumer Ecosystem
 
-Every AI assistant understands codebases by querying Atlas instead of reading thousands of files.
+Every AI assistant understands codebases by querying CodeAtlas instead of reading thousands of files.
 
 - Claude Code (current)
 - VS Code / Cursor / Continue.dev / Copilot Chat (any MCP client)
-- Atlas API for non-MCP consumers
+- CodeAtlas API for non-MCP consumers
 
 **Depends on:** MCP server (done). Intent guidance (Phase 8).
-
-### Live Repository Monitoring
-
-Keep the graph up to date as you code.
-
-- `atlas watch /path/to/hypershift` — filesystem monitoring
-- Incremental re-scan (only changed files)
-- Auto-refresh consumers
-
-**Depends on:** Discovery metadata (ModifiedTime already captured).

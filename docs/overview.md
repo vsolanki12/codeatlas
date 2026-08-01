@@ -2,9 +2,9 @@
 
 Understand any codebase in minutes instead of hours by generating architecture directly from source code.
 
-Atlas is a code intelligence platform that works with any Go repository. It parses Go source, YAML, docs, and tests to produce a structured graph of every entity and relationship in the codebase.
+CodeAtlas is a code intelligence platform that works with any Go repository. It parses Go source, YAML, docs, and tests to produce a structured graph of every entity and relationship in the codebase.
 
-Atlas never invents architecture. Every entity and relationship must be traceable back to source code.
+CodeAtlas never invents architecture. Every entity and relationship must be traceable back to source code.
 
 ## End-to-End Pipeline
 
@@ -63,14 +63,14 @@ Run `atlas serve` then `atlas_stats` for current entity/relationship counts from
 
 ## Non-Goals
 
-Atlas will never become:
+CodeAtlas will never become:
 
-- **A CI/CD platform.** Atlas reads code, it doesn't build or deploy it.
-- **A Kubernetes dashboard.** Atlas understands the code that manages clusters, not the clusters themselves.
-- **A GitHub replacement.** Atlas consumes repositories, it doesn't host them.
-- **An IDE.** Atlas provides intelligence to IDEs, it isn't one.
-- **A documentation generator.** Atlas extracts architecture from code. It doesn't write docs.
-- **An AI that invents architecture.** Atlas extracts what exists. If a parser can't determine a fact, Atlas doesn't guess. (See [ADR-0009](adr/0009-deterministic-over-intelligent.md).)
+- **A CI/CD platform.** CodeAtlas reads code, it doesn't build or deploy it.
+- **A Kubernetes dashboard.** CodeAtlas understands the code that manages clusters, not the clusters themselves.
+- **A GitHub replacement.** CodeAtlas consumes repositories, it doesn't host them.
+- **An IDE.** CodeAtlas provides intelligence to IDEs, it isn't one.
+- **A documentation generator.** CodeAtlas extracts architecture from code. It doesn't write docs.
+- **An AI that invents architecture.** CodeAtlas extracts what exists. If a parser can't determine a fact, CodeAtlas doesn't guess. (See [ADR-0009](adr/0009-deterministic-over-intelligent.md).)
 
 ## Quick Start
 

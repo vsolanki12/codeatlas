@@ -2,9 +2,9 @@
 
 > Understand any codebase in minutes instead of hours by generating architecture directly from source code.
 
-Atlas is a code intelligence platform that parses Go source, Kubernetes manifests, documentation, and tests to build a structured graph of every entity and relationship in a codebase. It answers questions like *what creates this?*, *which tests cover this?*, *what breaks if I change this?* — deterministically, backed by evidence from the source code itself.
+CodeAtlas is a code intelligence platform that parses Go source, Kubernetes manifests, documentation, and tests to build a structured graph of every entity and relationship in a codebase. It answers questions like *what creates this?*, *which tests cover this?*, *what breaks if I change this?* — deterministically, backed by evidence from the source code itself.
 
-Atlas never invents architecture. It extracts it.
+CodeAtlas never invents architecture. It extracts it.
 
 ---
 
@@ -92,7 +92,7 @@ Four layers:
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools | Answer questions about the graph |
 | **Guidance** | Tool descriptions | Teach consumers which tool serves which engineering intent |
-| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
 Three rules:
 1. **The scanner is the only thing that parses code.** Everything else reads the graph.
@@ -103,7 +103,7 @@ Three rules:
 
 ## Core Principles
 
-- **Extract, never invent.** If a parser can't determine a fact, Atlas doesn't guess.
+- **Extract, never invent.** If a parser can't determine a fact, CodeAtlas doesn't guess.
 - **Evidence for every relationship.** Every edge carries a file, line, snippet, and reason.
 - **Deterministic before intelligent.** Same commit, same graph, every time.
 - **Graph is the product.** Everything else consumes it.
@@ -151,8 +151,8 @@ codeatlas/
 │   ├── query/              Query engine: Index, search, traversal, compound queries
 │   └── mcpserver/          MCP server: 15 tools via go-sdk
 └── docs/
-    ├── vision.md           Why Atlas exists
-    ├── overview.md         Atlas in 5 minutes
+    ├── vision.md           Why CodeAtlas exists
+    ├── overview.md         CodeAtlas in 5 minutes
     ├── architecture.md     Architecture deep-dive
     ├── data-model.md       Graph schema specification
     ├── roadmap.md          Phase-by-phase development history
@@ -163,13 +163,13 @@ codeatlas/
 
 ## Non-Goals
 
-Atlas will never become:
+CodeAtlas will never become:
 
-- **A CI/CD platform.** Atlas reads code, it doesn't build or deploy it.
-- **A Kubernetes dashboard.** Atlas understands the code that manages clusters, not the clusters themselves.
-- **An IDE.** Atlas provides intelligence to IDEs, it isn't one.
-- **A documentation generator.** Atlas extracts architecture, it doesn't write docs.
-- **An AI that invents architecture.** If a parser can't determine it, Atlas doesn't guess.
+- **A CI/CD platform.** CodeAtlas reads code, it doesn't build or deploy it.
+- **A Kubernetes dashboard.** CodeAtlas understands the code that manages clusters, not the clusters themselves.
+- **An IDE.** CodeAtlas provides intelligence to IDEs, it isn't one.
+- **A documentation generator.** CodeAtlas extracts architecture, it doesn't write docs.
+- **An AI that invents architecture.** If a parser can't determine it, CodeAtlas doesn't guess.
 
 ---
 
@@ -177,8 +177,8 @@ Atlas will never become:
 
 | Document | Purpose |
 |----------|---------|
-| [Vision](docs/vision.md) | Why Atlas exists, who it's for, where it's going |
-| [Overview](docs/overview.md) | Atlas in 5 minutes — quick start for new readers |
+| [Vision](docs/vision.md) | Why CodeAtlas exists, who it's for, where it's going |
+| [Overview](docs/overview.md) | CodeAtlas in 5 minutes — quick start for new readers |
 | [Architecture](docs/architecture.md) | Product, code, and pipeline architecture |
 | [Data Model](docs/data-model.md) | Entity and relationship schema specification |
 | [Roadmap](docs/roadmap.md) | Phase-by-phase development history and future plans |

@@ -28,16 +28,16 @@ Source Repository
 
 ## Context
 
-Atlas has 15 MCP tools across four layers:
+CodeAtlas has 15 MCP tools across four layers:
 
 | Layer | What | Purpose |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
 | **Retrieval** | 15 MCP tools | Answer questions about the graph |
 | **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves and what the natural next query is |
-| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with Atlas |
+| **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
-Atlas itself doesn't decide anything. The consumer does. Today that's Claude. Tomorrow it could be VS Code, Cursor, Windsurf, Continue.dev, or any MCP-compatible client. The four-layer model makes this future-proof.
+CodeAtlas itself doesn't decide anything. The consumer does. Today that's Claude. Tomorrow it could be VS Code, Cursor, Windsurf, Continue.dev, or any MCP-compatible client. The four-layer model makes this future-proof.
 
 Layers 1 and 2 are built. Layer 3 is Phase 8. Layer 4 is the consumer — already exists (Claude Code + CLI), grows organically.
 
@@ -45,7 +45,7 @@ The gap isn't capability — it's intent recognition. When a user asks "why is r
 
 ## Philosophy
 
-> Engineers don't think in tools — they think in tasks. Atlas should recognize the task first, then choose the smallest set of graph queries needed to answer it.
+> Engineers don't think in tools — they think in tasks. CodeAtlas should recognize the task first, then choose the smallest set of graph queries needed to answer it.
 
 ## Intent Flow
 
@@ -236,7 +236,7 @@ Traditional MCP:
 User → Choose Tool → Run Tool
 ```
 
-Atlas with intent guidance:
+CodeAtlas with intent guidance:
 ```
 User → Recognize engineering task → Select best entry tool → Follow "usually followed by" chain → Done
 ```
