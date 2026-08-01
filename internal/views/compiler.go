@@ -2,6 +2,7 @@ package views
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
@@ -57,6 +58,20 @@ func compileController(e *domain.Entity, outRels, inRels []domain.Relationship, 
 		case domain.RelTestedBy:
 			if t := byID[r.To]; t != nil {
 				v.Tests = append(v.Tests, t.Name)
+			}
+		}
+	}
+
+	existingCreates := make(map[string]bool, len(v.Creates))
+	for _, c := range v.Creates {
+		existingCreates[c] = true
+	}
+	for _, p := range e.Properties {
+		if strings.HasPrefix(p, "creates:") {
+			name := strings.TrimPrefix(p, "creates:")
+			if !existingCreates[name] {
+				existingCreates[name] = true
+				v.Creates = append(v.Creates, name)
 			}
 		}
 	}

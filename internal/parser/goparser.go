@@ -36,6 +36,8 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	var controllerSource domain.Source
 	var controllerWatches []string
 	var controllerCalls []string
+	var setupHelperMethods []string
+	var setupReceiverVar string
 
 	typeComments := make(map[string]string)
 	implPairs := make(map[string][]string) // structName -> []interfaceName
@@ -141,6 +143,9 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		}
 
 		if fn.Name.Name == "SetupWithManager" && fn.Body != nil {
+			if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 {
+				setupReceiverVar = fn.Recv.List[0].Names[0].Name
+			}
 			ast.Inspect(fn.Body, func(innerNode ast.Node) bool {
 				callExpr, ok := innerNode.(*ast.CallExpr)
 				if !ok {
@@ -155,6 +160,9 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 							}
 						}
 					}
+					if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == setupReceiverVar {
+						setupHelperMethods = append(setupHelperMethods, methodName)
+					}
 				}
 				return true
 			})
@@ -167,6 +175,10 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	})
 
 	if controllerTypeName != "" {
+		var props []string
+		if len(setupHelperMethods) > 0 {
+			props = extractK8sTypesFromHelpers(astFile, controllerTypeName, setupReceiverVar, setupHelperMethods)
+		}
 		entities = append(entities, domain.Entity{
 			ID:          fmt.Sprintf("controller:%s.%s", packageName, controllerTypeName),
 			Name:        controllerTypeName,
@@ -177,6 +189,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			Watches:     controllerWatches,
 			Calls:       controllerCalls,
 			Implements:  implPairs[controllerTypeName],
+			Properties:  props,
 		})
 	}
 
@@ -388,4 +401,56 @@ func extractTypeName(expr ast.Expr) string {
 	}
 
 	return ""
+}
+
+var k8sResourceTypes = map[string]bool{
+	"Deployment": true, "StatefulSet": true, "DaemonSet": true,
+	"ReplicaSet": true, "Job": true, "CronJob": true,
+	"Service": true, "ConfigMap": true, "Secret": true,
+}
+
+func extractK8sTypesFromHelpers(astFile *ast.File, controllerType, receiverVar string, helperNames []string) []string {
+	helperSet := make(map[string]bool, len(helperNames))
+	for _, name := range helperNames {
+		helperSet[name] = true
+	}
+
+	seen := make(map[string]bool)
+	var props []string
+
+	for _, decl := range astFile.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil || fn.Recv == nil {
+			continue
+		}
+		if receiverTypeName(fn) != controllerType {
+			continue
+		}
+		if !helperSet[fn.Name.Name] {
+			continue
+		}
+
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			unary, ok := n.(*ast.UnaryExpr)
+			if !ok || unary.Op != token.AND {
+				return true
+			}
+			comp, ok := unary.X.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			sel, ok := comp.Type.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			typeName := sel.Sel.Name
+			if k8sResourceTypes[typeName] && !seen[typeName] {
+				seen[typeName] = true
+				props = append(props, "creates:"+typeName)
+			}
+			return true
+		})
+	}
+
+	return props
 }
