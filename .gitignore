@@ -21,6 +21,7 @@ web/build/
 atlas-graph.json
 atlas.json
 /atlas
+web/
 
 # IDE
 .vscode/
