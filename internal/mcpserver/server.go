@@ -165,7 +165,7 @@ type searchInput struct {
 func registerSearch(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
-		Description: "Search all entities by text. Matches across name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match). Start here for any \"where is X\" or \"find X\" question.",
+		Description: "Search all entities by text. Matches across name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
 		results := idx.Search(input.Query, 20)
 		text := query.FormatEntityList(results)
@@ -206,7 +206,7 @@ type hotspotsInput struct {
 func registerHotspots(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_hotspots",
-		Description: "Find most-changed or stalest entities by git history. Requires --temporal scan. Use for identifying test gaps (high-change + no tests = risk) or finding code that needs attention.",
+		Description: "Find most-changed or stalest entities by git history. Requires --temporal scan.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input hotspotsInput) (*mcp.CallToolResult, any, error) {
 		results := idx.Hotspots(input.Kind, input.Stale, 20)
 		if len(results) == 0 {
@@ -301,7 +301,7 @@ type investigateInput struct {
 func registerInvestigate(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_investigate",
-		Description: "Get everything about an entity in one call: full details, all relationships grouped by type, callers, tests, and same-file siblings. Replaces 4-5 primitive tool calls. Start here for any \"why is X broken\" or \"tell me about X\" question. Often sufficient on its own — only call atlas_explain or atlas_impact if the user explicitly asks for architecture trace or blast radius.",
+		Description: "Get everything about an entity in one call: full details, all relationships grouped by type, callers, tests, and same-file siblings. Replaces 4-5 primitive tool calls.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input investigateInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Investigate(input.EntityID)
 		if r == nil {
@@ -324,7 +324,7 @@ type explainInput struct {
 func registerExplain(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_explain",
-		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a tree showing the architectural narrative. Replaces reading source files to understand flow. Start here for any \"how does X work\" question. Usually sufficient alone — only call atlas_investigate if the user asks to deep-dive a specific entity from the tree.",
+		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a tree showing the architectural narrative. Replaces reading source files to understand flow.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input explainInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Explain(input.EntityID, input.Depth)
 		if r.Root == nil {
@@ -346,7 +346,7 @@ type impactInput struct {
 func registerImpact(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_impact",
-		Description: "Blast radius analysis: walk the call chain upstream to find all controllers, tests, resources, files, and owners affected by changing this entity. Use for PR review preparation. Start here for any \"what breaks if I change X\" question. Usually sufficient alone — only call atlas_callers or atlas_commits if the user asks for deeper caller detail or change history.",
+		Description: "Blast radius analysis: walk the call chain upstream to find all controllers, tests, resources, files, and owners affected by changing this entity. Use for PR review preparation.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input impactInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Impact(input.EntityID)
 		if r == nil {
