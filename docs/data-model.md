@@ -323,7 +323,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "atlas-graph",
-  "schemaVersion": "1.3.0",
+  "schemaVersion": "1.4.0",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "https://github.com/openshift/hypershift",
   "commit": "abc1234def5678",
@@ -333,6 +333,8 @@ The top-level output of `atlas scan`. One JSON file containing everything.
   "entities": [],
   "relationships": [],
   "fileTimestamps": {},
+  "views": {},
+  "questions": {},
 
   "stats": {
     "entities": {
@@ -363,6 +365,8 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `entities` — flat array of all entities (all kinds mixed together, distinguished by `kind`).
 - `relationships` — flat array of all relationships.
 - `fileTimestamps` — per-file RFC3339 timestamps, used for incremental scanning (skip unchanged files on re-scan). Optional; omitted on first scan.
+- `views` — pre-computed engineering views for controllers and CRDs, generated during scan. Each keyed by entity ID, containing ownership, resources, tests, files, and temporal data.
+- `questions` — deterministic Q&A pairs derived from views (e.g., `"reconciles:HostedClusterReconciler"` → `"HostedCluster"`). Enables instant lookup for common engineering questions.
 
 ---
 

@@ -1,6 +1,6 @@
 # CodeAtlas
 
-**A deterministic reasoning engine for software architecture.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of every entity and relationship — then serves it to AI assistants through 9 [MCP](https://modelcontextprotocol.io/) tools.
+**A deterministic reasoning engine for software architecture.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of every entity and relationship — then serves it to AI assistants through 11 [MCP](https://modelcontextprotocol.io/) tools.
 
 Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Same answers, fraction of the cost, backed by evidence from the code itself.
 
@@ -122,7 +122,7 @@ Add to `~/.mcp.json`:
 }
 ```
 
-Restart Claude Code. All 9 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
+Restart Claude Code. All 11 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
 
 ---
 
@@ -135,15 +135,19 @@ Restart Claude Code. All 9 tools are now available. Works with any MCP-compatibl
 | "Tell me everything about X" | `atlas_investigate` | Full entity details, all relationships, callers, tests, siblings — one call |
 | "Where is X defined?" | `atlas_search` | Relevance-ranked matches across names, packages, imports, literals |
 | "What changed the most?" | `atlas_temporal` | Most-changed, stalest, or recently-modified entities by git history |
+| "Quick summary of X" | `atlas_view` | Pre-computed engineering view: manages, managed by, tests, files, owners |
+| "How does X work?" (one call) | `atlas_ask` | View + explain/impact/investigate — one call, complete answer |
 
 ---
 
 ## All MCP Tools
 
-9 tools served via `atlas serve`:
+11 tools served via `atlas serve`:
 
 | Tool | Purpose |
 |------|---------|
+| `atlas_ask` | One-call query planner: entity + intent → view + deep analysis. Use this first |
+| `atlas_view` | Pre-computed engineering view for a controller or CRD. Zero graph traversal |
 | `atlas_investigate` | Everything about one entity in 1 call: details, relationships, callers, tests, siblings |
 | `atlas_explain` | Architectural narrative: reconciles → creates → calls → tested_by tree |
 | `atlas_impact` | Blast radius: upstream callers, controllers, tests, resources, owners |
@@ -184,6 +188,6 @@ Restart Claude Code. All 9 tools are now available. Works with any MCP-compatibl
 
 ## Status
 
-**Schema:** 1.3.0 · **MCP Tools:** 9 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 10 (Tool Consolidation)
+**Schema:** 1.4.0 · **MCP Tools:** 11 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 13 (Question Index)
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

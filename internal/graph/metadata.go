@@ -41,7 +41,7 @@ func BuildGraph(repoPath string, entities []domain.Entity, relationships []domai
 
 	return domain.Graph{
 		Schema:        "codeatlas",
-		SchemaVersion: "1.3.0",
+		SchemaVersion: "1.4.0",
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 		Repository:    repoPath,
 		Commit:        git.Commit,

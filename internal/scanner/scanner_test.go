@@ -89,8 +89,8 @@ func TestScan_EndToEnd(t *testing.T) {
 	if g.Schema != "codeatlas" {
 		t.Errorf("schema = %q, want %q", g.Schema, "codeatlas")
 	}
-	if g.SchemaVersion != "1.3.0" {
-		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.3.0")
+	if g.SchemaVersion != "1.4.0" {
+		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.4.0")
 	}
 	if len(g.Entities) == 0 {
 		t.Error("graph has no entities")

@@ -19,6 +19,10 @@ type Index struct {
 	fromEntity map[string][]*domain.Relationship
 	toEntity   map[string][]*domain.Relationship
 	byRelType  map[domain.RelationshipType][]*domain.Relationship
+
+	viewByID   map[string]*domain.View
+	viewByName map[string]*domain.View
+	questions  map[string]string
 }
 
 func LoadGraph(path string) (*Index, error) {
@@ -59,7 +63,43 @@ func newIndex(g domain.Graph) *Index {
 		idx.byRelType[r.Type] = append(idx.byRelType[r.Type], r)
 	}
 
+	idx.viewByID = make(map[string]*domain.View, len(g.Views))
+	idx.viewByName = make(map[string]*domain.View, len(g.Views))
+	for id, v := range g.Views {
+		v := v
+		idx.viewByID[id] = &v
+		idx.viewByName[strings.ToLower(v.EntityName)] = &v
+	}
+
+	idx.questions = g.Questions
+
 	return idx
+}
+
+func (idx *Index) GetView(entityID string) *domain.View {
+	return idx.viewByID[entityID]
+}
+
+func (idx *Index) SearchView(name string) *domain.View {
+	lower := strings.ToLower(name)
+	if v := idx.viewByName[lower]; v != nil {
+		return v
+	}
+	for k, v := range idx.viewByName {
+		if strings.Contains(k, lower) {
+			return v
+		}
+	}
+	return nil
+}
+
+func (idx *Index) LookupQuestion(verb, subject string) (string, bool) {
+	if idx.questions == nil {
+		return "", false
+	}
+	key := verb + ":" + subject
+	ans, ok := idx.questions[key]
+	return ans, ok
 }
 
 func ParseKind(s string) (domain.EntityKind, bool) {

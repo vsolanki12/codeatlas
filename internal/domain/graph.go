@@ -12,4 +12,6 @@ type Graph struct {
 	Entities       []Entity          `json:"entities"`
 	Relationship   []Relationship    `json:"relationship"`
 	FileTimestamps map[string]string `json:"fileTimestamps,omitempty"`
+	Views          map[string]View   `json:"views,omitempty"`
+	Questions      map[string]string `json:"questions,omitempty"`
 }

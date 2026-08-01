@@ -13,6 +13,7 @@ import (
 	"github.com/vsolanki12/codeatlas/internal/parser"
 	"github.com/vsolanki12/codeatlas/internal/storage"
 	"github.com/vsolanki12/codeatlas/internal/temporal"
+	"github.com/vsolanki12/codeatlas/internal/views"
 )
 
 // Result holds the output of a scan — the graph and summary stats.
@@ -199,6 +200,10 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	if err := graph.ValidateGraph(g); err != nil {
 		return nil, fmt.Errorf("graph validation: %w", err)
 	}
+
+	// Step 8b: Compile knowledge views and question index
+	g.Views = views.Compile(g.Entities, g.Relationship)
+	g.Questions = views.CompileQuestions(g.Views)
 
 	// Step 9: Write JSON
 	if err := storage.WriteGraph(outputPath, g); err != nil {

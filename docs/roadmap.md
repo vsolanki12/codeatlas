@@ -164,6 +164,47 @@ Development progresses in phases. Each builds on the previous.
 
 ---
 
+### Phase 11: Knowledge Views
+
+**Delivered:** View compiler — deterministic engineering summaries generated during scan for every controller and CRD.
+
+- `internal/views/compiler.go` — compiles views from entities + relationships
+- `domain.View` struct: reconciles, creates, watches, calls, tests, files, owners, temporal data
+- Views stored in graph as `views` field (first-class JSON artifacts)
+- `atlas_view` MCP tool — zero graph traversal, pure lookup
+- 139 views generated for HyperShift (all controllers + CRDs)
+
+**Result:** One-call entity summary. Claude retrieves `NodePool View` instead of traversing graph nodes. Schema 1.4.0.
+
+---
+
+### Phase 12: Query Planner
+
+**Delivered:** `atlas_ask` — one MCP call replaces multi-tool chains.
+
+- `Ask(entity, intent)` method: search → view → compound query in one call
+- Intents: `understand` (view + explain), `impact` (view + impact), `debug` (view + investigate)
+- Default (no intent): returns view only (cheapest path)
+- Tool description guides Claude to use `atlas_ask` first
+
+**Result:** Claude asks one question, gets complete answer. 11 MCP tools total.
+
+---
+
+### Phase 13: Question Index
+
+**Delivered:** Deterministic Q&A pairs generated during scan, stored in graph.
+
+- `CompileQuestions()` — derives answers from pre-computed views
+- Question templates: reconciles, reconciled-by, creates, created-by, tests, owns, files, watches
+- Stored in graph as `questions` field (key = `"verb:subject"`, value = answer)
+- 60 Q&A pairs generated for HyperShift
+- `LookupQuestion(verb, subject)` for instant retrieval
+
+**Result:** Common engineering questions answered by pure lookup — no graph traversal, no AI reasoning.
+
+---
+
 ## Vision: Deterministic Reasoning Engine
 
 CodeAtlas is not a graph queried by AI. It is a **deterministic reasoning engine for software architecture**.
@@ -182,18 +223,112 @@ A graph stores facts. A reasoning engine derives higher-level, reusable engineer
 
 ---
 
-## Future
+## Next: Moving Reasoning from Claude into Atlas
+
+Phases 1–10 optimized retrieval. Phases 11–13 optimize what Claude has to think about. The remaining token cost is Claude reasoning over graph data — the fix is to move that reasoning into the scan phase.
+
+| Phase | Goal | Expected Additional Savings |
+|-------|------|-----------------------------|
+| 11. Knowledge Views | Generate lifecycle, ownership, dependencies, tests, execution flow during scan | 5–10% |
+| 12. Query Planner | Atlas internally orchestrates graph traversals and returns one result | 5–10% |
+| 13. Knowledge Cache + Question Index | Cache precomputed answers to common engineering questions | 5–8% |
+| 14. Stateful Sessions (optional) | Maintain investigation context across a conversation | Depends on workflow |
+
+Target: ~92–95% total reduction (from current ~70–80%).
+
+---
+
+### Phase 11: Knowledge Views
+
+The most important remaining phase. A **view compiler** — not a cache, not AI. Deterministic artifacts generated during `atlas scan`, stored as first-class graph objects alongside entities and relationships.
+
+Instead of storing only entities and relationships, compile higher-level engineering knowledge:
+
+- **Lifecycle**: How an entity progresses through states (e.g., NodePool: Pending → Provisioning → Ready)
+- **Execution Flow**: Ordered call chain from reconciler entry to resource creation
+- **Ownership**: Who owns, creates, watches, and tests this entity
+- **Resources**: What Kubernetes resources are created/managed
+- **Configuration**: Environment variables, feature gates, constants
+- **Tests**: What tests cover this entity and its call chain
+- **Status Flow**: Where status conditions are set and checked
+- **Failure Points**: High-change areas, missing tests, orphan relationships
+
+Each becomes a reusable engineering object. Claude retrieves `NodePool View` instead of traversing dozens of graph nodes.
+
+Engineering summaries, semantic compression, and multi-level detail are natural consequences of views — not separate features.
+
+**Aligns with:** Stage 3 (pre-computed views at scan time). ADR-0009 (deterministic over intelligent). ADR-0008 (graph is the product).
+
+---
+
+### Phase 12: Query Planner
+
+Today Claude decides the tool sequence: search → investigate → explain → impact. Tomorrow Atlas decides.
+
+```
+User question → Atlas Query Planner → Internal execution plan → One response
+```
+
+Claude shouldn't know or care whether Atlas executed search, explain, impact, or context internally. It asks a question, gets an answer.
+
+- 30–50% fewer MCP calls
+- Lower prompt overhead (Claude doesn't plan traversals)
+- More consistent answers (deterministic plan, not model-dependent)
+
+**Depends on:** Knowledge Views (Phase 11) — planner benefits from having pre-compiled views to route to.
+
+---
+
+### Phase 13: Knowledge Cache + Question Index
+
+Two cache levels:
+
+**Level 1 — Entity cache.** Reusable across many questions.
+```
+HostedCluster → Lifecycle View, Ownership View, Execution View
+```
+
+**Level 2 — Question cache.** Optimized for the most common engineering questions.
+```
+"Who creates HostedCluster?"     → answer
+"How does NodePool become Ready?" → answer
+"What reconciles HostedControlPlane?" → answer
+```
+
+Level 1 is reusable building material. Level 2 is the final product — deterministic answers stored directly in the graph. Claude only rewrites into English.
+
+**Depends on:** Knowledge Views (Phase 11). Query Planner (Phase 12) routes to cached answers.
+
+---
+
+### Phase 14: Stateful Sessions (Optional)
+
+Architectural change — Atlas becomes stateful.
+
+Current: each MCP call is independent. Future: Atlas remembers within a session:
+- Current subsystem, controller, entity
+- Previous investigation context
+- What was already retrieved
+
+`"What creates it?"` no longer requires another search — Atlas already knows the subject.
+
+This changes Atlas from a stateless query engine into a stateful service. Separate track from the deterministic pipeline above.
+
+---
+
+## Other Future Work
 
 ### Architecture Intelligence
 
-Deterministic graph analyses that surface architectural changes — no AI required.
+Deterministic graph analyses — no AI required.
 
 - `atlas diff old.json new.json` — compare graphs across branches/releases
 - Dead code identification — functions with no callers and no tests
 - Missing test coverage — high-change entities without tested_by edges
 - Orphan detection — entities with no incoming relationships
+- Incremental knowledge generation — if only NodePool.go changed, only regenerate NodePool views
 
-**Depends on:** Incremental Scanning (done). Aligns with Stage 2.
+**Depends on:** Incremental Scanning (done). Aligns with Phase 11.
 
 ### Multi-Repository Knowledge
 

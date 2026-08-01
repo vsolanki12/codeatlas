@@ -187,6 +187,108 @@ func FormatStats(s *GraphStats) string {
 	return b.String()
 }
 
+func FormatAsk(r *AskResult) string {
+	var b strings.Builder
+
+	if r.View != nil {
+		b.WriteString(FormatView(r.View))
+	} else {
+		b.WriteString(FormatEntityFull(r.Entity))
+	}
+
+	if r.QAHit != "" {
+		fmt.Fprintf(&b, "\n--- Quick Answer ---\n%s\n", r.QAHit)
+	}
+
+	if r.Explanation != nil {
+		b.WriteString("\n--- Execution Flow ---\n")
+		b.WriteString(FormatExplanation(r.Explanation))
+	}
+	if r.Impact != nil {
+		b.WriteString("\n--- Blast Radius ---\n")
+		b.WriteString(FormatImpact(r.Impact))
+	}
+	if r.Investigation != nil {
+		b.WriteString("\n--- Full Investigation ---\n")
+		b.WriteString(FormatInvestigation(r.Investigation))
+	}
+
+	return b.String()
+}
+
+func FormatView(v *domain.View) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "=== %s (%s) ===\n", v.EntityName, v.Kind)
+	fmt.Fprintf(&b, "ID: %s\n", v.EntityID)
+	fmt.Fprintf(&b, "File: %s\n", v.File)
+	if v.Package != "" {
+		fmt.Fprintf(&b, "Package: %s\n", v.Package)
+	}
+	if v.Description != "" {
+		fmt.Fprintf(&b, "Description: %s\n", v.Description)
+	}
+
+	if v.Reconciles != "" || len(v.Creates) > 0 || len(v.Watches) > 0 {
+		b.WriteString("\n--- Manages ---\n")
+		if v.Reconciles != "" {
+			fmt.Fprintf(&b, "Reconciles: %s\n", v.Reconciles)
+		}
+		if len(v.Creates) > 0 {
+			fmt.Fprintf(&b, "Creates: %s\n", strings.Join(v.Creates, ", "))
+		}
+		if len(v.Watches) > 0 {
+			fmt.Fprintf(&b, "Watches: %s\n", strings.Join(v.Watches, ", "))
+		}
+	}
+
+	if v.ReconciledBy != "" || len(v.CreatedBy) > 0 || len(v.CalledBy) > 0 {
+		b.WriteString("\n--- Managed By ---\n")
+		if v.ReconciledBy != "" {
+			fmt.Fprintf(&b, "Reconciled by: %s\n", v.ReconciledBy)
+		}
+		if len(v.CreatedBy) > 0 {
+			fmt.Fprintf(&b, "Created by: %s\n", strings.Join(v.CreatedBy, ", "))
+		}
+		if len(v.CalledBy) > 0 {
+			fmt.Fprintf(&b, "Called by: %s\n", strings.Join(v.CalledBy, ", "))
+		}
+	}
+
+	if len(v.Calls) > 0 {
+		fmt.Fprintf(&b, "\n--- Calls (%d) ---\n%s\n", len(v.Calls), strings.Join(v.Calls, ", "))
+	}
+
+	fmt.Fprintf(&b, "\n--- Tests (%d) ---\n", v.TestCount)
+	if v.TestCount > 0 {
+		fmt.Fprintf(&b, "%s\n", strings.Join(v.Tests, ", "))
+	} else {
+		b.WriteString("(none)\n")
+	}
+
+	if len(v.Files) > 0 {
+		fmt.Fprintf(&b, "\n--- Files (%d) ---\n", len(v.Files))
+		for _, f := range v.Files {
+			b.WriteString(f)
+			b.WriteByte('\n')
+		}
+	}
+
+	if len(v.Owners) > 0 || v.ChangeCount > 0 {
+		b.WriteString("\n--- Ownership ---\n")
+		if len(v.Owners) > 0 {
+			fmt.Fprintf(&b, "Owners: %s\n", strings.Join(v.Owners, ", "))
+		}
+		if v.ChangeCount > 0 {
+			fmt.Fprintf(&b, "Changes: %d\n", v.ChangeCount)
+		}
+		if v.LastModified != "" {
+			fmt.Fprintf(&b, "Last modified: %s by %s\n", v.LastModified, v.LastAuthor)
+		}
+	}
+
+	return b.String()
+}
+
 var relDisplayOrder = []domain.RelationshipType{
 	domain.RelReconciles, domain.RelCreates, domain.RelCalls,
 	domain.RelWatches, domain.RelTestedBy, domain.RelOwns,

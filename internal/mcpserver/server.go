@@ -35,6 +35,8 @@ func registerTools(s *mcp.Server, idx *query.Index) {
 	registerInvestigate(s, idx)
 	registerExplain(s, idx)
 	registerImpact(s, idx)
+	registerView(s, idx)
+	registerAsk(s, idx)
 }
 
 
@@ -270,6 +272,54 @@ func registerImpact(s *mcp.Server, idx *query.Index) {
 			}, nil, nil
 		}
 		text := query.FormatImpact(r)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
+}
+
+type viewInput struct {
+	Entity string `json:"entity" jsonschema:"entity ID or name to get pre-computed knowledge view for"`
+}
+
+func registerView(s *mcp.Server, idx *query.Index) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "atlas_view",
+		Description: "Get a pre-computed engineering view for a controller or CRD: what it manages, what manages it, tests, files, and ownership. Generated during scanning, zero graph traversal.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input viewInput) (*mcp.CallToolResult, any, error) {
+		v := idx.GetView(input.Entity)
+		if v == nil {
+			v = idx.SearchView(input.Entity)
+		}
+		if v == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("No view found for: %s (views exist for controllers and CRDs only)", input.Entity)}},
+			}, nil, nil
+		}
+		text := query.FormatView(v)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
+}
+
+type askInput struct {
+	Entity string `json:"entity" jsonschema:"entity name or ID to ask about"`
+	Intent string `json:"intent,omitempty" jsonschema:"understand (how it works), impact (what breaks), or debug (everything about it). Default: view only"`
+}
+
+func registerAsk(s *mcp.Server, idx *query.Index) {
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "atlas_ask",
+		Description: "Ask an engineering question about an entity. Returns pre-computed knowledge view plus optional deep analysis. Use this FIRST — only use specific tools (explain, investigate, impact) for fine-grained control.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
+		r := idx.Ask(input.Entity, input.Intent)
+		if r == nil {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Entity not found: %s", input.Entity)}},
+			}, nil, nil
+		}
+		text := query.FormatAsk(r)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil

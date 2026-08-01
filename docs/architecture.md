@@ -34,7 +34,7 @@ Four-layer model:
 | Layer | What | Purpose |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
-| **Retrieval** | 9 MCP tools (primitives + compounds) | Answer questions about the graph |
+| **Retrieval** | 11 MCP tools (primitives + compounds + views) | Answer questions about the graph |
 | **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
@@ -72,11 +72,13 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
     │       │
     │       ├──► internal/temporal     Git history enrichment (LastAuthor, LastModified, ChangeCount)
     │       │
+    │       ├──► internal/views         Compiles pre-computed knowledge views from entities+rels
+    │       │
     │       └──► internal/storage      Writes and reads domain.Graph as JSON
     │
     ├──► internal/query        Query engine — Index, search, traversal, compound queries
     │
-    └──► internal/mcpserver    MCP server — 9 tools served via stdio transport
+    └──► internal/mcpserver    MCP server — 11 tools served via stdio transport
 ```
 
 | Package | Responsibility | Depends On |
@@ -90,8 +92,9 @@ cmd/atlas                     CLI entry point (scan, query, serve, stats, where,
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
 | `internal/origin` | Classifies import paths (stdlib, known repos, external) | Nothing |
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
+| `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
-| `internal/mcpserver` | MCP server: 9 tools via go-sdk stdio transport | `query` |
+| `internal/mcpserver` | MCP server: 11 tools via go-sdk stdio transport | `query` |
 
 Key constraints:
 - **Every package imports `domain`.** It is the shared vocabulary. `docs/data-model.md` is this vocabulary in English. `internal/domain` is the same vocabulary in Go. They match exactly.
@@ -199,6 +202,14 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
 │  Check: all relationship targets exist        │
 └───────────────┬───────────────────────────────┘
                 ▼
+┌─ 9b. Knowledge View Compilation ─────────────┐
+│  For each controller and CRD:                 │
+│    Compile ownership, resources, tests,       │
+│    files, temporal data into a View.          │
+│  Generate deterministic Q&A pairs from views. │
+│  Stored in graph as views + questions fields. │
+└───────────────┬───────────────────────────────┘
+                ▼
 ┌─ 10. Graph Writing ─────────────────────────┐
 │  Serialize to atlas-graph.json                │
 │  Include: schema version (1.3.0), commit,     │
@@ -208,7 +219,7 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
 ┌─ 11. Summary ────────────────────────────────┐
 │  Atlas scan complete.                         │
 │  (entity and relationship counts vary by scan) │
-│  Schema 1.3.0                                 │
+│  Schema 1.4.0                                 │
 └───────────────────────────────────────────────┘
 ```
 
@@ -225,6 +236,7 @@ Each step maps to code:
 | 7. Temporal Enrichment | `internal/temporal` | `Enrich()` |
 | 8. Relationship Building | `internal/graph` | `BuildRelationships()` |
 | 9. Graph Validation | `internal/graph` | `Validate()` |
+| 9b. View Compilation | `internal/views` | `Compile()`, `CompileQuestions()` |
 | 10. Graph Writing | `internal/storage` | `Write()` |
 | 11. Summary | `internal/scanner` | `PrintSummary()` |
 
@@ -250,8 +262,11 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 8 | Intent-based tool guidance (enriched MCP descriptions) | Attempted, reverted |
 | 9 | Incremental scanning (skip unchanged files) | Implemented |
 | 10 | Tool consolidation (14 → 9 tools) | Implemented |
+| 11 | Knowledge Views (pre-computed engineering summaries) | Implemented |
+| 12 | Query Planner (atlas_ask — one-call orchestration) | Implemented |
+| 13 | Question Index (deterministic Q&A pairs) | Implemented |
 
-Current state: 9 MCP tools, schema 1.3.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 11 MCP tools, schema 1.4.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 
