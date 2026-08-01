@@ -323,7 +323,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "atlas-graph",
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.2.0",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "https://github.com/openshift/hypershift",
   "commit": "abc1234def5678",

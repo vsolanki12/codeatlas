@@ -100,7 +100,7 @@ Key constraints:
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
 - **`mcpserver` depends only on `query`.** It's a thin MCP wrapper over the query engine.
 
-**Status:** Implemented. 164 tests across 11 packages, all green.
+**Status:** Implemented. Run `atlas_stats` for current counts.
 
 ### Architectural Risks
 
@@ -207,8 +207,8 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
                 ▼
 ┌─ 11. Summary ────────────────────────────────┐
 │  Atlas scan complete.                         │
-│  11,056 entities, 8,671 relationships         │
-│  Schema 1.2.0, duration 3m15s                 │
+│  (entity and relationship counts vary by scan) │
+│  Schema 1.2.0                                 │
 └───────────────────────────────────────────────┘
 ```
 
@@ -228,7 +228,7 @@ Each step maps to code:
 | 10. Graph Writing | `internal/storage` | `Write()` |
 | 11. Summary | `internal/scanner` | `PrintSummary()` |
 
-**Status:** Implemented. Latest scan: 11,056 entities, 8,671 relationships, 3m15s.
+**Status:** Implemented. Run `atlas_stats` for current scan numbers.
 
 ---
 
@@ -249,7 +249,7 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 7b | Blast radius analysis (atlas_impact) | Implemented |
 | 8 | Intent-based tool guidance (enriched MCP descriptions) | Planned |
 
-Current state: 11,056 entities, 8,671 relationships, 15 MCP tools, 164 tests, schema 1.2.0.
+Current state: 15 MCP tools, schema 1.2.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 
