@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
@@ -53,12 +54,28 @@ func main() {
 	}
 }
 
+func reorderArgs(args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		if strings.HasPrefix(args[i], "-") {
+			flags = append(flags, args[i])
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") && strings.Contains(args[i], "=") == false {
+				flags = append(flags, args[i+1])
+				i++
+			}
+		} else {
+			positional = append(positional, args[i])
+		}
+	}
+	return append(flags, positional...)
+}
+
 func runScan(args []string) {
 	fs := flag.NewFlagSet("scan", flag.ExitOnError)
 	repo := fs.String("repo", ".", "path to the repository root")
 	output := fs.String("output", "atlas.json", "output file path")
 	temporal := fs.Bool("temporal", false, "enrich entities with git history")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	if fs.NArg() > 0 {
 		*repo = fs.Arg(0)
@@ -99,7 +116,7 @@ func runSearch(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	kind := fs.String("kind", "", "filter by entity kind (controller, function, crd, etc.)")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	q := fs.Arg(0)
 	if q == "" && *kind == "" {
@@ -137,7 +154,7 @@ func runExplain(args []string) {
 	fs := flag.NewFlagSet("explain", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	depth := fs.Int("depth", 2, "traversal depth (max 3)")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -168,7 +185,7 @@ func runExplain(args []string) {
 func runImpact(args []string) {
 	fs := flag.NewFlagSet("impact", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -199,7 +216,7 @@ func runImpact(args []string) {
 func runInvestigate(args []string) {
 	fs := flag.NewFlagSet("investigate", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -231,7 +248,7 @@ func runAsk(args []string) {
 	fs := flag.NewFlagSet("ask", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	intent := fs.String("intent", "", "understand, impact, or debug (default: view only)")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entity := fs.Arg(0)
 	if entity == "" {
@@ -256,7 +273,7 @@ func runAsk(args []string) {
 func runView(args []string) {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entity := fs.Arg(0)
 	if entity == "" {
@@ -284,7 +301,7 @@ func runView(args []string) {
 func runQuery(args []string) {
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	remaining := fs.Args()
 	var kind, name string
@@ -334,7 +351,7 @@ func runContext(args []string) {
 	fs := flag.NewFlagSet("context", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	depth := fs.Int("depth", 1, "BFS traversal depth")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -355,7 +372,7 @@ func runContext(args []string) {
 func runWhere(args []string) {
 	fs := flag.NewFlagSet("where", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	symbol := fs.Arg(0)
 	if symbol == "" {
@@ -376,7 +393,7 @@ func runWhere(args []string) {
 func runStats(args []string) {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	idx, err := query.LoadGraph(*graphPath)
 	if err != nil {
@@ -390,7 +407,7 @@ func runStats(args []string) {
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(args)
+	fs.Parse(reorderArgs(args))
 
 	if err := mcpserver.Run(context.Background(), *graphPath); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
