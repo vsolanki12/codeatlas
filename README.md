@@ -32,33 +32,61 @@ $ grep -rn "Reconcile.*HostedCluster" --include="*.go"
 **With CodeAtlas** — same question, one tool call:
 
 ```
-> atlas_explain HostedClusterReconciler
+> atlas explain HostedClusterReconciler
 
-controller:hostedclusters.HostedClusterReconciler
-├── reconciles: HostedCluster (CRD)
-├── creates: ControlPlaneOperator, KubeAPIServer, Etcd, Ignition, ...
-│   ├── calls: reconcileEtcd(), reconcileKAS(), reconcileKonnectivity(), ...
-│   └── tested_by: TestReconcileHostedCluster, TestHostedClusterCreation
-└── 847 entities explored, 12 controllers found in chain
+controller:hostedcluster.HostedClusterReconciler | hostedcluster_controller.go:357
+  HostedClusterReconciler reconciles a HostedCluster object
+reconciles:
+  crd:hypershift.openshift.io.hostedcluster | HostedCluster is the primary representation of a HyperShi...
+calls:
+  function:hostedcluster.HostedClusterReconciler.reconcileLegacy | reconcile_legacy.go:52
+  calls:
+    function:azureutil.IsAroHCPByHC | azureutil.go:279
+    function:configrefs.ConfigMapRefs | refs.go:33
+    function:controlplaneoperator.HostedControlPlane | manifests.go:102
+    function:controlplaneoperator.PullSecret | manifests.go:111
+    function:hostedcluster.HostedClusterReconciler.defaultClusterIDsIfNeeded | hostedcluster_controller.go:5061
+    ...
+  function:nodepool.SetStatusCondition | conditions.go:46
+  function:nodepool.FindStatusCondition | conditions.go:91
+17 nodes explored
 ```
 
-**Without CodeAtlas** — "What breaks if I change `reconcileEtcd`?"
+**Without CodeAtlas** — "What breaks if I change `SetStatusCondition`?"
 
 ```
-$ grep -rn "reconcileEtcd" --include="*.go"
-# 6 matches. But what CALLS those callers? What controllers are upstream?
+$ grep -rn "SetStatusCondition" --include="*.go"
+# Matches in dozens of files. But what CALLS those callers? What controllers are upstream?
 # What tests cover the chain? grep can't answer that.
 ```
 
 **With CodeAtlas** — blast radius in one call:
 
 ```
-> atlas_impact reconcileEtcd
+> atlas impact SetStatusCondition
 
-Affected controllers: HostedClusterReconciler, NodePoolReconciler
-Affected tests:       TestReconcileEtcd, TestHostedClusterCreation (+ 3 more)
-Affected files:       14 files across 6 packages
-Owners:               @openshift/hypershift-etcd (last 30 days: 2 authors, 47 commits)
+=== Call Chain (49 callers) ===
+...
+
+=== Controllers (6) ===
+controller:aws.AWSEndpointServiceReconciler
+controller:awsprivatelink.AWSEndpointServiceReconciler
+controller:azureprivatelinkservice.AzurePrivateLinkServiceReconciler
+controller:hostedcluster.HostedClusterReconciler
+controller:hostedcontrolplane.HostedControlPlaneReconciler
+controller:nodepool.CAPI
+
+=== Resources (5) ===
+crd:hypershift.openshift.io.awsendpointservice
+crd:hypershift.openshift.io.hostedcluster
+crd:hypershift.openshift.io.hostedcontrolplane
+...
+
+=== Files Affected (15) ===
+control-plane-operator/controllers/awsprivatelink/awsprivatelink_controller.go
+control-plane-operator/controllers/hostedcontrolplane/hostedcontrolplane_controller.go
+hypershift-operator/controllers/hostedcluster/hostedcluster_controller.go
+...
 ```
 
 ---
@@ -104,15 +132,15 @@ atlas scan -repo /path/to/your/project -output atlas-graph.json
 atlas scan -repo /path/to/your/project -output atlas-graph.json -temporal
 
 # Start the MCP server
-atlas serve --graph atlas-graph.json
+atlas serve -graph atlas-graph.json
 
 # CLI queries (same capabilities as MCP tools)
-atlas stats --graph atlas-graph.json
-atlas search --graph atlas-graph.json reconcileEtcd
-atlas explain --graph atlas-graph.json controller:hostedcluster.HostedClusterReconciler
-atlas impact --graph atlas-graph.json reconcileEtcd
-atlas ask --graph atlas-graph.json NodePool --intent understand
-atlas view --graph atlas-graph.json HostedClusterReconciler
+atlas stats -graph atlas-graph.json
+atlas search -graph atlas-graph.json reconcileEtcd
+atlas explain -graph atlas-graph.json HostedClusterReconciler
+atlas impact -graph atlas-graph.json SetStatusCondition
+atlas ask -graph atlas-graph.json NodePool -intent understand
+atlas view -graph atlas-graph.json HostedClusterReconciler
 ```
 
 ### Connect to Claude Code
@@ -124,7 +152,7 @@ Add to `~/.mcp.json`:
   "mcpServers": {
     "codeatlas": {
       "command": "/path/to/atlas",
-      "args": ["serve", "--graph", "/path/to/atlas-graph.json"]
+      "args": ["serve", "-graph", "/path/to/atlas-graph.json"]
     }
   }
 }
