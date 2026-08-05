@@ -248,11 +248,12 @@ func runAsk(args []string) {
 	fs := flag.NewFlagSet("ask", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	intent := fs.String("intent", "", "understand, impact, or debug (default: view only)")
+	detail := fs.Bool("detail", false, "full verbose output (no compact formatting)")
 	fs.Parse(reorderArgs(args))
 
 	entity := fs.Arg(0)
 	if entity == "" {
-		fmt.Fprintln(os.Stderr, "usage: atlas ask <entity> [--intent understand|impact|debug] [--graph path]")
+		fmt.Fprintln(os.Stderr, "usage: atlas ask <entity> [-intent understand|impact|debug] [-detail] [-graph path]")
 		os.Exit(1)
 	}
 
@@ -267,6 +268,7 @@ func runAsk(args []string) {
 		fmt.Fprintf(os.Stderr, "entity not found: %s\n", entity)
 		os.Exit(1)
 	}
+	result.Detail = *detail
 	fmt.Print(query.FormatAsk(result))
 }
 

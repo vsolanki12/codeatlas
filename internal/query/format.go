@@ -203,7 +203,7 @@ func FormatAsk(r *AskResult) string {
 
 	if r.Explanation != nil {
 		b.WriteString("\n--- Execution Flow ---\n")
-		if hasView {
+		if hasView && !r.Detail {
 			b.WriteString(FormatExplanationCompact(r.Explanation))
 		} else {
 			b.WriteString(FormatExplanation(r.Explanation))
@@ -211,7 +211,11 @@ func FormatAsk(r *AskResult) string {
 	}
 	if r.Impact != nil {
 		b.WriteString("\n--- Blast Radius ---\n")
-		b.WriteString(FormatImpactCompact(r.Impact))
+		if r.Detail {
+			b.WriteString(FormatImpact(r.Impact))
+		} else {
+			b.WriteString(FormatImpactCompact(r.Impact))
+		}
 	}
 	if r.Investigation != nil {
 		b.WriteString("\n--- Full Investigation ---\n")
@@ -441,7 +445,15 @@ func formatCompactNode(b *strings.Builder, node *ExplainNode, indent int) {
 	e := node.Entity
 	name := shortName(e.ID)
 	file := filepath.Base(e.Source.File)
-	fmt.Fprintf(b, "%s%s | %s:%d\n", prefix, name, file, e.Source.Line)
+	desc := e.Description
+	if len(desc) > 60 {
+		desc = desc[:57] + "..."
+	}
+	if desc != "" {
+		fmt.Fprintf(b, "%s%s | %s:%d | %s\n", prefix, name, file, e.Source.Line, desc)
+	} else {
+		fmt.Fprintf(b, "%s%s | %s:%d\n", prefix, name, file, e.Source.Line)
+	}
 	grouped := make(map[domain.RelationshipType][]*ExplainNode)
 	for _, child := range node.Children {
 		grouped[child.EdgeType] = append(grouped[child.EdgeType], child)

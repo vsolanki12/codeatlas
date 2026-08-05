@@ -306,6 +306,7 @@ func registerView(s *mcp.Server, idx *query.Index) {
 type askInput struct {
 	Entity string `json:"entity" jsonschema:"entity name or ID to ask about"`
 	Intent string `json:"intent,omitempty" jsonschema:"understand (how it works), impact (what breaks), or debug (everything about it). Default: view only"`
+	Detail bool   `json:"detail,omitempty" jsonschema:"true for full verbose output with complete entity IDs and paths. Default: compact"`
 }
 
 func registerAsk(s *mcp.Server, idx *query.Index) {
@@ -319,6 +320,7 @@ func registerAsk(s *mcp.Server, idx *query.Index) {
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Entity not found: %s", input.Entity)}},
 			}, nil, nil
 		}
+		r.Detail = input.Detail
 		text := query.FormatAsk(r)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},

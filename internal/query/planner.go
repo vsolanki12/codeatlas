@@ -13,6 +13,7 @@ type AskResult struct {
 	Explanation   *ExplainResult
 	Impact        *ImpactResult
 	Investigation *InvestigateResult
+	Detail        bool
 }
 
 func (idx *Index) Ask(entity string, intent string) *AskResult {
