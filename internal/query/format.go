@@ -190,7 +190,8 @@ func FormatStats(s *GraphStats) string {
 func FormatAsk(r *AskResult) string {
 	var b strings.Builder
 
-	if r.View != nil {
+	hasView := r.View != nil
+	if hasView {
 		b.WriteString(FormatView(r.View))
 	} else {
 		b.WriteString(FormatEntityFull(r.Entity))
@@ -202,11 +203,15 @@ func FormatAsk(r *AskResult) string {
 
 	if r.Explanation != nil {
 		b.WriteString("\n--- Execution Flow ---\n")
-		b.WriteString(FormatExplanation(r.Explanation))
+		if hasView {
+			b.WriteString(FormatExplanationCompact(r.Explanation))
+		} else {
+			b.WriteString(FormatExplanation(r.Explanation))
+		}
 	}
 	if r.Impact != nil {
 		b.WriteString("\n--- Blast Radius ---\n")
-		b.WriteString(FormatImpact(r.Impact))
+		b.WriteString(FormatImpactCompact(r.Impact))
 	}
 	if r.Investigation != nil {
 		b.WriteString("\n--- Full Investigation ---\n")
@@ -403,6 +408,68 @@ func FormatExplanation(r *ExplainResult) string {
 	return b.String()
 }
 
+func FormatExplanationCompact(r *ExplainResult) string {
+	if r.Root == nil {
+		return "Entity not found.\n"
+	}
+	var b strings.Builder
+	grouped := make(map[domain.RelationshipType][]*ExplainNode)
+	for _, child := range r.Root.Children {
+		grouped[child.EdgeType] = append(grouped[child.EdgeType], child)
+	}
+	for _, edgeType := range explainEdgeOrder {
+		children, ok := grouped[edgeType]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "%s:\n", edgeType)
+		for _, child := range children {
+			formatCompactNode(&b, child, 1)
+		}
+	}
+	footer := fmt.Sprintf("%d nodes explored", r.TotalNodes)
+	if r.Capped {
+		footer += " (capped at 100 nodes)"
+	}
+	b.WriteString(footer)
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func formatCompactNode(b *strings.Builder, node *ExplainNode, indent int) {
+	prefix := strings.Repeat("  ", indent)
+	e := node.Entity
+	name := shortName(e.ID)
+	file := filepath.Base(e.Source.File)
+	fmt.Fprintf(b, "%s%s | %s:%d\n", prefix, name, file, e.Source.Line)
+	grouped := make(map[domain.RelationshipType][]*ExplainNode)
+	for _, child := range node.Children {
+		grouped[child.EdgeType] = append(grouped[child.EdgeType], child)
+	}
+	for _, edgeType := range explainEdgeOrder {
+		children, ok := grouped[edgeType]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(b, "%s  %s:\n", prefix, edgeType)
+		for _, child := range children {
+			formatCompactNode(b, child, indent+2)
+		}
+	}
+}
+
+func shortName(id string) string {
+	parts := strings.SplitN(id, ":", 2)
+	if len(parts) < 2 {
+		return id
+	}
+	qualified := parts[1]
+	if dot := strings.LastIndex(qualified, "."); dot >= 0 {
+		return qualified[dot+1:]
+	}
+	return qualified
+}
+
 func formatExplainNode(b *strings.Builder, node *ExplainNode, indent int) {
 	prefix := strings.Repeat("  ", indent)
 	e := node.Entity
@@ -495,23 +562,87 @@ func FormatImpact(r *ImpactResult) string {
 		b.WriteByte('\n')
 	}
 
-	fmt.Fprintf(&b, "\n=== Recent Changes (%d) ===\n", len(r.RecentChanges))
-	if len(r.RecentChanges) == 0 {
-		b.WriteString("(no temporal data)\n")
-	} else {
+	if len(r.RecentChanges) > 0 {
+		fmt.Fprintf(&b, "\n=== Recent Changes (%d) ===\n", len(r.RecentChanges))
 		for _, e := range r.RecentChanges {
 			fmt.Fprintf(&b, "%s | changes=%d last=%s by=%s\n", e.ID, e.ChangeCount, e.LastModified, e.LastAuthor)
 		}
 	}
 
-	fmt.Fprintf(&b, "\n=== Owners (%d) ===\n", len(r.Owners))
-	if len(r.Owners) == 0 {
-		b.WriteString("(no temporal data)\n")
-	} else {
+	if len(r.Owners) > 0 {
+		fmt.Fprintf(&b, "\n=== Owners (%d) ===\n", len(r.Owners))
 		for _, o := range r.Owners {
 			b.WriteString(o)
 			b.WriteByte('\n')
 		}
+	}
+
+	return b.String()
+}
+
+func FormatImpactCompact(r *ImpactResult) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b, "%s | %s:%d\n", shortName(r.Entity.ID), filepath.Base(r.Entity.Source.File), r.Entity.Source.Line)
+
+	if len(r.CallChain) > 0 {
+		fmt.Fprintf(&b, "\nCallers (%d): ", len(r.CallChain))
+		names := make([]string, len(r.CallChain))
+		for i, c := range r.CallChain {
+			names[i] = shortName(c.ID)
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteByte('\n')
+	}
+
+	if len(r.Controllers) > 0 {
+		fmt.Fprintf(&b, "Controllers (%d): ", len(r.Controllers))
+		names := make([]string, len(r.Controllers))
+		for i, c := range r.Controllers {
+			names[i] = shortName(c.ID)
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteByte('\n')
+	}
+
+	if len(r.Tests) > 0 {
+		fmt.Fprintf(&b, "Tests (%d): ", len(r.Tests))
+		names := make([]string, len(r.Tests))
+		for i, t := range r.Tests {
+			names[i] = shortName(t.ID)
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteByte('\n')
+	} else {
+		b.WriteString("Tests: none\n")
+	}
+
+	if len(r.Resources) > 0 {
+		fmt.Fprintf(&b, "Resources (%d): ", len(r.Resources))
+		names := make([]string, len(r.Resources))
+		for i, r := range r.Resources {
+			names[i] = shortName(r.ID)
+		}
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteByte('\n')
+	}
+
+	if len(r.Files) > 0 {
+		fmt.Fprintf(&b, "Files (%d): ", len(r.Files))
+		short := make([]string, len(r.Files))
+		for i, f := range r.Files {
+			short[i] = filepath.Base(f)
+		}
+		b.WriteString(strings.Join(short, ", "))
+		b.WriteByte('\n')
+	}
+
+	if len(r.RecentChanges) > 0 {
+		fmt.Fprintf(&b, "Recent changes: %d\n", len(r.RecentChanges))
+	}
+
+	if len(r.Owners) > 0 {
+		fmt.Fprintf(&b, "Owners: %s\n", strings.Join(r.Owners, ", "))
 	}
 
 	return b.String()

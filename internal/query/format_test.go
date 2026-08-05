@@ -292,13 +292,19 @@ func TestFormatImpact(t *testing.T) {
 		"=== Files Affected (2) ===",
 		"pkg/controller.go",
 		"pkg/etcd.go",
-		"=== Recent Changes (0) ===",
-		"(no temporal data)",
-		"=== Owners (0) ===",
+	}
+	absent := []string{
+		"=== Recent Changes",
+		"=== Owners",
 	}
 	for _, check := range checks {
 		if !strings.Contains(got, check) {
 			t.Errorf("missing %q in:\n%s", check, got)
+		}
+	}
+	for _, a := range absent {
+		if strings.Contains(got, a) {
+			t.Errorf("should not contain %q when empty, got:\n%s", a, got)
 		}
 	}
 }
