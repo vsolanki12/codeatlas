@@ -226,10 +226,10 @@ When a user clicks a relationship and asks "why does CodeAtlas think HostedClust
 
 | Level | Meaning | Example |
 |---|---|---|
-| `proven` | Directly observed in code, YAML, or AST | A `CreateOrUpdate()` call creating a HostedControlPlane |
-| `inferred` | Derived from naming conventions or proximity | Test file name matches controller file name |
+| `proven` | Directly observed in code, YAML, or AST with exact semantic match | A `CreateOrUpdate()` call creating a HostedControlPlane; first watch in `SetupWithManager` proving reconciliation target |
+| `inferred` | Derived from naming conventions, proximity, or name-based resolution | Test file name matches controller file name; interface implementation resolved by name match; resource linked by directory proximity |
 
-Two levels only. No percentages. If it's a guess, it doesn't go in the graph.
+Two levels only. No percentages. If it's a guess, it doesn't go in the graph. If the relationship type is correct but the target was resolved by name rather than type identity, use `inferred`.
 
 ### Relationship Types
 

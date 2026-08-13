@@ -224,6 +224,24 @@ Development progresses in phases. Each builds on the previous.
 
 ---
 
+### Architecture Audit Fixes
+
+**Delivered:** Corrected semantic falsehoods and strengthened the graph evidence contract.
+
+- **Watches vs creates**: `Watches[1:]` now emits `RelWatches` (inferred), not `RelCreates` (proven). Watching is not creating.
+- **Implements confidence**: Changed to `inferred` — target is resolved by first name match, not Go type identity.
+- **Embeds confidence**: Changed to `inferred` — resources matched by directory proximity, not embed glob pattern.
+- **Validation contract**: Entities require source file; relationships require evidence file, valid confidence, unique IDs.
+- **Question index**: `Ask()` now calls `LookupQuestion()` — the index was generated but never served.
+- **PR review tests**: Graph-linked tests rendered per function (were calculated but omitted from output).
+- **PR review coordinates**: Mapper uses `NewStart`/`NewCount` (head-side) to match graph entity locations.
+- **Deleted file reporting**: Explicitly reported as "no head-side mapping" instead of silently skipped.
+- **Discovery**: `testdata/` added to skip list (code now matches documented behavior).
+
+**Result:** 150 of 153 relationships in self-graph correctly labeled `inferred`. Validation catches evidence contract violations at scan time. 183 tests across 13 packages.
+
+---
+
 ## Vision: Deterministic Reasoning Engine
 
 CodeAtlas is not a graph queried by AI. It is a **deterministic reasoning engine for software architecture**.

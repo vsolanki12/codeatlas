@@ -148,8 +148,8 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
 ┌─ 3. File Discovery ──────────────────────────┐
 │  Walk the directory tree                      │
 │  Return every file with metadata              │
-│  Skip: vendor/, .git/, node_modules/,         │
-│         testdata/                             │
+│  Skip: .git/, vendor/, node_modules/,         │
+│        testdata/                              │
 └───────────────┬───────────────────────────────┘
                 ▼
 ┌─ 4. File Classification ─────────────────────┐
@@ -200,10 +200,12 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
 └───────────────┬───────────────────────────────┘
                 ▼
 ┌─ 9. Graph Validation ────────────────────────┐
-│  Check: no entity without a source            │
-│  Check: no relationship without evidence      │
+│  Check: no entity without a source file       │
+│  Check: no relationship without evidence file │
 │  Check: all entity IDs are unique             │
+│  Check: all relationship IDs are unique       │
 │  Check: all relationship targets exist        │
+│  Check: confidence is proven or inferred      │
 └───────────────┬───────────────────────────────┘
                 ▼
 ┌─ 9b. Knowledge View Compilation ─────────────┐
