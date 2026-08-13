@@ -238,6 +238,10 @@ Development progresses in phases. Each builds on the previous.
 - **Deleted file reporting**: Explicitly reported as "no head-side mapping" instead of silently skipped.
 - **Discovery**: `testdata/` added to skip list (code now matches documented behavior).
 
+**Outstanding:**
+- Embed matching still uses directory proximity, not actual `//go:embed` glob patterns. Correctly labeled `inferred`, but overly broad.
+- Relationship ID format not validated (`from--type--to`). Duplicate detection works, but malformed or empty IDs pass validation.
+
 **Result:** 150 of 153 relationships in self-graph correctly labeled `inferred`. Validation catches evidence contract violations at scan time. 183 tests across 13 packages.
 
 ---
