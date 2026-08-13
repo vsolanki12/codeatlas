@@ -143,6 +143,22 @@ atlas ask -graph atlas-graph.json NodePool -intent understand
 atlas view -graph atlas-graph.json HostedClusterReconciler
 ```
 
+### Review a PR
+
+```bash
+# Review using local git refs
+atlas review --base upstream/main --head feature-branch --graph atlas-graph.json --repo /path/to/repo
+
+# Review using a diff file (no git fetch needed)
+gh api repos/openshift/hypershift/pulls/8968 -H 'Accept: application/vnd.github.diff' > pr.diff
+atlas review --diff pr.diff --graph atlas-graph.json
+
+# Pipe diff from stdin
+gh api repos/openshift/hypershift/pulls/8968 -H 'Accept: application/vnd.github.diff' | atlas review --diff - --graph atlas-graph.json
+```
+
+Output shows: changed functions with callers/callees, blast radius (controllers, resources), test coverage with inference links, unmapped files, and evidence limitations.
+
 ### Connect to Claude Code
 
 Add to `~/.mcp.json`:
@@ -212,6 +228,7 @@ The CLI mirrors MCP tools — same queries, same output, no server needed.
 | `atlas context <entity-id>` | BFS subgraph around an entity |
 | `atlas where <path>` | Find entities by file path |
 | `atlas stats` | Graph statistics |
+| `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius and test coverage |
 | `atlas serve` | Start the MCP server |
 | `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.) |
 
@@ -247,6 +264,6 @@ All commands accept `--graph path` (defaults to `atlas.json`). Flags must come b
 
 ## Status
 
-**Schema:** 1.4.0 · **MCP Tools:** 11 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 13 (Question Index)
+**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 13 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 14 (PR Review)
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

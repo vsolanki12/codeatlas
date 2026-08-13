@@ -55,7 +55,7 @@ internal/domain               The vocabulary of CodeAtlas
     ▲ (every package imports domain)
     │
 cmd/atlas                     CLI entry point (scan, search, explain, impact, investigate,
-                                ask, view, context, where, stats, serve, query)
+                                ask, view, context, where, stats, serve, query, review)
     │
     ├──► internal/scanner      Orchestrator — coordinates the full scan pipeline
     │       │
@@ -79,13 +79,15 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
     │
     ├──► internal/query        Query engine — Index, search, traversal, compound queries
     │
+    ├──► internal/review       PR review — diff parsing, entity mapping, enrichment, formatting
+    │
     └──► internal/mcpserver    MCP server — 11 tools served via stdio transport
 ```
 
 | Package | Responsibility | Depends On |
 |---|---|---|
 | `internal/domain` | Defines the vocabulary: Entity, Relationship, Evidence, Graph, Source | Nothing |
-| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query | `domain`, `scanner`, `query`, `mcpserver` |
+| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review` |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `origin`, `temporal` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
 | `internal/parser` | Parses individual files into entities; extracts imports, literals, embeds, properties | `domain` |
@@ -95,6 +97,7 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
+| `internal/review` | PR review: diff parsing, entity-to-hunk mapping, graph enrichment, human-readable formatting | `domain`, `query` |
 | `internal/mcpserver` | MCP server: 11 tools via go-sdk stdio transport | `query` |
 
 Key constraints:
@@ -266,8 +269,9 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 11 | Knowledge Views (pre-computed engineering summaries) | Implemented |
 | 12 | Query Planner (atlas_ask — one-call orchestration) | Implemented |
 | 13 | Question Index (deterministic Q&A pairs) | Implemented |
+| 14 | PR Review (deterministic diff-to-graph review) | Implemented |
 
-Current state: 11 MCP tools, schema 1.4.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 11 MCP tools, 13 CLI commands, schema 1.4.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 

@@ -12,6 +12,7 @@ import (
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/mcpserver"
 	"github.com/vsolanki12/codeatlas/internal/query"
+	"github.com/vsolanki12/codeatlas/internal/review"
 	"github.com/vsolanki12/codeatlas/internal/scanner"
 )
 
@@ -19,7 +20,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: atlas <command> [flags]")
 		fmt.Fprintln(os.Stderr, "commands: scan, search, explain, impact, investigate, ask, view,")
-		fmt.Fprintln(os.Stderr, "          context, where, stats, serve, query")
+		fmt.Fprintln(os.Stderr, "          context, where, stats, serve, query, review")
 		os.Exit(1)
 	}
 
@@ -46,6 +47,8 @@ func main() {
 		runWhere(os.Args[2:])
 	case "stats":
 		runStats(os.Args[2:])
+	case "review":
+		runReview(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
 	default:
@@ -415,6 +418,40 @@ func runServe(args []string) {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runReview(args []string) {
+	fs := flag.NewFlagSet("review", flag.ExitOnError)
+	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	base := fs.String("base", "", "base git ref (e.g., upstream/main)")
+	head := fs.String("head", "HEAD", "head git ref")
+	repo := fs.String("repo", ".", "path to the git repository")
+	diffSource := fs.String("diff", "", "read diff from file or stdin (-)")
+	fs.Parse(reorderArgs(args))
+
+	var result *review.ReviewResult
+	var err error
+
+	if *diffSource != "" {
+		result, err = review.RunFromDiff(*diffSource, *graphPath, *base, *head)
+	} else {
+		if *base == "" {
+			fmt.Fprintln(os.Stderr, "usage: atlas review --base <ref> [--head <ref>] [--graph path] [--repo path]")
+			fmt.Fprintln(os.Stderr, "       atlas review --diff <file|-> [--graph path]")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "  --base: base git ref to compare against")
+			fmt.Fprintln(os.Stderr, "  --diff: read diff from file or stdin (- for pipe)")
+			os.Exit(1)
+		}
+		result, err = review.Run(*base, *head, *repo, *graphPath)
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "review failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Print(review.FormatReview(result))
 }
 
 func resolveEntity(idx *query.Index, nameOrID string) *domain.Entity {

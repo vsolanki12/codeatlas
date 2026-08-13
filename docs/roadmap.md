@@ -205,6 +205,25 @@ Development progresses in phases. Each builds on the previous.
 
 ---
 
+### Phase 14: PR Review
+
+**Delivered:** `atlas review` — deterministic PR review using the Atlas graph.
+
+- `internal/review` package: diff parser, entity mapper, enrichment, formatter
+- Git unified diff parsing (handles new files, deleted files, renames, multiple hunks, binary files)
+- Three-dot diff (`base...head`) for PR review semantics
+- Approximate entity-to-hunk mapping using start-line ordering (no EndLine in graph)
+- Test-to-function inference: naming convention match, then same-file fallback
+- Callee noise filtering: stdlib packages + generic K8s/Go methods
+- Evidence classification: FOUND, NOT_FOUND, INSUFFICIENT_EVIDENCE (never "Missing test")
+- Facts vs recommendations separation — output shows what Atlas knows, not what it guesses
+- `--diff` flag: read diff from file or stdin (no git fetch needed)
+- Human-readable output: function names, file paths, callers, blast radius, test links
+
+**Result:** Deterministic PR review from Atlas graph. Reviewer sees changed functions, who calls them, what controllers/resources they affect, and which tests cover them — all backed by evidence.
+
+---
+
 ## Vision: Deterministic Reasoning Engine
 
 CodeAtlas is not a graph queried by AI. It is a **deterministic reasoning engine for software architecture**.
@@ -227,92 +246,72 @@ A graph stores facts. A reasoning engine derives higher-level, reusable engineer
 
 Phases 1–10 optimized retrieval. Phases 11–13 optimize what Claude has to think about. The remaining token cost is Claude reasoning over graph data — the fix is to move that reasoning into the scan phase.
 
-| Phase | Goal | Expected Additional Savings |
-|-------|------|-----------------------------|
-| 11. Knowledge Views | Generate lifecycle, ownership, dependencies, tests, execution flow during scan | 5–10% |
-| 12. Query Planner | Atlas internally orchestrates graph traversals and returns one result | 5–10% |
-| 13. Knowledge Cache + Question Index | Cache precomputed answers to common engineering questions | 5–8% |
-| 14. Stateful Sessions (optional) | Maintain investigation context across a conversation | Depends on workflow |
+| Phase | Goal | Status |
+|-------|------|--------|
+| 11. Knowledge Views | Generate lifecycle, ownership, dependencies, tests, execution flow during scan | Done |
+| 12. Query Planner | Atlas internally orchestrates graph traversals and returns one result | Done |
+| 13. Knowledge Cache + Question Index | Cache precomputed answers to common engineering questions | Done |
+| 14. PR Review | Deterministic PR review: diff → entities → blast radius → test coverage | Done |
+| 15. PR Metadata | Fetch PR title, description, labels from GitHub API (`--pr` flag) | Planned |
+| 16. Pattern Analysis | Compare PR against repo conventions: naming, error handling, logging | Planned |
+| 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Planned |
+| 18. LLM Integration | Optional AI layer for natural language summary and recommendations | Planned |
 
 Target: ~92–95% total reduction (from current ~70–80%).
 
 ---
 
-### Phase 11: Knowledge Views
+### Phase 15: PR Metadata (Planned)
 
-The most important remaining phase. A **view compiler** — not a cache, not AI. Deterministic artifacts generated during `atlas scan`, stored as first-class graph objects alongside entities and relationships.
+Fetch PR title, description, and labels from GitHub API via `--pr` flag.
 
-Instead of storing only entities and relationships, compile higher-level engineering knowledge:
+- `atlas review --pr openshift/hypershift/8968 --graph atlas.json`
+- Uses `gh api` to fetch PR metadata (title, body, labels, files)
+- Adds "What This PR Does" section to review output using PR description
+- Diff fetched via GitHub API (standard unified diff format)
+- No git clone or fetch required
 
-- **Lifecycle**: How an entity progresses through states (e.g., NodePool: Pending → Provisioning → Ready)
-- **Execution Flow**: Ordered call chain from reconciler entry to resource creation
-- **Ownership**: Who owns, creates, watches, and tests this entity
-- **Resources**: What Kubernetes resources are created/managed
-- **Configuration**: Environment variables, feature gates, constants
-- **Tests**: What tests cover this entity and its call chain
-- **Status Flow**: Where status conditions are set and checked
-- **Failure Points**: High-change areas, missing tests, orphan relationships
-
-Each becomes a reusable engineering object. Claude retrieves `NodePool View` instead of traversing dozens of graph nodes.
-
-Engineering summaries, semantic compression, and multi-level detail are natural consequences of views — not separate features.
-
-**Aligns with:** Stage 3 (pre-computed views at scan time). ADR-0009 (deterministic over intelligent). ADR-0008 (graph is the product).
+**Principle:** Still deterministic. PR description is user-provided context, not AI-generated.
 
 ---
 
-### Phase 12: Query Planner
+### Phase 16: Pattern Analysis (Planned)
 
-Today Claude decides the tool sequence: search → investigate → explain → impact. Tomorrow Atlas decides.
+Compare PR changes against existing repo patterns extracted from the graph.
 
-```
-User question → Atlas Query Planner → Internal execution plan → One response
-```
+- Naming conventions: does the new function match package naming patterns?
+- Error handling: does the code follow the repo's error wrapping style?
+- Logging patterns: are log calls consistent with the file/package?
+- Controller patterns: does a new reconciler follow existing reconciler structure?
 
-Claude shouldn't know or care whether Atlas executed search, explain, impact, or context internally. It asks a question, gets an answer.
-
-- 30–50% fewer MCP calls
-- Lower prompt overhead (Claude doesn't plan traversals)
-- More consistent answers (deterministic plan, not model-dependent)
-
-**Depends on:** Knowledge Views (Phase 11) — planner benefits from having pre-compiled views to route to.
+**Principle:** Patterns derived from the graph, not from rules. "This repo does X, this PR does Y" — facts, not opinions.
 
 ---
 
-### Phase 13: Knowledge Cache + Question Index
+### Phase 17: Test Analysis (Planned)
 
-Two cache levels:
+Evaluate test sufficiency for changed code.
 
-**Level 1 — Entity cache.** Reusable across many questions.
-```
-HostedCluster → Lifecycle View, Ownership View, Execution View
-```
+- Does a changed function have tests? (graph `tested_by` edges)
+- Are new functions tested? (new entities without test links)
+- Do tests cover the changed behavior or just the function signature?
+- Test gap report: "These functions changed but have no test coverage in the graph"
 
-**Level 2 — Question cache.** Optimized for the most common engineering questions.
-```
-"Who creates HostedCluster?"     → answer
-"How does NodePool become Ready?" → answer
-"What reconciles HostedControlPlane?" → answer
-```
-
-Level 1 is reusable building material. Level 2 is the final product — deterministic answers stored directly in the graph. Claude only rewrites into English.
-
-**Depends on:** Knowledge Views (Phase 11). Query Planner (Phase 12) routes to cached answers.
+**Principle:** Conservative. "INSUFFICIENT_EVIDENCE" when Atlas can't prove coverage. Never "Missing test" — Atlas doesn't know what you chose not to test.
 
 ---
 
-### Phase 14: Stateful Sessions (Optional)
+### Phase 18: LLM Integration (Planned)
 
-Architectural change — Atlas becomes stateful.
+Optional AI layer — last in the pipeline, never first.
 
-Current: each MCP call is independent. Future: Atlas remembers within a session:
-- Current subsystem, controller, entity
-- Previous investigation context
-- What was already retrieved
+- Takes deterministic Atlas review output as input
+- Generates natural language summary: "This PR adds X to solve Y"
+- Optionally suggests review focus areas based on blast radius
+- Uses `codeatlas-assistant` as the integration layer
+- Atlas output is the ground truth; LLM is the presentation layer
 
-`"What creates it?"` no longer requires another search — Atlas already knows the subject.
-
-This changes Atlas from a stateless query engine into a stateful service. Separate track from the deterministic pipeline above.
+**Principle:** LLM adds clarity, not knowledge. All facts come from Atlas. If Atlas can't prove it, LLM can't claim it.
 
 ---
 
@@ -328,11 +327,11 @@ Deterministic graph analyses — no AI required.
 - Orphan detection — entities with no incoming relationships
 - Incremental knowledge generation — if only NodePool.go changed, only regenerate NodePool views
 
-**Depends on:** Incremental Scanning (done). Aligns with Phase 11.
-
 ### Multi-Repository Knowledge
 
 - Cross-repo relationship tracking (e.g., HyperShift → cluster-api → machine-api)
 - Federated graph queries across multiple repositories
 
-**Depends on:** Origin classifier (done). Import path tracking (done).
+### Stateful Sessions (Optional)
+
+Atlas becomes stateful — maintains investigation context across a conversation. `"What creates it?"` no longer requires another search. Separate track from the deterministic pipeline.
