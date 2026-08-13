@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
@@ -326,6 +327,92 @@ func TestBuild_FunctionCalls(t *testing.T) {
 		t.Errorf("Expected 2 function call relationships, got %d", callRels)
 		for _, r := range rels {
 			t.Logf("  %s", r.ID)
+		}
+	}
+}
+
+func TestBuild_SamePackageDisambiguation(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:      "controller:hostedcluster.HostedClusterReconciler",
+			Name:    "HostedClusterReconciler",
+			Kind:    domain.KindController,
+			Package: "hostedcluster",
+			Watches: []string{"HostedCluster"},
+			Calls:   []string{"r.reconcile", "r.reconcileLegacy"},
+			Source:  domain.Source{Parser: "go", File: "controller.go", Line: 10},
+		},
+		{
+			ID:   "crd:HostedCluster",
+			Name: "HostedCluster",
+			Kind: domain.KindCRD,
+		},
+		{
+			ID:      "function:hostedcluster.HostedClusterReconciler.reconcile",
+			Name:    "reconcile",
+			Kind:    domain.KindFunction,
+			Package: "hostedcluster",
+			Source:  domain.Source{Parser: "go", File: "controller.go", Line: 100},
+		},
+		{
+			ID:      "function:hostedcluster.HostedClusterReconciler.reconcileLegacy",
+			Name:    "reconcileLegacy",
+			Kind:    domain.KindFunction,
+			Package: "hostedcluster",
+			Source:  domain.Source{Parser: "go", File: "reconcile_legacy.go", Line: 50},
+		},
+		{
+			ID:      "function:nodepool.NodePoolReconciler.reconcile",
+			Name:    "reconcile",
+			Kind:    domain.KindFunction,
+			Package: "nodepool",
+			Source:  domain.Source{Parser: "go", File: "nodepool.go", Line: 200},
+		},
+		{
+			ID:      "function:scheduler.reconcile",
+			Name:    "reconcile",
+			Kind:    domain.KindFunction,
+			Package: "scheduler",
+			Source:  domain.Source{Parser: "go", File: "scheduler.go", Line: 300},
+		},
+	}
+
+	b := NewRelationshipBuilder("")
+	rels := b.Build(entities)
+
+	var callTargets []string
+	for _, r := range rels {
+		if r.Type == domain.RelCalls && r.From == "controller:hostedcluster.HostedClusterReconciler" {
+			callTargets = append(callTargets, r.To)
+		}
+	}
+
+	// reconcileLegacy: unique bare name, should resolve
+	found := false
+	for _, t := range callTargets {
+		if t == "function:hostedcluster.HostedClusterReconciler.reconcileLegacy" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("missing call to reconcileLegacy, got targets: %v", callTargets)
+	}
+
+	// reconcile: ambiguous (3 packages), same-package should resolve to hostedcluster
+	found = false
+	for _, t := range callTargets {
+		if t == "function:hostedcluster.HostedClusterReconciler.reconcile" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("same-package disambiguation failed for reconcile, got targets: %v", callTargets)
+	}
+
+	// Should NOT resolve to nodepool or scheduler
+	for _, tgt := range callTargets {
+		if strings.Contains(tgt, "nodepool") || strings.Contains(tgt, "scheduler") {
+			t.Errorf("wrong package resolved: %s", tgt)
 		}
 	}
 }

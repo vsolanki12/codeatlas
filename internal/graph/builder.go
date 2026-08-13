@@ -39,6 +39,8 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 
 	var relationships []domain.Relationship
 
+	seen := make(map[string]bool)
+
 	// Controller → CRD/resource relationships (reconciles, creates)
 	for _, e := range entities {
 		if e.Kind != domain.KindController || len(e.Watches) == 0 {
@@ -46,28 +48,37 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 		}
 
 		if target, ok := byName[e.Watches[0]]; ok {
-			snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
-			relationships = append(relationships, domain.Relationship{
-				ID:         domain.NewRelationshipID(e.ID, domain.RelReconciles, target.ID),
-				From:       e.ID,
-				To:         target.ID,
-				Type:       domain.RelReconciles,
-				Confidence: domain.ConfidenceProven,
-				Evidence: domain.Evidence{
-					Parser:  "graph",
-					File:    e.Source.File,
-					Line:    e.Source.Line,
-					Snippet: snippet,
-					Reason:  "controller has Reconcile() method",
-				},
-			})
+			relID := domain.NewRelationshipID(e.ID, domain.RelReconciles, target.ID)
+			if !seen[relID] {
+				seen[relID] = true
+				snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
+				relationships = append(relationships, domain.Relationship{
+					ID:         relID,
+					From:       e.ID,
+					To:         target.ID,
+					Type:       domain.RelReconciles,
+					Confidence: domain.ConfidenceProven,
+					Evidence: domain.Evidence{
+						Parser:  "graph",
+						File:    e.Source.File,
+						Line:    e.Source.Line,
+						Snippet: snippet,
+						Reason:  "controller has Reconcile() method",
+					},
+				})
+			}
 		}
 
 		for _, watchName := range e.Watches[1:] {
 			if target, ok := byName[watchName]; ok {
+				relID := domain.NewRelationshipID(e.ID, domain.RelWatches, target.ID)
+				if seen[relID] {
+					continue
+				}
+				seen[relID] = true
 				snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
 				relationships = append(relationships, domain.Relationship{
-					ID:         domain.NewRelationshipID(e.ID, domain.RelWatches, target.ID),
+					ID:         relID,
 					From:       e.ID,
 					To:         target.ID,
 					Type:       domain.RelWatches,
@@ -85,9 +96,10 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 	}
 
 	// Build function indexes for call matching
-	funcByName := make(map[string]domain.Entity)       // bare name (ambiguous)
-	funcByQualName := make(map[string]domain.Entity)    // pkg.Name or pkg.Type.Name
-	funcNameCount := make(map[string]int)               // count bare name occurrences
+	funcByName := make(map[string]domain.Entity)            // bare name (last writer wins, used for unique names)
+	funcByQualName := make(map[string]domain.Entity)         // pkg.Name or pkg.Type.Name
+	funcNameCount := make(map[string]int)                    // count bare name occurrences
+	funcsByPkgName := make(map[string][]domain.Entity)       // pkg + bare name → all matches
 	for _, e := range entities {
 		if e.Kind == domain.KindFunction {
 			funcByName[e.Name] = e
@@ -95,6 +107,9 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 			// Build qualified key from ID: "function:pkg.Name" → "pkg.Name"
 			qual := strings.TrimPrefix(e.ID, "function:")
 			funcByQualName[qual] = e
+			// Index by package+name for same-package disambiguation
+			pkgKey := e.Package + "." + e.Name
+			funcsByPkgName[pkgKey] = append(funcsByPkgName[pkgKey], e)
 		}
 	}
 
@@ -104,13 +119,18 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 			continue
 		}
 		for _, callName := range e.Calls {
-			target, ok := resolveCall(callName, funcByName, funcByQualName, funcNameCount)
+			target, ok := resolveCall(callName, e.Package, funcByName, funcByQualName, funcNameCount, funcsByPkgName)
 			if !ok {
 				continue
 			}
+			relID := domain.NewRelationshipID(e.ID, domain.RelCalls, target.ID)
+			if seen[relID] {
+				continue
+			}
+			seen[relID] = true
 			snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
 			relationships = append(relationships, domain.Relationship{
-				ID:         domain.NewRelationshipID(e.ID, domain.RelCalls, target.ID),
+				ID:         relID,
 				From:       e.ID,
 				To:         target.ID,
 				Type:       domain.RelCalls,
@@ -127,13 +147,12 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 	}
 
 	// Function → function calls (NEW: Phase 3a)
-	seen := make(map[string]bool)
 	for _, e := range entities {
 		if e.Kind != domain.KindFunction || len(e.Calls) == 0 {
 			continue
 		}
 		for _, callName := range e.Calls {
-			target, ok := resolveCall(callName, funcByName, funcByQualName, funcNameCount)
+			target, ok := resolveCall(callName, e.Package, funcByName, funcByQualName, funcNameCount, funcsByPkgName)
 			if !ok || target.ID == e.ID {
 				continue
 			}
@@ -276,8 +295,7 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 	return relationships
 }
 
-func resolveCall(callName string, byName map[string]domain.Entity, byQualName map[string]domain.Entity, nameCount map[string]int) (domain.Entity, bool) {
-	// Extract bare name for skip-list check
+func resolveCall(callName, callerPkg string, byName map[string]domain.Entity, byQualName map[string]domain.Entity, nameCount map[string]int, byPkgName map[string][]domain.Entity) (domain.Entity, bool) {
 	bareName := callName
 	if idx := strings.LastIndex(callName, "."); idx >= 0 {
 		bareName = callName[idx+1:]
@@ -291,16 +309,21 @@ func resolveCall(callName string, byName map[string]domain.Entity, byQualName ma
 		if target, ok := byQualName[callName]; ok {
 			return target, true
 		}
-		// Try bare name from the selector (e.g., "r.doSomething" → "doSomething")
-		if target, ok := byName[bareName]; ok && nameCount[bareName] == 1 {
-			return target, true
-		}
-		return domain.Entity{}, false
 	}
 
-	// Bare name: only match if unambiguous
-	if target, ok := byName[callName]; ok && nameCount[callName] == 1 {
+	// Try unique bare name
+	if target, ok := byName[bareName]; ok && nameCount[bareName] == 1 {
 		return target, true
 	}
+
+	// Same-package disambiguation: when bare name is ambiguous,
+	// prefer the match in the caller's package
+	if callerPkg != "" && nameCount[bareName] > 1 {
+		candidates := byPkgName[callerPkg+"."+bareName]
+		if len(candidates) == 1 {
+			return candidates[0], true
+		}
+	}
+
 	return domain.Entity{}, false
 }
