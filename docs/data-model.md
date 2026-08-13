@@ -285,6 +285,38 @@ This avoids inconsistency. One direction is the source of truth; the other is de
 
 ---
 
+## Relationship Resolution
+
+The relationship builder (`internal/graph/builder.go`) resolves call strings extracted by the parser into graph relationships. Resolution follows a priority chain:
+
+### Call Resolution Order
+
+1. **Qualified name match**: If the call contains `.` (e.g., `"configrefs.SecretRefs"`), try exact match against the qualified name index (`function:pkg.Name` with prefix stripped).
+
+2. **Unique bare name**: Extract the bare name after the last `.` (e.g., `"r.reconcile"` → `"reconcile"`). If only one function in the entire graph has this name, resolve to it.
+
+3. **Same-package disambiguation**: If the bare name is ambiguous (multiple functions share it across packages), prefer the match in the caller's package. Only resolves if exactly one function with that name exists in the caller's package.
+
+4. **Skip list**: Common names like `Get`, `Set`, `Error`, `String`, `New`, `Close`, `Read`, `Write`, `Marshal`, `Unmarshal`, etc. are skipped entirely to avoid false-positive edges.
+
+### Deduplication
+
+All relationship types use a shared `seen` map keyed by relationship ID. This prevents duplicate edges when the same call appears multiple times (e.g., a controller watching the same CRD via different code paths).
+
+### Relationship Types Built
+
+| Type | From | To | How |
+|---|---|---|---|
+| `reconciles` | controller | CRD | First entry in controller's `watches` array |
+| `watches` | controller | CRD/resource | Remaining entries in `watches` array |
+| `calls` | controller | function | Call strings from controller's `calls` array |
+| `calls` | function | function | Call strings from function's `calls` array |
+| `tested_by` | function | test | Test name matches function name by convention (`TestFoo` → `Foo`) |
+| `implements` | entity | function | `var _ Interface = &Type{}` assertion detected |
+| `embeds` | package | resource | `//go:embed` directive + directory proximity |
+
+---
+
 ## Shared Types
 
 ### Source
