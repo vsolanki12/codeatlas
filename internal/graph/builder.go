@@ -67,17 +67,17 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 			if target, ok := byName[watchName]; ok {
 				snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
 				relationships = append(relationships, domain.Relationship{
-					ID:         domain.NewRelationshipID(e.ID, domain.RelCreates, target.ID),
+					ID:         domain.NewRelationshipID(e.ID, domain.RelWatches, target.ID),
 					From:       e.ID,
 					To:         target.ID,
-					Type:       domain.RelCreates,
-					Confidence: domain.ConfidenceProven,
+					Type:       domain.RelWatches,
+					Confidence: domain.ConfidenceInferred,
 					Evidence: domain.Evidence{
 						Parser:  "graph",
 						File:    e.Source.File,
 						Line:    e.Source.Line,
 						Snippet: snippet,
-						Reason:  "controller declares resource ownership chain segment",
+						Reason:  "controller watches this resource via SetupWithManager",
 					},
 				})
 			}
@@ -189,13 +189,13 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 				From:       e.ID,
 				To:         targetID,
 				Type:       domain.RelImplements,
-				Confidence: domain.ConfidenceProven,
+				Confidence: domain.ConfidenceInferred,
 				Evidence: domain.Evidence{
 					Parser:  "graph",
 					File:    e.Source.File,
 					Line:    e.Source.Line,
 					Snippet: snippet,
-					Reason:  "var _ assertion declares interface implementation",
+					Reason:  "var _ assertion detected, target resolved by name match",
 				},
 			})
 		}
@@ -225,12 +225,12 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 				From:       e.ID,
 				To:         res.ID,
 				Type:       domain.RelEmbeds,
-				Confidence: domain.ConfidenceProven,
+				Confidence: domain.ConfidenceInferred,
 				Evidence: domain.Evidence{
 					Parser: "graph",
 					File:   e.Source.File,
 					Line:   1,
-					Reason: "//go:embed directive includes resource file",
+					Reason: "//go:embed detected, resource matched by directory proximity",
 				},
 			})
 		}

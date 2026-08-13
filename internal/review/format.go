@@ -139,6 +139,14 @@ func FormatReview(r *ReviewResult) string {
 				}
 				b.WriteByte('\n')
 			}
+
+			if len(er.Tests) > 0 {
+				b.WriteString("  Existing tests (graph):\n")
+				for _, t := range er.Tests {
+					fmt.Fprintf(&b, "    - %s (%s:%d)\n", t.Name, filepath.Base(t.Source.File), t.Source.Line)
+				}
+				b.WriteByte('\n')
+			}
 		}
 	} else {
 		b.WriteString("No Atlas entities mapped to changed lines.\n\n")

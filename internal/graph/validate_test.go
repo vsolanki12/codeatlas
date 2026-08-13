@@ -10,11 +10,11 @@ import (
 func TestValidateGraph_Valid(t *testing.T) {
 	g := domain.Graph{
 		Entities: []domain.Entity{
-			{ID: "function:pkg.A"},
-			{ID: "function:pkg.B"},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
 		},
 		Relationship: []domain.Relationship{
-			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B"},
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
 		},
 	}
 
@@ -26,8 +26,8 @@ func TestValidateGraph_Valid(t *testing.T) {
 func TestValidateGraph_DuplicateEntity(t *testing.T) {
 	g := domain.Graph{
 		Entities: []domain.Entity{
-			{ID: "function:pkg.A"},
-			{ID: "function:pkg.A"},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
 		},
 	}
 
@@ -43,10 +43,10 @@ func TestValidateGraph_DuplicateEntity(t *testing.T) {
 func TestValidateGraph_OrphanFrom(t *testing.T) {
 	g := domain.Graph{
 		Entities: []domain.Entity{
-			{ID: "function:pkg.B"},
+			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
 		},
 		Relationship: []domain.Relationship{
-			{ID: "rel1", From: "function:pkg.MISSING", To: "function:pkg.B"},
+			{ID: "rel1", From: "function:pkg.MISSING", To: "function:pkg.B", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "b.go"}},
 		},
 	}
 
@@ -62,10 +62,10 @@ func TestValidateGraph_OrphanFrom(t *testing.T) {
 func TestValidateGraph_OrphanTo(t *testing.T) {
 	g := domain.Graph{
 		Entities: []domain.Entity{
-			{ID: "function:pkg.A"},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
 		},
 		Relationship: []domain.Relationship{
-			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.MISSING"},
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.MISSING", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
 		},
 	}
 
@@ -89,11 +89,11 @@ func TestValidateGraph_EmptyGraph(t *testing.T) {
 func TestValidateGraph_MultipleProblems(t *testing.T) {
 	g := domain.Graph{
 		Entities: []domain.Entity{
-			{ID: "function:pkg.A"},
-			{ID: "function:pkg.A"},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
 		},
 		Relationship: []domain.Relationship{
-			{ID: "rel1", From: "function:pkg.GHOST", To: "function:pkg.A"},
+			{ID: "rel1", From: "function:pkg.GHOST", To: "function:pkg.A", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
 		},
 	}
 
@@ -104,5 +104,82 @@ func TestValidateGraph_MultipleProblems(t *testing.T) {
 	msg := err.Error()
 	if !strings.Contains(msg, "duplicate") || !strings.Contains(msg, "unknown From") {
 		t.Errorf("error should report both problems: %v", err)
+	}
+}
+
+func TestValidateGraph_MissingSourceFile(t *testing.T) {
+	g := domain.Graph{
+		Entities: []domain.Entity{
+			{ID: "function:pkg.A"},
+		},
+	}
+
+	err := ValidateGraph(g)
+	if err == nil {
+		t.Fatal("expected error for missing source file, got nil")
+	}
+	if !strings.Contains(err.Error(), "no source file") {
+		t.Errorf("error should mention missing source file: %v", err)
+	}
+}
+
+func TestValidateGraph_InvalidConfidence(t *testing.T) {
+	g := domain.Graph{
+		Entities: []domain.Entity{
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
+		},
+		Relationship: []domain.Relationship{
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: "maybe", Evidence: domain.Evidence{File: "a.go"}},
+		},
+	}
+
+	err := ValidateGraph(g)
+	if err == nil {
+		t.Fatal("expected error for invalid confidence, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid confidence") {
+		t.Errorf("error should mention invalid confidence: %v", err)
+	}
+}
+
+func TestValidateGraph_MissingEvidenceFile(t *testing.T) {
+	g := domain.Graph{
+		Entities: []domain.Entity{
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
+		},
+		Relationship: []domain.Relationship{
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: domain.ConfidenceInferred},
+		},
+	}
+
+	err := ValidateGraph(g)
+	if err == nil {
+		t.Fatal("expected error for missing evidence file, got nil")
+	}
+	if !strings.Contains(err.Error(), "no evidence file") {
+		t.Errorf("error should mention missing evidence: %v", err)
+	}
+}
+
+func TestValidateGraph_DuplicateRelationship(t *testing.T) {
+	g := domain.Graph{
+		Entities: []domain.Entity{
+			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
+			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
+		},
+		Relationship: []domain.Relationship{
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
+			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
+		},
+	}
+
+	err := ValidateGraph(g)
+	if err == nil {
+		t.Fatal("expected error for duplicate relationship ID, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate relationship ID") {
+		t.Errorf("error should mention duplicate relationship: %v", err)
 	}
 }

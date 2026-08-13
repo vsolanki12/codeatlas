@@ -36,11 +36,21 @@ func (idx *Index) Ask(entity string, intent string) *AskResult {
 
 	switch strings.ToLower(intent) {
 	case "understand":
+		if ans, ok := idx.LookupQuestion("reconciles", e.Name); ok {
+			r.QAHit = ans
+		}
 		r.Explanation = idx.Explain(e.ID, 2)
 	case "impact":
 		r.Impact = idx.Impact(e.ID)
 	case "debug":
 		r.Investigation = idx.Investigate(e.ID)
+	default:
+		for _, verb := range []string{"reconciles", "creates", "tests", "watches"} {
+			if ans, ok := idx.LookupQuestion(verb, e.Name); ok {
+				r.QAHit = verb + ": " + ans
+				break
+			}
+		}
 	}
 
 	return r

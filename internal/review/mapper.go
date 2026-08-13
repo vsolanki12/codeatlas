@@ -21,11 +21,14 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 
 	for _, d := range diffs {
 		if d.Status == FileDeleted {
+			if strings.HasSuffix(d.Path, ".go") {
+				unmapped = append(unmapped, d.Path+" (deleted — no head-side mapping)")
+			}
 			continue
 		}
 
-		path := d.OldPath
-		if d.Status == FileAdded {
+		path := d.Path
+		if d.Status == FileRenamed && d.OldPath != "" {
 			path = d.Path
 		}
 
@@ -64,11 +67,11 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 
 			var overlapping []Hunk
 			for _, hunk := range d.Hunks {
-				hunkEnd := hunk.OldStart + hunk.OldCount - 1
-				if hunkEnd < hunk.OldStart {
-					hunkEnd = hunk.OldStart
+				hunkEnd := hunk.NewStart + hunk.NewCount - 1
+				if hunkEnd < hunk.NewStart {
+					hunkEnd = hunk.NewStart
 				}
-				if hunk.OldStart <= endLine && hunkEnd >= startLine {
+				if hunk.NewStart <= endLine && hunkEnd >= startLine {
 					overlapping = append(overlapping, hunk)
 				}
 			}

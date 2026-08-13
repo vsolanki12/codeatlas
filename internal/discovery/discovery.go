@@ -30,7 +30,7 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 		}
 		if entry.IsDir() {
 			name := entry.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == "testdata" {
 				return filepath.SkipDir // skip this directory and its contents
 			}
 			return nil // keep going, it's a directory we want to scan

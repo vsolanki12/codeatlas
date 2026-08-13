@@ -53,16 +53,19 @@ func TestBuild_ReconcilesAndCreates(t *testing.T) {
 		}
 	})
 
-	// 6. Verify the Creates relationship metadata mapping (Index 1)
-	t.Run("Verify RelCreates Entry", func(t *testing.T) {
+	// 6. Verify the Watches relationship metadata mapping (Index 1)
+	t.Run("Verify RelWatches Entry", func(t *testing.T) {
 		r := rels[1]
-		if r.Type != domain.RelCreates {
-			t.Errorf("Expected type %s, got %s", domain.RelCreates, r.Type)
+		if r.Type != domain.RelWatches {
+			t.Errorf("Expected type %s, got %s", domain.RelWatches, r.Type)
 		}
 		if r.From != "controller:fake.MyController" || r.To != "resource:Secret.my-secret" {
 			t.Errorf("Path mapping discrepancy: From=%q To=%q", r.From, r.To)
 		}
-		if r.Evidence.Reason != "controller declares resource ownership chain segment" {
+		if r.Confidence != domain.ConfidenceInferred {
+			t.Errorf("Expected inferred confidence, got %s", r.Confidence)
+		}
+		if r.Evidence.Reason != "controller watches this resource via SetupWithManager" {
 			t.Errorf("Unexpected verification evidence text: %q", r.Evidence.Reason)
 		}
 	})
@@ -445,7 +448,7 @@ func TestBuild_Implements(t *testing.T) {
 	for _, r := range rels {
 		if r.Type == domain.RelImplements {
 			implRels++
-			if r.Evidence.Reason != "var _ assertion declares interface implementation" {
+			if r.Evidence.Reason != "var _ assertion detected, target resolved by name match" {
 				t.Errorf("Wrong reason: %q", r.Evidence.Reason)
 			}
 		}
