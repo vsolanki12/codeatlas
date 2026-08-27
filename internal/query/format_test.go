@@ -101,6 +101,9 @@ func TestFormatSubgraph(t *testing.T) {
 
 func TestFormatStats(t *testing.T) {
 	s := &GraphStats{
+		Commit:        "abc1234",
+		Branch:        "feature/review",
+		GeneratedAt:   "2026-08-21T06:53:25Z",
 		TotalEntities: 100,
 		TotalRels:     50,
 		EntityCounts:  map[string]int{"controller": 10, "crd": 20},
@@ -116,6 +119,15 @@ func TestFormatStats(t *testing.T) {
 	}
 	if !strings.Contains(got, "relationships: 50") {
 		t.Fatalf("missing rel total in: %q", got)
+	}
+	for _, want := range []string{
+		"commit: abc1234",
+		"branch: feature/review",
+		"generated: 2026-08-21T06:53:25Z",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing graph metadata %q in: %q", want, got)
+		}
 	}
 }
 

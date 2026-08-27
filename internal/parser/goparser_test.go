@@ -147,6 +147,49 @@ func TestParseEnvVars(t *testing.T) {
 	}
 }
 
+func TestParseImportAliasResolution(t *testing.T) {
+	p := NewGoParser()
+	entities, err := p.Parse(domain.File{RelativePath: "testdata/aliased_imports.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	byName := make(map[string]domain.Entity)
+	for _, ent := range entities {
+		byName[ent.Name] = ent
+	}
+
+	fn := byName["registerComponents"]
+	if fn.Kind != domain.KindFunction {
+		t.Fatalf("registerComponents not found as function")
+	}
+
+	callSet := make(map[string]bool)
+	for _, c := range fn.Calls {
+		callSet[c] = true
+	}
+
+	// etcdv2.NewComponent should resolve to etcd.NewComponent
+	if !callSet["etcd.NewComponent"] {
+		t.Errorf("Expected etcd.NewComponent (resolved from etcdv2 alias), got %v", fn.Calls)
+	}
+	// kasv2.NewComponent should resolve to kas.NewComponent
+	if !callSet["kas.NewComponent"] {
+		t.Errorf("Expected kas.NewComponent (resolved from kasv2 alias), got %v", fn.Calls)
+	}
+	// olm.NewComponent should stay as olm.NewComponent (no alias)
+	if !callSet["olm.NewComponent"] {
+		t.Errorf("Expected olm.NewComponent (no alias needed), got %v", fn.Calls)
+	}
+	// Aliased names should NOT appear
+	if callSet["etcdv2.NewComponent"] {
+		t.Errorf("Should not have unresolved alias etcdv2.NewComponent in calls")
+	}
+	if callSet["kasv2.NewComponent"] {
+		t.Errorf("Should not have unresolved alias kasv2.NewComponent in calls")
+	}
+}
+
 func TestExtractLiterals(t *testing.T) {
 	p := NewGoParser()
 	entities, err := p.Parse(domain.File{RelativePath: "testdata/literals.go"})

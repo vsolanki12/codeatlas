@@ -238,6 +238,8 @@ Development progresses in phases. Each builds on the previous.
 - **Deleted file reporting**: Explicitly reported as "no head-side mapping" instead of silently skipped.
 - **Discovery**: `testdata/` added to skip list (code now matches documented behavior).
 
+**Graph metadata in stats:** `atlas stats` now outputs `commit`, `branch`, and `generated` fields from graph metadata, enabling downstream freshness checks.
+
 **Outstanding:**
 - Embed matching still uses directory proximity, not actual `//go:embed` glob patterns. Correctly labeled `inferred`, but overly broad.
 - Relationship ID format not validated (`from--type--to`). Duplicate detection works, but malformed or empty IDs pass validation.

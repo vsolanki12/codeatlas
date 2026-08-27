@@ -13,6 +13,10 @@ type Subgraph struct {
 }
 
 type GraphStats struct {
+	Commit      string
+	Branch      string
+	GeneratedAt string
+
 	TotalEntities int
 	TotalRels     int
 	EntityCounts  map[string]int
@@ -263,6 +267,9 @@ func (idx *Index) Where(path string, maxResults int) []*domain.Entity {
 
 func (idx *Index) Stats() *GraphStats {
 	s := &GraphStats{
+		Commit:        idx.graph.Commit,
+		Branch:        idx.graph.Branch,
+		GeneratedAt:   idx.graph.GeneratedAt,
 		TotalEntities: len(idx.graph.Entities),
 		TotalRels:     len(idx.graph.Relationship),
 		EntityCounts:  make(map[string]int),

@@ -23,6 +23,12 @@ atlas.json
 /atlas
 web/
 
+# Local scan reports and graph snapshots
+*-graph.json
+/docs/presentation.html
+/explain.txt
+/investigate.txt
+
 # IDE
 .vscode/
 .idea/

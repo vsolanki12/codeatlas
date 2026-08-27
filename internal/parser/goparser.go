@@ -41,6 +41,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 
 	typeComments := make(map[string]string)
 	implPairs := make(map[string][]string) // structName -> []interfaceName
+	importAliases := buildImportAliasMap(astFile)
 
 	for _, decl := range astFile.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
@@ -106,7 +107,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		var envVars []string
 		var literals []string
 		if fn.Body != nil {
-			calls, envVars = extractCallsAndEnvVars(fn.Body)
+			calls, envVars = extractCallsAndEnvVars(fn.Body, importAliases)
 			literals = extractLiterals(fn.Body)
 		}
 
@@ -196,7 +197,22 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	return entities, nil
 }
 
-func extractCallsAndEnvVars(body *ast.BlockStmt) ([]string, []string) {
+func buildImportAliasMap(astFile *ast.File) map[string]string {
+	aliases := make(map[string]string)
+	for _, imp := range astFile.Imports {
+		if imp.Name == nil || imp.Name.Name == "." || imp.Name.Name == "_" {
+			continue
+		}
+		path := strings.Trim(imp.Path.Value, `"`)
+		pkgName := filepath.Base(path)
+		if imp.Name.Name != pkgName {
+			aliases[imp.Name.Name] = pkgName
+		}
+	}
+	return aliases
+}
+
+func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string) ([]string, []string) {
 	seen := make(map[string]bool)
 	var calls []string
 	seenEnv := make(map[string]bool)
@@ -222,7 +238,11 @@ func extractCallsAndEnvVars(body *ast.BlockStmt) ([]string, []string) {
 						}
 					}
 				}
-				name = ident.Name + "." + fun.Sel.Name
+				prefix := ident.Name
+				if resolved, ok := importAliases[prefix]; ok {
+					prefix = resolved
+				}
+				name = prefix + "." + fun.Sel.Name
 			} else {
 				name = fun.Sel.Name
 			}

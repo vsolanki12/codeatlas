@@ -143,6 +143,10 @@ atlas ask -graph atlas-graph.json NodePool -intent understand
 atlas view -graph atlas-graph.json HostedClusterReconciler
 ```
 
+`atlas stats` also prints the graph's `commit`, `branch`, and `generated`
+metadata when available, so consumers can verify that the graph matches the
+source revision they are reviewing.
+
 ### Review a PR
 
 ```bash

@@ -392,6 +392,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 **Key fields:**
 - `schema` — always `"atlas-graph"`. Identifies this file as an Atlas Graph.
 - `schemaVersion` — semver. Consumers check this to know which fields exist. Bump major on breaking changes, minor on new optional fields.
+- `generatedAt` — UTC RFC3339 timestamp for when the graph was generated. Use with `commit` and `branch` to check graph freshness.
 - `commit` — exact git commit that was scanned. Enables diffing two graphs.
 - `branch` — git branch. Enables comparing `release-4.19` vs `release-4.20`.
 - `entities` — flat array of all entities (all kinds mixed together, distinguished by `kind`).

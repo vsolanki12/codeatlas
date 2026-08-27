@@ -62,7 +62,7 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
     │       ├──► internal/discovery    Walks the repository, returns []domain.File
     │       │
     │       ├──► internal/parser       Parses files into []domain.Entity
-    │       │       ├── goparser.go    Go AST (controllers, functions, packages, imports, literals, embeds)
+    │       │       ├── goparser.go    Go AST (controllers, functions, packages, alias-aware imports, literals, embeds)
     │       │       ├── yaml.go        YAML parser (CRDs, Deployments, Services, property flattening)
     │       │       ├── markdown.go    Markdown parser (docs, design proposals)
     │       │       └── test.go        Test parser (test functions, coverage)
@@ -90,7 +90,7 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review` |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `origin`, `temporal` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
-| `internal/parser` | Parses individual files into entities; extracts imports, literals, embeds, properties | `domain` |
+| `internal/parser` | Parses individual files into entities; extracts imports (including explicit alias normalization), literals, embeds, properties | `domain` |
 | `internal/graph` | Connects entities with typed, evidenced relationships | `domain` |
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
 | `internal/origin` | Classifies import paths (stdlib, known repos, external) | Nothing |
@@ -218,8 +218,8 @@ atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
                 ▼
 ┌─ 10. Graph Writing ─────────────────────────┐
 │  Serialize to atlas-graph.json                │
-│  Include: schema version (1.4.0), commit,     │
-│           branch, scan duration, stats        │
+│  Include: schema version (1.4.0), generated   │
+│           timestamp, commit, branch, duration  │
 └───────────────┬───────────────────────────────┘
                 ▼
 ┌─ 11. Summary ────────────────────────────────┐
@@ -246,7 +246,8 @@ Each step maps to code:
 | 10. Graph Writing | `internal/storage` | `Write()` |
 | 11. Summary | `internal/scanner` | `PrintSummary()` |
 
-**Status:** Implemented. Run `atlas_stats` for current scan numbers.
+**Status:** Implemented. Run `atlas_stats` for current scan numbers and graph
+freshness metadata (`commit`, `branch`, and `generated`) when available.
 
 ---
 

@@ -162,6 +162,15 @@ func FormatSubgraph(sg *Subgraph) string {
 
 func FormatStats(s *GraphStats) string {
 	var b strings.Builder
+	if s.Commit != "" {
+		fmt.Fprintf(&b, "commit: %s\n", s.Commit)
+	}
+	if s.Branch != "" {
+		fmt.Fprintf(&b, "branch: %s\n", s.Branch)
+	}
+	if s.GeneratedAt != "" {
+		fmt.Fprintf(&b, "generated: %s\n", s.GeneratedAt)
+	}
 	fmt.Fprintf(&b, "entities: %d\n", s.TotalEntities)
 
 	eKeys := make([]string, 0, len(s.EntityCounts))
