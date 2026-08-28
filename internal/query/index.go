@@ -2,6 +2,7 @@ package query
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
@@ -33,6 +34,63 @@ func LoadGraph(path string) (*Index, error) {
 	return newIndex(g), nil
 }
 
+// EntitiesInFile returns entities whose declared source file or implementation
+// file list contains path. Unlike Where, it cannot accidentally mix similarly
+// named directories and is therefore suitable for diff-to-entity mapping.
+func (idx *Index) EntitiesInFile(path string, maxResults int) []*domain.Entity {
+	var result []*domain.Entity
+	for _, e := range idx.byID {
+		if e.Source.File == path || containsString(e.Files, path) {
+			result = append(result, e)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Source.Line == result[j].Source.Line {
+			return result[i].ID < result[j].ID
+		}
+		return result[i].Source.Line < result[j].Source.Line
+	})
+	if maxResults > 0 && len(result) > maxResults {
+		result = result[:maxResults]
+	}
+	return result
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+// GraphMetadata returns the small immutable portion of the graph that
+// consumers need to report freshness and scan completeness.
+type GraphMetadata struct {
+	SchemaVersion  string   `json:"schemaVersion"`
+	EntityIdentity string   `json:"entityIdentity,omitempty"`
+	Repository     string   `json:"repository"`
+	Commit         string   `json:"commit"`
+	Branch         string   `json:"branch"`
+	GeneratedAt    string   `json:"generatedAt"`
+	ScanComplete   bool     `json:"scanComplete"`
+	ScanWarnings   []string `json:"scanWarnings,omitempty"`
+}
+
+func (idx *Index) GraphMetadata() GraphMetadata {
+	return GraphMetadata{
+		SchemaVersion:  idx.graph.SchemaVersion,
+		EntityIdentity: idx.graph.EntityIdentity,
+		Repository:     idx.graph.Repository,
+		Commit:         idx.graph.Commit,
+		Branch:         idx.graph.Branch,
+		GeneratedAt:    idx.graph.GeneratedAt,
+		ScanComplete:   idx.graph.ScanComplete,
+		ScanWarnings:   append([]string(nil), idx.graph.ScanWarnings...),
+	}
+}
+
 func newIndex(g domain.Graph) *Index {
 	idx := &Index{
 		graph:      g,
@@ -62,13 +120,29 @@ func newIndex(g domain.Graph) *Index {
 		idx.toEntity[r.To] = append(idx.toEntity[r.To], r)
 		idx.byRelType[r.Type] = append(idx.byRelType[r.Type], r)
 	}
+	for _, rels := range idx.fromEntity {
+		sort.Slice(rels, func(i, j int) bool { return rels[i].ID < rels[j].ID })
+	}
+	for _, rels := range idx.toEntity {
+		sort.Slice(rels, func(i, j int) bool { return rels[i].ID < rels[j].ID })
+	}
+	for _, rels := range idx.byRelType {
+		sort.Slice(rels, func(i, j int) bool { return rels[i].ID < rels[j].ID })
+	}
 
 	idx.viewByID = make(map[string]*domain.View, len(g.Views))
 	idx.viewByName = make(map[string]*domain.View, len(g.Views))
 	for id, v := range g.Views {
 		v := v
 		idx.viewByID[id] = &v
-		idx.viewByName[strings.ToLower(v.EntityName)] = &v
+		name := strings.ToLower(v.EntityName)
+		if _, exists := idx.viewByName[name]; exists {
+			// A view lookup by name is only safe when the name is unique. Keep a
+			// nil sentinel so map iteration order cannot select one arbitrarily.
+			idx.viewByName[name] = nil
+			continue
+		}
+		idx.viewByName[name] = &v
 	}
 
 	idx.questions = g.Questions
@@ -81,16 +155,21 @@ func (idx *Index) GetView(entityID string) *domain.View {
 }
 
 func (idx *Index) SearchView(name string) *domain.View {
-	lower := strings.ToLower(name)
-	if v := idx.viewByName[lower]; v != nil {
-		return v
+	return idx.viewByName[strings.ToLower(name)]
+}
+
+// ResolveView accepts an exact view/entity ID or an exact entity name only
+// when that name identifies one graph entity. A view must never be selected
+// merely because a different entity happens to share its display name.
+func (idx *Index) ResolveView(value string) *domain.View {
+	if view, ok := idx.viewByID[value]; ok {
+		return view
 	}
-	for k, v := range idx.viewByName {
-		if strings.Contains(k, lower) {
-			return v
-		}
+	candidates := idx.byName[strings.ToLower(value)]
+	if len(candidates) != 1 {
+		return nil
 	}
-	return nil
+	return idx.viewByID[candidates[0].ID]
 }
 
 func (idx *Index) LookupQuestion(verb, subject string) (string, bool) {

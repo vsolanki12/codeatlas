@@ -19,14 +19,16 @@ Source Repository
         ▼
    Atlas Graph            JSON file (atlas-graph.json)
         │
-   ┌────┼────┬────────┐
-   ▼    ▼    ▼        ▼
-  CLI    MCP Server    API           All consumers read the same JSON
-              │        (Future)
-      ┌───────┼──────┐
-      ▼       ▼      ▼
-   Claude   VS Code  Any MCP        Layer 4: Experience
-   Code     Cursor   Client  
+   ┌────┼──────────┬──────────┐
+   ▼    ▼          ▼          ▼
+  CLI  MCP      Assistant   PR review     All consumers read the same graph
+       Server   (bounded     (diff +
+                  graph      graph)
+                 context)
+        │          │          │
+        ▼          ▼          ▼
+   MCP clients  Local LLM   Optional LLM  Human reviewer
+                reasoning   reasoning
 ```
 
 Four-layer model:
@@ -40,7 +42,26 @@ Four-layer model:
 
 CodeAtlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
 
-**Status:** Implemented. Scanner, Graph, CLI, and MCP Server all operational.
+**Status:** Implemented. Scanner, Graph, CLI, MCP Server, Assistant integration,
+and deterministic PR-review preparation are operational. LLM reasoning remains
+optional and downstream of graph-derived evidence.
+
+### Operational contract
+
+The scanner is the only component that parses repository files. It records
+content fingerprints for supported source, configuration, and document files
+and marks a graph `scanComplete: false` when a file cannot be parsed.
+Incremental reuse is allowed only for a previously complete graph whose file
+state still matches the repository; incomplete graphs trigger a full scan.
+Consumers must carry graph metadata and warnings into their own output.
+
+Relationship targets are emitted only when the parser provides a supported
+signal and the builder can resolve the target without an ambiguous match.
+Name-based or convention-based resolution is retained only when it can be
+explained and is marked `confidence: inferred`. Unsupported relationships are
+omitted. Query and MCP JSON responses are bounded and expose truncation and
+graph-status metadata so an LLM cannot mistake a partial response for a full
+repository inventory.
 
 ---
 
@@ -55,21 +76,19 @@ internal/domain               The vocabulary of CodeAtlas
     ▲ (every package imports domain)
     │
 cmd/atlas                     CLI entry point (scan, search, explain, impact, investigate,
-                                ask, view, context, where, stats, serve, query, review)
+                                ask, view, context, where, stats, freshness, serve, query, review)
     │
     ├──► internal/scanner      Orchestrator — coordinates the full scan pipeline
     │       │
     │       ├──► internal/discovery    Walks the repository, returns []domain.File
     │       │
     │       ├──► internal/parser       Parses files into []domain.Entity
-    │       │       ├── goparser.go    Go AST (controllers, functions, packages, alias-aware imports, literals, embeds)
-    │       │       ├── yaml.go        YAML parser (CRDs, Deployments, Services, property flattening)
-    │       │       ├── markdown.go    Markdown parser (docs, design proposals)
-    │       │       └── test.go        Test parser (test functions, coverage)
+    │       │       ├── goparser.go    Go AST (controllers, functions, packages, imports, literals, embeds)
+    │       │       ├── yamlparser.go  YAML parser (CRDs, resources, property flattening)
+    │       │       ├── mdparser.go    Markdown parser (documents and bounded excerpts)
+    │       │       └── testparser.go  Test parser (test functions and calls)
     │       │
     │       ├──► internal/graph        Builds []domain.Relationship between entities
-    │       │
-    │       ├──► internal/origin       Import path classifier (stdlib vs known repos)
     │       │
     │       ├──► internal/temporal     Git history enrichment (LastAuthor, LastModified, ChangeCount)
     │       │
@@ -87,27 +106,26 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | Package | Responsibility | Depends On |
 |---|---|---|
 | `internal/domain` | Defines the vocabulary: Entity, Relationship, Evidence, Graph, Source | Nothing |
-| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review` |
-| `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `origin`, `temporal` |
+| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review`, `freshness` |
+| `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `temporal`, `views` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
-| `internal/parser` | Parses individual files into entities; extracts imports (including explicit alias normalization), literals, embeds, properties | `domain` |
+| `internal/parser` | Parses individual files into entities; extracts imports (including alias normalization), literals, embeds, properties | `domain` |
 | `internal/graph` | Connects entities with typed, evidenced relationships | `domain` |
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
-| `internal/origin` | Classifies import paths (stdlib, known repos, external) | Nothing |
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
-| `internal/review` | PR review: diff parsing, entity-to-hunk mapping, graph enrichment, human-readable formatting | `domain`, `query` |
+| `internal/review` | PR review: bounded diff evidence, diff parsing, entity-to-hunk mapping, graph enrichment, human-readable formatting | `domain`, `query` |
 | `internal/mcpserver` | MCP server: 11 tools via go-sdk stdio transport | `query` |
 
 Key constraints:
-- **Every package imports `domain`.** It is the shared vocabulary. `docs/data-model.md` is this vocabulary in English. `internal/domain` is the same vocabulary in Go. They match exactly.
-- **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, `origin`, and `temporal` are independent. Only `scanner` composes them.
+- **Graph-producing packages use `domain` as the shared vocabulary.** `docs/data-model.md` describes the same contract. Thin consumers such as `mcpserver` depend on `query` and do not need to import `domain` directly.
+- **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, and `temporal` are independent. Only `scanner` composes them.
 - **`domain` depends on nothing.** Zero imports from other CodeAtlas packages. If `domain` ever imports another CodeAtlas package, the architecture is broken.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
 - **`mcpserver` depends only on `query`.** It's a thin MCP wrapper over the query engine.
 
-**Status:** Implemented. Run `atlas_stats` for current counts.
+**Status:** Implemented. Run `atlas stats` for current counts.
 
 ### Architectural Risks
 
@@ -127,127 +145,65 @@ Started as simple index lookups. Now contains Investigate, Explain, Impact — e
 
 ## Architecture 3: Execution Pipeline
 
-What happens when someone runs `atlas scan`. The sequence of operations, in order.
+What happens when someone runs `atlas scan`. The scanner is deterministic for a
+given repository snapshot; wall-clock duration is reported by the CLI and is
+not persisted into graph content.
 
 ```
-atlas scan -repo /path/to/hypershift -output atlas-graph.json -temporal
+atlas scan -repo /path/to/repository -output atlas.json -temporal
         │
         ▼
-┌─ 1. Configuration ───────────────────────────┐
-│  Parse CLI flags (-repo, -output, -temporal)  │
-│  Resolve repository path                      │
-│  Load scan options                            │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 2. Repository Validation ────────────────────┐
-│  Verify path exists                           │
-│  Verify it's a Go project (go.mod)            │
-│  Read git commit hash and branch              │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 3. File Discovery ──────────────────────────┐
-│  Walk the directory tree                      │
-│  Return every file with metadata              │
-│  Skip: .git/, vendor/, node_modules/,         │
-│        testdata/                              │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 4. File Classification ─────────────────────┐
-│  Route discovered files to correct parser:    │
-│    .go (non-test)  → Go parser                │
-│    _test.go        → Test parser              │
-│    .yaml/.yml      → YAML parser              │
-│    .md             → Markdown parser           │
-│  Unrecognized extensions are skipped          │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 5. Parser Execution ────────────────────────┐
-│  Go parser      → controllers, functions,     │
-│                    packages, imports, literals,│
-│                    embeds, selector constants  │
-│  YAML parser    → CRDs, Deployments,          │
-│                    Services, property flatten  │
-│  Markdown parser → documents, headings        │
-│  Test parser    → test functions, test types   │
-│                                               │
-│  Output: flat list of entities                │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 6. Dedup (Merge-Aware) ────────────────────┐
-│  Duplicate package entities merge Files and   │
-│  Imports arrays (was first-seen-wins)         │
-│  Merges: Literals, Properties, Embeds fields  │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 7. Temporal Enrichment (opt-in) ────────────┐
-│  If -temporal flag set:                       │
-│    git log per unique file → distribute to    │
-│    entities: LastAuthor, LastModified,         │
-│    ChangeCount. File-level cache avoids       │
-│    redundant git calls.                       │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 8. Relationship Building ───────────────────┐
-│  Connect entities with typed edges:           │
-│                                               │
-│  reconciles, creates, calls, tested_by,       │
-│  documented_in, imports, owns, watches,       │
-│  embeds                                       │
-│                                               │
-│  Every edge carries evidence (file, line,     │
-│  snippet, reason) and confidence              │
-│  (proven or inferred)                         │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 9. Graph Validation ────────────────────────┐
-│  Check: no entity without a source file       │
-│  Check: no relationship without evidence file │
-│  Check: all entity IDs are unique             │
-│  Check: all relationship IDs are unique       │
-│  Check: all relationship targets exist        │
-│  Check: confidence is proven or inferred      │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 9b. Knowledge View Compilation ─────────────┐
-│  For each controller and CRD:                 │
-│    Compile ownership, resources, tests,       │
-│    files, temporal data into a View.          │
-│  Generate deterministic Q&A pairs from views. │
-│  Stored in graph as views + questions fields. │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 10. Graph Writing ─────────────────────────┐
-│  Serialize to atlas-graph.json                │
-│  Include: schema version (1.4.0), generated   │
-│           timestamp, commit, branch, duration  │
-└───────────────┬───────────────────────────────┘
-                ▼
-┌─ 11. Summary ────────────────────────────────┐
-│  Atlas scan complete.                         │
-│  (entity and relationship counts vary by scan) │
-│  Schema 1.4.0                                 │
-└───────────────────────────────────────────────┘
+1. Resolve the repository and output paths; discovery validates that the
+   repository root is an existing directory.
+        │
+        ▼
+2. Walk the repository deterministically, skipping .git, .worktrees, vendor,
+   node_modules, and testdata. Record timestamps and content/metadata
+   fingerprints. The graph output file is excluded when it is inside the repo.
+        │
+        ▼
+3. If a previous graph is complete, current, repository-matching, and uses the
+   current entity identity, reuse unchanged files. A changed go.mod or package
+   file that invalidates package aggregation forces the affected/full rescan.
+        │
+        ▼
+4. Classify .go, _test.go, YAML/YML, and Markdown files and run the matching
+   deterministic parser. Parse failures become scan warnings and make the
+   graph incomplete; unsupported file extensions are not parsed.
+        │
+        ▼
+5. Merge duplicate package/controller observations, deduplicate facts and
+   sites, sort entities and fact arrays, then optionally add git history.
+        │
+        ▼
+6. Build only supported relationships whose endpoints resolve. Each emitted
+   edge has deterministic ID, type, confidence, and source evidence.
+        │
+        ▼
+7. Assemble metadata, status, file state, relationships, deterministic views,
+   and deterministic question answers. Validate the final graph before JSON
+   persistence.
+        │
+        ▼
+8. Write the graph atomically at the requested path. Query, MCP, Assistant,
+   and review consumers load this graph; they do not invoke repository parsers.
 ```
-
-Each step maps to code:
 
 | Pipeline Step | Package | Entry Function |
 |---|---|---|
-| 1. Configuration | `cmd/atlas` | `runScan()` |
-| 2. Repository Validation | `internal/scanner` | `ValidateRepository()` |
-| 3. File Discovery | `internal/discovery` | `Scan()` |
-| 4. File Classification | `internal/scanner` | Route files by extension to parsers |
-| 5. Parser Execution | `internal/parser` | `Parse()` per parser |
-| 6. Dedup | `internal/scanner` | Merge-aware entity deduplication |
-| 7. Temporal Enrichment | `internal/temporal` | `Enrich()` |
-| 8. Relationship Building | `internal/graph` | `BuildRelationships()` |
-| 9. Graph Validation | `internal/graph` | `Validate()` |
-| 9b. View Compilation | `internal/views` | `Compile()`, `CompileQuestions()` |
-| 10. Graph Writing | `internal/storage` | `Write()` |
-| 11. Summary | `internal/scanner` | `PrintSummary()` |
+| Configuration | `cmd/atlas` | `runScan()` |
+| Discovery and repository validation | `internal/discovery` | `New()`, `(*Discovery).Scan()` |
+| Incremental eligibility and merge | `internal/scanner` | `Scan()` |
+| File parsing | `internal/parser` | `Parser.Parse()` |
+| Temporal enrichment | `internal/temporal` | `Enrich()` |
+| Relationship building | `internal/graph` | `(*RelationshipBuilder).Build()` |
+| Structural validation | `internal/domain` | `Graph.Validate()` |
+| View compilation | `internal/views` | `Compile()`, `CompileQuestions()` |
+| Graph persistence | `internal/storage` | `WriteGraph()` |
 
-**Status:** Implemented. Run `atlas_stats` for current scan numbers and graph
-freshness metadata (`commit`, `branch`, and `generated`) when available.
+**Status:** Implemented. `atlas freshness` compares graph provenance and stored
+file state with a checkout. A current, complete graph is required for
+implementation guidance and verified PR review.
 
 ---
 
@@ -274,7 +230,7 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 13 | Question Index (deterministic Q&A pairs) | Implemented |
 | 14 | PR Review (deterministic diff-to-graph review) | Implemented |
 
-Current state: 11 MCP tools, 13 CLI commands, schema 1.4.0. Run `atlas_stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 11 MCP tools, 14 CLI commands, schema 1.4.0. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 
@@ -284,7 +240,7 @@ Current state: 11 MCP tools, 13 CLI commands, schema 1.4.0. Run `atlas_stats` fo
 |---|---|
 | [0001](adr/0001-scanner-and-viewer-separation.md) | Scanner and viewers are separate |
 | [0002](adr/0002-json-before-neo4j.md) | JSON before Neo4j |
-| [0003](adr/0003-no-ai-until-graph-is-proven.md) | No AI until the graph is proven |
+| [0003](adr/0003-no-ai-until-graph-is-proven.md) | No AI reasoning in the Atlas core |
 | [0004](adr/0004-evidence-on-every-relationship.md) | Evidence on every relationship |
 | [0005](adr/0005-typed-relationships.md) | Typed relationships over generic edges |
 | [0006](adr/0006-unified-entity-model.md) | Unified Entity model |

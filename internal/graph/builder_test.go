@@ -7,15 +7,19 @@ import (
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
 
-func TestBuild_ReconcilesAndCreates(t *testing.T) {
-	// 4. Set up fake entities by hand
+func TestBuild_ReconcilesAndWatches(t *testing.T) {
+	// Set up fake entities by hand.
 	entities := []domain.Entity{
 		{
 			ID:      "controller:fake.MyController",
 			Name:    "MyController",
 			Kind:    domain.KindController,
 			Watches: []string{"HostedCluster", "Secret"},
-			Source:  domain.Source{Parser: "go", File: "controller.go", Line: 10},
+			WatchSites: []domain.Site{
+				{Name: "HostedCluster", Source: domain.Source{Parser: "go-ast", File: "controller.go", Line: 10}},
+				{Name: "Secret", Source: domain.Source{Parser: "go-ast", File: "controller.go", Line: 11}},
+			},
+			Source: domain.Source{Parser: "go", File: "controller.go", Line: 10},
 		},
 		{
 			ID:   "crd:hypershift.HostedCluster",
@@ -32,12 +36,12 @@ func TestBuild_ReconcilesAndCreates(t *testing.T) {
 	b := NewRelationshipBuilder("")
 	rels := b.Build(entities)
 
-	// Expect exactly 2 relationships: one reconciles, one creates
+	// Expect exactly 2 relationships: one reconciles, one watches.
 	if len(rels) != 2 {
 		t.Fatalf("Expected exactly 2 generated relationships, got %d", len(rels))
 	}
 
-	// 5. Verify the Reconciles relationship metadata mapping (Index 0)
+	// Verify the Reconciles relationship metadata mapping (Index 0).
 	t.Run("Verify RelReconciles Entry", func(t *testing.T) {
 		r := rels[0]
 		if r.Type != domain.RelReconciles {
@@ -46,7 +50,7 @@ func TestBuild_ReconcilesAndCreates(t *testing.T) {
 		if r.From != "controller:fake.MyController" || r.To != "crd:hypershift.HostedCluster" {
 			t.Errorf("Path mapping discrepancy: From=%q To=%q", r.From, r.To)
 		}
-		if r.Evidence.Reason != "controller has Reconcile() method" {
+		if r.Evidence.Reason != "controller's SetupWithManager.For(...) identifies the reconciliation target" {
 			t.Errorf("Unexpected verification evidence text: %q", r.Evidence.Reason)
 		}
 		if r.Evidence.Line != 10 || r.Evidence.File != "controller.go" {
@@ -54,7 +58,7 @@ func TestBuild_ReconcilesAndCreates(t *testing.T) {
 		}
 	})
 
-	// 6. Verify the Watches relationship metadata mapping (Index 1)
+	// Verify the Watches relationship metadata mapping (Index 1).
 	t.Run("Verify RelWatches Entry", func(t *testing.T) {
 		r := rels[1]
 		if r.Type != domain.RelWatches {
@@ -70,6 +74,100 @@ func TestBuild_ReconcilesAndCreates(t *testing.T) {
 			t.Errorf("Unexpected verification evidence text: %q", r.Evidence.Reason)
 		}
 	})
+}
+
+func TestBuild_CreatesFromExplicitCall(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:          "controller:pkg.Reconciler",
+			Name:        "Reconciler",
+			Kind:        domain.KindController,
+			Creates:     []string{"Secret"},
+			CreateSites: []domain.Site{{Name: "Secret", Source: domain.Source{Parser: "go-ast", File: "controller.go", Line: 24}}},
+			Source:      domain.Source{Parser: "go", File: "controller.go", Line: 10},
+		},
+		{
+			ID:         "resource:secret.credentials",
+			Name:       "credentials",
+			Kind:       domain.KindResource,
+			Properties: []string{"kind=Secret", "metadata.name=credentials"},
+			Source:     domain.Source{Parser: "yaml", File: "deploy/secret.yaml", Line: 1},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 1 {
+		t.Fatalf("got %d relationships, want 1", len(rels))
+	}
+	rel := rels[0]
+	if rel.Type != domain.RelCreates || rel.From != "controller:pkg.Reconciler" || rel.To != "resource:secret.credentials" {
+		t.Fatalf("unexpected creates relationship: %+v", rel)
+	}
+	if rel.Confidence != domain.ConfidenceInferred {
+		t.Errorf("confidence = %q, want inferred", rel.Confidence)
+	}
+	if rel.Evidence.File != "controller.go" || rel.Evidence.Line != 24 {
+		t.Errorf("evidence location = %s:%d, want controller.go:24", rel.Evidence.File, rel.Evidence.Line)
+	}
+	if rel.Evidence.Reason != "explicit create/upsert call; target matched by unique manifest kind" {
+		t.Errorf("evidence reason = %q", rel.Evidence.Reason)
+	}
+}
+
+func TestBuild_PackageImportsUseExactPackageIdentityAndEvidence(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:      "package:example.com/repo/controllers",
+			Name:    "controllers",
+			Kind:    domain.KindPackage,
+			Package: "example.com/repo/controllers",
+			Imports: []string{"example.com/repo/util"},
+			ImportSites: []domain.Site{{
+				Name:   "example.com/repo/util",
+				Source: domain.Source{Parser: "go-ast", File: "controllers/setup.go", Line: 4},
+			}},
+			Source: domain.Source{Parser: "go", File: "controllers/setup.go", Line: 1},
+		},
+		{
+			ID:      "package:example.com/repo/util",
+			Name:    "util",
+			Kind:    domain.KindPackage,
+			Package: "example.com/repo/util",
+			Source:  domain.Source{Parser: "go", File: "util/util.go", Line: 1},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 1 {
+		t.Fatalf("got %d relationships, want 1: %+v", len(rels), rels)
+	}
+	rel := rels[0]
+	if rel.Type != domain.RelImports || rel.From != entities[0].ID || rel.To != entities[1].ID {
+		t.Fatalf("unexpected import relationship: %+v", rel)
+	}
+	if rel.Confidence != domain.ConfidenceProven || rel.Evidence.File != "controllers/setup.go" || rel.Evidence.Line != 4 {
+		t.Fatalf("unexpected import evidence: %+v", rel)
+	}
+}
+
+func TestBuild_DoesNotGuessAmbiguousCreateTarget(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:          "controller:pkg.Reconciler",
+			Name:        "Reconciler",
+			Kind:        domain.KindController,
+			Creates:     []string{"Secret"},
+			CreateSites: []domain.Site{{Name: "Secret", Source: domain.Source{Parser: "go-ast", File: "controller.go", Line: 24}}},
+			Source:      domain.Source{Parser: "go", File: "controller.go", Line: 10},
+		},
+		{ID: "resource:secret.one", Name: "one", Kind: domain.KindResource, Properties: []string{"kind=Secret"}, Source: domain.Source{Parser: "yaml", File: "one.yaml", Line: 1}},
+		{ID: "resource:secret.two", Name: "two", Kind: domain.KindResource, Properties: []string{"kind=Secret"}, Source: domain.Source{Parser: "yaml", File: "two.yaml", Line: 1}},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 0 {
+		t.Fatalf("got %d relationships for ambiguous create target, want 0", len(rels))
+	}
 }
 
 func TestBuild_TestedBy(t *testing.T) {
@@ -126,6 +224,19 @@ func TestBuild_TestedBy(t *testing.T) {
 	}
 	if r.Confidence != domain.ConfidenceInferred {
 		t.Errorf("Expected Inferred confidence, got %s", r.Confidence)
+	}
+}
+
+func TestBuild_DoesNotGuessAmbiguousTestTarget(t *testing.T) {
+	entities := []domain.Entity{
+		{ID: "function:auth.A.Login", Name: "Login", Kind: domain.KindFunction, Package: "auth", Source: domain.Source{Parser: "go", File: "a.go", Line: 5}},
+		{ID: "function:auth.B.Login", Name: "Login", Kind: domain.KindFunction, Package: "auth", Source: domain.Source{Parser: "go", File: "b.go", Line: 5}},
+		{ID: "test:auth.TestLogin", Name: "TestLogin", Kind: domain.KindTest, Package: "auth", Source: domain.Source{Parser: "test", File: "login_test.go", Line: 10}},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 0 {
+		t.Fatalf("got %d relationship(s) for ambiguous test target, want 0: %+v", len(rels), rels)
 	}
 }
 
@@ -467,24 +578,27 @@ func TestBuild_Embeds(t *testing.T) {
 			Name:   "assets",
 			Kind:   domain.KindPackage,
 			Embeds: []string{"*/*.yaml"},
+			EmbedSites: []domain.Site{
+				{Name: "*/*.yaml", Source: domain.Source{Parser: "go-ast", File: "v2/assets/embed.go", Line: 5}},
+			},
 			Source: domain.Source{Parser: "go", File: "v2/assets", Line: 1},
 		},
 		{
-			ID:   "resource:service.etcd-client",
-			Name: "etcd-client",
-			Kind: domain.KindResource,
+			ID:     "resource:service.etcd-client",
+			Name:   "etcd-client",
+			Kind:   domain.KindResource,
 			Source: domain.Source{Parser: "yaml", File: "v2/assets/etcd/service.yaml", Line: 1},
 		},
 		{
-			ID:   "resource:service.etcd-discovery",
-			Name: "etcd-discovery",
-			Kind: domain.KindResource,
+			ID:     "resource:service.etcd-discovery",
+			Name:   "etcd-discovery",
+			Kind:   domain.KindResource,
 			Source: domain.Source{Parser: "yaml", File: "v2/assets/etcd/discovery-service.yaml", Line: 1},
 		},
 		{
-			ID:   "resource:deployment.other",
-			Name: "other",
-			Kind: domain.KindResource,
+			ID:     "resource:deployment.other",
+			Name:   "other",
+			Kind:   domain.KindResource,
 			Source: domain.Source{Parser: "yaml", File: "somewhere-else/deploy.yaml", Line: 1},
 		},
 	}
@@ -509,7 +623,7 @@ func TestBuild_Embeds(t *testing.T) {
 	}
 }
 
-func TestBuild_Implements(t *testing.T) {
+func TestBuild_DoesNotInventImplementsTarget(t *testing.T) {
 	entities := []domain.Entity{
 		{
 			ID:         "function:mycomp.myComponent.IsRequestServing",
@@ -535,12 +649,9 @@ func TestBuild_Implements(t *testing.T) {
 	for _, r := range rels {
 		if r.Type == domain.RelImplements {
 			implRels++
-			if r.Evidence.Reason != "var _ assertion detected, target resolved by name match" {
-				t.Errorf("Wrong reason: %q", r.Evidence.Reason)
-			}
 		}
 	}
-	if implRels != 1 {
-		t.Errorf("Expected 1 implements relationship, got %d", implRels)
+	if implRels != 0 {
+		t.Errorf("Expected no implements relationship without an interface entity, got %d", implRels)
 	}
 }

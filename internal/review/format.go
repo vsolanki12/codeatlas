@@ -30,6 +30,12 @@ func FormatReview(r *ReviewResult) string {
 	b.WriteString("===================\n\n")
 
 	fmt.Fprintf(&b, "Base: %s | Head: %s\n\n", r.Base, r.Head)
+	if r.Graph.Commit != "" {
+		fmt.Fprintf(&b, "Graph: %s (%s, %s)\n", r.Graph.Commit, r.GraphFreshness, scanStatus(r.Graph.ScanComplete))
+	} else {
+		fmt.Fprintf(&b, "Graph: commit unavailable (%s, %s)\n", r.GraphFreshness, scanStatus(r.Graph.ScanComplete))
+	}
+	b.WriteByte('\n')
 
 	// Summary
 	b.WriteString("Summary\n")
@@ -79,6 +85,21 @@ func FormatReview(r *ReviewResult) string {
 	}
 	b.WriteByte('\n')
 
+	if r.DiffExcerpt != "" {
+		b.WriteString("Changed diff evidence (bounded)\n")
+		b.WriteString("------------------------------\n")
+		b.WriteString("```diff\n")
+		b.WriteString(r.DiffExcerpt)
+		if !strings.HasSuffix(r.DiffExcerpt, "\n") {
+			b.WriteByte('\n')
+		}
+		b.WriteString("```\n")
+		if r.DiffExcerptTruncated {
+			b.WriteString("[TRUNCATED: omitted changed lines are not available for exact-line review.]\n")
+		}
+		b.WriteByte('\n')
+	}
+
 	// Changes
 	if len(r.Functions) > 0 {
 		b.WriteString("Changes\n")
@@ -89,8 +110,17 @@ func FormatReview(r *ReviewResult) string {
 				b.WriteByte('\n')
 			}
 
-			fmt.Fprintf(&b, "%s()\n", er.Entity.Name)
+			fmt.Fprintf(&b, "%s\n", reviewEntityLabel(er.Entity))
 			fmt.Fprintf(&b, "  File: %s:%d\n", er.Entity.Source.File, er.Entity.Source.Line)
+			if len(er.ChangedFiles) > 0 {
+				fmt.Fprintf(&b, "  Changed file(s): %s\n", strings.Join(er.ChangedFiles, ", "))
+			}
+			if len(er.Hunks) > 0 {
+				b.WriteString("  Changed hunk(s):\n")
+				for _, hunk := range er.Hunks {
+					fmt.Fprintf(&b, "    - @@ -%d,%d +%d,%d @@ %s\n", hunk.OldStart, hunk.OldCount, hunk.NewStart, hunk.NewCount, hunk.Header)
+				}
+			}
 
 			kindDesc := er.Entity.Kind.String()
 			recv := receiverType(er.Entity)
@@ -117,6 +147,17 @@ func FormatReview(r *ReviewResult) string {
 				b.WriteString("  Calls:\n")
 				for _, c := range significant {
 					fmt.Fprintf(&b, "    - %s\n", c)
+				}
+				b.WriteByte('\n')
+			}
+
+			if len(er.Relationships) > 0 {
+				b.WriteString("  Graph relationships (with evidence):\n")
+				for _, rel := range er.Relationships {
+					fmt.Fprintf(&b, "    - %s -> %s [%s] (%s:%d) %s\n", rel.Type, rel.To, rel.Confidence, filepath.Base(rel.Evidence.File), rel.Evidence.Line, rel.Evidence.Reason)
+				}
+				if er.RelationshipsTruncated {
+					b.WriteString("    - [TRUNCATED: relationship context capped]\n")
 				}
 				b.WriteByte('\n')
 			}
@@ -168,7 +209,13 @@ func FormatReview(r *ReviewResult) string {
 				for i, t := range tl.Targets {
 					names[i] = t.Name + "()"
 				}
-				fmt.Fprintf(&b, "  Targets: %s (INFERRED — %s)\n", strings.Join(names, ", "), tl.Reason)
+				label := "HEURISTIC"
+				if tl.Confidence == domain.ConfidenceProven {
+					label = "PROVEN"
+				} else if tl.Confidence == domain.ConfidenceInferred {
+					label = "INFERRED"
+				}
+				fmt.Fprintf(&b, "  Targets: %s (%s — %s)\n", strings.Join(names, ", "), label, tl.Reason)
 			} else {
 				b.WriteString("  Targets: unknown\n")
 			}
@@ -187,6 +234,30 @@ func FormatReview(r *ReviewResult) string {
 		b.WriteByte('\n')
 	}
 
+	// Heuristics and limitations are kept separate from deterministic result
+	// sections so reviewers can see what Atlas did not prove.
+	b.WriteString("Heuristics\n")
+	b.WriteString("----------\n")
+	if len(r.Heuristics) == 0 {
+		b.WriteString("- none\n")
+	} else {
+		for _, h := range r.Heuristics {
+			fmt.Fprintf(&b, "- %s\n", h)
+		}
+	}
+	b.WriteByte('\n')
+
+	b.WriteString("LLM Interpretation\n")
+	b.WriteString("------------------\n")
+	if len(r.LLMInterpretation) == 0 {
+		b.WriteString("- none; this deterministic review does not invoke an LLM\n")
+	} else {
+		for _, interpretation := range r.LLMInterpretation {
+			fmt.Fprintf(&b, "- %s\n", interpretation)
+		}
+	}
+	b.WriteByte('\n')
+
 	// Limitations
 	b.WriteString("Evidence Limitations\n")
 	b.WriteString("--------------------\n")
@@ -195,6 +266,13 @@ func FormatReview(r *ReviewResult) string {
 	}
 
 	return b.String()
+}
+
+func scanStatus(complete bool) string {
+	if complete {
+		return "complete"
+	}
+	return "incomplete"
 }
 
 func significantCallees(calls []string) []string {
@@ -251,4 +329,14 @@ func entityKindLabel(entities []EntityReview) string {
 		return k
 	}
 	return "entities"
+}
+
+func reviewEntityLabel(entity *domain.Entity) string {
+	if entity == nil {
+		return "<unknown entity>"
+	}
+	if entity.Kind == domain.KindFunction {
+		return entity.Name + "()"
+	}
+	return entity.Name + " [" + entity.Kind.String() + "]"
 }

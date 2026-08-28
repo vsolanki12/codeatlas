@@ -10,8 +10,9 @@ import (
 
 // GitInfo holds the commit hash and branch name from the scanned repository.
 type GetInfo struct {
-	Commit string
-	Branch string
+	Commit      string
+	Branch      string
+	CommittedAt string
 }
 
 // GetGitInfo runs git commands in the given directory to extract the
@@ -29,6 +30,10 @@ func GetGitInfo(repoDir string) GetInfo {
 	if err == nil {
 		info.Branch = strings.TrimSpace(string(branchOut))
 	}
+	dateOut, err := exec.Command("git", "-C", repoDir, "show", "-s", "--format=%cI", "HEAD").Output()
+	if err == nil {
+		info.CommittedAt = strings.TrimSpace(string(dateOut))
+	}
 	return info
 }
 
@@ -40,14 +45,20 @@ func BuildGraph(repoPath string, entities []domain.Entity, relationships []domai
 	git := GetGitInfo(repoPath)
 
 	return domain.Graph{
-		Schema:        "codeatlas",
-		SchemaVersion: "1.4.0",
-		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
-		Repository:    repoPath,
-		Commit:        git.Commit,
-		Branch:        git.Branch,
-		ScanDuration:  scanDuration.String(),
-		Entities:      entities,
-		Relationship:  relationships,
+		Schema:         "codeatlas",
+		SchemaVersion:  "1.4.0",
+		EntityIdentity: domain.CurrentEntityIdentity,
+		// A scan timestamp and wall-clock duration make identical source
+		// snapshots produce different graph bytes. The commit timestamp is a
+		// stable provenance value; runtime duration remains available on the
+		// scanner Result and CLI output.
+		GeneratedAt:  git.CommittedAt,
+		Repository:   repoPath,
+		Commit:       git.Commit,
+		Branch:       git.Branch,
+		ScanDuration: "",
+		ScanComplete: true,
+		Entities:     entities,
+		Relationship: relationships,
 	}
 }

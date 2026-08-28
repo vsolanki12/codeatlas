@@ -14,12 +14,31 @@ import (
 var _ Parser = (*GoParser)(nil)
 
 type GoParser struct {
-	fset *token.FileSet
+	fset            *token.FileSet
+	rootDir         string
+	packageResolver *packageResolver
+	useImportPaths  bool
 }
 
 func NewGoParser() *GoParser {
 	return &GoParser{
 		fset: token.NewFileSet(),
+	}
+}
+
+// NewGoParserForRepo creates a parser whose entity and import identities are
+// unique within the repository. NewGoParser remains available for callers
+// that parse isolated fixture files and need the legacy short identities.
+func NewGoParserForRepo(repoPath string) *GoParser {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		abs = repoPath
+	}
+	return &GoParser{
+		fset:            token.NewFileSet(),
+		rootDir:         filepath.Clean(abs),
+		packageResolver: newPackageResolver(abs),
+		useImportPaths:  true,
 	}
 }
 
@@ -30,18 +49,26 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	}
 
 	packageName := astFile.Name.Name
-	dirPath := filepath.Dir(file.RelativePath)
+	packagePath := packageName
+	if p.packageResolver != nil {
+		packagePath = p.packageResolver.resolve(file.RelativePath, packageName)
+	}
 	var entities []domain.Entity
 	var controllerTypeName string
 	var controllerSource domain.Source
+	var controllerSetupSource domain.Source
 	var controllerWatches []string
+	var controllerWatchMethods []string
+	var controllerWatchSites []domain.Site
+	var controllerCreates []string
+	var controllerCreateSites []domain.Site
 	var controllerCalls []string
-	var setupHelperMethods []string
-	var setupReceiverVar string
+	var controllerCallSites []domain.Site
 
 	typeComments := make(map[string]string)
 	implPairs := make(map[string][]string) // structName -> []interfaceName
-	importAliases := buildImportAliasMap(astFile)
+	implSites := make(map[string][]domain.Site)
+	importAliases := buildImportAliasMap(astFile, p.useImportPaths)
 
 	for _, decl := range astFile.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
@@ -64,22 +91,26 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 				if genDecl.Tok != token.VAR {
 					continue
 				}
-				detectImplements(s, implPairs)
+				detectImplements(s, implPairs, implSites, file.RelativePath, p.fset)
 			}
 		}
 	}
 
+	embedSites := extractEmbedSites(astFile, p.fset, file.RelativePath)
+	importSites := extractImportSites(astFile, file.RelativePath, p.fset)
 	entities = append(entities, domain.Entity{
-		ID:      fmt.Sprintf("package:%s", packageName),
-		Name:    packageName,
-		Kind:    domain.KindPackage,
-		Package: packageName,
-		Files:   []string{file.RelativePath},
-		Imports: extractImports(astFile),
-		Embeds:  extractEmbeds(astFile),
+		ID:          fmt.Sprintf("package:%s", packagePath),
+		Name:        packageName,
+		Kind:        domain.KindPackage,
+		Package:     packagePath,
+		Files:       []string{file.RelativePath},
+		Imports:     extractImports(astFile),
+		ImportSites: importSites,
+		Embeds:      extractEmbeds(astFile),
+		EmbedSites:  embedSites,
 		Source: domain.Source{
 			Parser: "go",
-			File:   dirPath,
+			File:   file.RelativePath,
 			Line:   1,
 		},
 	})
@@ -98,16 +129,20 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		recv := receiverTypeName(fn)
 		var id string
 		if recv != "" {
-			id = fmt.Sprintf("function:%s.%s.%s", packageName, recv, fn.Name.Name)
+			id = fmt.Sprintf("function:%s.%s.%s", packagePath, recv, fn.Name.Name)
 		} else {
-			id = fmt.Sprintf("function:%s.%s", packageName, fn.Name.Name)
+			id = fmt.Sprintf("function:%s.%s", packagePath, fn.Name.Name)
 		}
 
 		var calls []string
+		var callSites []domain.Site
+		var creates []string
+		var createSites []domain.Site
 		var envVars []string
 		var literals []string
 		if fn.Body != nil {
-			calls, envVars = extractCallsAndEnvVars(fn.Body, importAliases)
+			calls, callSites, envVars = extractCallsAndEnvVars(fn.Body, importAliases, file.RelativePath, p.fset)
+			creates, createSites = extractCreateSites(fn.Body, file.RelativePath, p.fset)
 			literals = extractLiterals(fn.Body)
 		}
 
@@ -115,37 +150,58 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		if recv != "" {
 			implements = implPairs[recv]
 		}
+		position := p.fset.Position(fn.Pos())
+		endPosition := p.fset.Position(fn.End())
 
 		entities = append(entities, domain.Entity{
-			ID:          id,
-			Name:        fn.Name.Name,
-			Kind:        domain.KindFunction,
-			Description: description,
-			Package:     packageName,
-			Calls:       calls,
-			Implements:  implements,
-			EnvVars:     envVars,
-			Literals:    literals,
+			ID:                  id,
+			Name:                fn.Name.Name,
+			Kind:                domain.KindFunction,
+			Description:         description,
+			Package:             packagePath,
+			Calls:               calls,
+			CallSites:           callSites,
+			Creates:             creates,
+			CreateSites:         createSites,
+			Implements:          implements,
+			ImplementationSites: implSites[recv],
+			EnvVars:             envVars,
+			Literals:            literals,
 			Source: domain.Source{
-				Parser: "go",
-				File:   file.RelativePath,
-				Line:   p.fset.Position(fn.Pos()).Line,
+				Parser:  "go",
+				File:    file.RelativePath,
+				Line:    position.Line,
+				EndLine: endPosition.Line,
 			},
 		})
 
 		if fn.Name.Name == "Reconcile" && recv != "" {
 			controllerTypeName = recv
 			controllerSource = domain.Source{
-				Parser: "go",
-				File:   file.RelativePath,
-				Line:   p.fset.Position(fn.Pos()).Line,
+				Parser:  "go",
+				File:    file.RelativePath,
+				Line:    position.Line,
+				EndLine: endPosition.Line,
 			}
 			controllerCalls = calls
+			controllerCallSites = callSites
+		}
+		if recv != "" && len(createSites) > 0 {
+			controllerCreates = appendUniqueStrings(controllerCreates, creates)
+			controllerCreateSites = appendUniqueDomainSites(controllerCreateSites, createSites)
 		}
 
 		if fn.Name.Name == "SetupWithManager" && fn.Body != nil {
-			if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 {
-				setupReceiverVar = fn.Recv.List[0].Names[0].Name
+			if recv != "" {
+				controllerTypeName = recv
+				if controllerSetupSource.File == "" {
+					controllerSetupSource = domain.Source{
+						Parser:  "go",
+						File:    file.RelativePath,
+						Line:    position.Line,
+						EndLine: endPosition.Line,
+					}
+				}
 			}
 			ast.Inspect(fn.Body, func(innerNode ast.Node) bool {
 				callExpr, ok := innerNode.(*ast.CallExpr)
@@ -158,17 +214,25 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 						if len(callExpr.Args) > 0 {
 							if typeName := extractTypeName(callExpr.Args[0]); typeName != "" {
 								controllerWatches = append(controllerWatches, typeName)
+								controllerWatchMethods = append(controllerWatchMethods, methodName)
+								controllerWatchSites = append(controllerWatchSites, domain.Site{
+									Name: typeName,
+									Source: domain.Source{
+										Parser: "go-ast",
+										File:   file.RelativePath,
+										Line:   p.fset.Position(callExpr.Pos()).Line,
+									},
+								})
 							}
 						}
-					}
-					if ident, ok := selector.X.(*ast.Ident); ok && ident.Name == setupReceiverVar {
-						setupHelperMethods = append(setupHelperMethods, methodName)
 					}
 				}
 				return true
 			})
 			for i, j := 0, len(controllerWatches)-1; i < j; i, j = i+1, j-1 {
 				controllerWatches[i], controllerWatches[j] = controllerWatches[j], controllerWatches[i]
+				controllerWatchMethods[i], controllerWatchMethods[j] = controllerWatchMethods[j], controllerWatchMethods[i]
+				controllerWatchSites[i], controllerWatchSites[j] = controllerWatchSites[j], controllerWatchSites[i]
 			}
 		}
 
@@ -176,28 +240,33 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	})
 
 	if controllerTypeName != "" {
-		var props []string
-		if len(setupHelperMethods) > 0 {
-			props = extractK8sTypesFromHelpers(astFile, controllerTypeName, setupReceiverVar, setupHelperMethods)
+		if controllerSource.File == "" {
+			controllerSource = controllerSetupSource
 		}
 		entities = append(entities, domain.Entity{
-			ID:          fmt.Sprintf("controller:%s.%s", packageName, controllerTypeName),
-			Name:        controllerTypeName,
-			Kind:        domain.KindController,
-			Description: typeComments[controllerTypeName],
-			Package:     packageName,
-			Source:      controllerSource,
-			Watches:     controllerWatches,
-			Calls:       controllerCalls,
-			Implements:  implPairs[controllerTypeName],
-			Properties:  props,
+			ID:                  fmt.Sprintf("controller:%s.%s", packagePath, controllerTypeName),
+			Name:                controllerTypeName,
+			Kind:                domain.KindController,
+			Description:         typeComments[controllerTypeName],
+			Package:             packagePath,
+			Files:               []string{file.RelativePath},
+			Source:              controllerSource,
+			Watches:             controllerWatches,
+			WatchMethods:        controllerWatchMethods,
+			WatchSites:          controllerWatchSites,
+			Creates:             controllerCreates,
+			CreateSites:         controllerCreateSites,
+			Calls:               controllerCalls,
+			CallSites:           controllerCallSites,
+			Implements:          implPairs[controllerTypeName],
+			ImplementationSites: implSites[controllerTypeName],
 		})
 	}
 
 	return entities, nil
 }
 
-func buildImportAliasMap(astFile *ast.File) map[string]string {
+func buildImportAliasMap(astFile *ast.File, useImportPaths bool) map[string]string {
 	aliases := make(map[string]string)
 	for _, imp := range astFile.Imports {
 		if imp.Name == nil || imp.Name.Name == "." || imp.Name.Name == "_" {
@@ -205,16 +274,22 @@ func buildImportAliasMap(astFile *ast.File) map[string]string {
 		}
 		path := strings.Trim(imp.Path.Value, `"`)
 		pkgName := filepath.Base(path)
-		if imp.Name.Name != pkgName {
+		if useImportPaths {
+			aliases[pkgName] = path
+			if imp.Name.Name != pkgName {
+				aliases[imp.Name.Name] = path
+			}
+		} else if imp.Name.Name != pkgName {
 			aliases[imp.Name.Name] = pkgName
 		}
 	}
 	return aliases
 }
 
-func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string) ([]string, []string) {
+func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string, filePath string, fset *token.FileSet) ([]string, []domain.Site, []string) {
 	seen := make(map[string]bool)
 	var calls []string
+	var sites []domain.Site
 	seenEnv := make(map[string]bool)
 	var envVars []string
 
@@ -253,13 +328,172 @@ func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string
 		if name != "" && !seen[name] {
 			seen[name] = true
 			calls = append(calls, name)
+			sites = append(sites, domain.Site{
+				Name: name,
+				Source: domain.Source{
+					Parser: "go-ast",
+					File:   filePath,
+					Line:   fset.Position(callExpr.Pos()).Line,
+				},
+			})
 		}
 		return true
 	})
-	return calls, envVars
+	return calls, sites, envVars
 }
 
-func detectImplements(spec *ast.ValueSpec, pairs map[string][]string) {
+var createMethodNames = map[string]bool{
+	"Create":         true,
+	"CreateOrUpdate": true,
+	"CreateOrPatch":  true,
+}
+
+func extractCreateSites(body *ast.BlockStmt, filePath string, fset *token.FileSet) ([]string, []domain.Site) {
+	variableTypes := make(map[string]string)
+	seen := make(map[string]bool)
+	var creates []string
+	var sites []domain.Site
+
+	addVariable := func(name string, expr ast.Expr) {
+		if typeName := createTypeName(expr, variableTypes); typeName != "" {
+			variableTypes[name] = typeName
+		}
+	}
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			for i, lhs := range node.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || i >= len(node.Rhs) {
+					continue
+				}
+				addVariable(ident.Name, node.Rhs[i])
+			}
+		case *ast.DeclStmt:
+			gen, ok := node.Decl.(*ast.GenDecl)
+			if !ok {
+				break
+			}
+			for _, spec := range gen.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						addVariable(name.Name, valueSpec.Values[i])
+					} else if valueSpec.Type != nil {
+						addVariable(name.Name, valueSpec.Type)
+					}
+				}
+			}
+		case *ast.CallExpr:
+			selector, ok := node.Fun.(*ast.SelectorExpr)
+			if !ok || !createMethodNames[selector.Sel.Name] {
+				return true
+			}
+			if object := createObjectArg(node.Args); object != nil {
+				typeName := createTypeName(object, variableTypes)
+				if typeName != "" {
+					position := fset.Position(node.Pos())
+					key := typeName + "\x00" + filePath + "\x00" + fmt.Sprint(position.Line)
+					if !seen[key] {
+						seen[key] = true
+						creates = append(creates, typeName)
+						sites = append(sites, domain.Site{
+							Name: typeName,
+							Source: domain.Source{
+								Parser: "go-ast",
+								File:   filePath,
+								Line:   position.Line,
+							},
+						})
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return creates, sites
+}
+
+func createObjectArg(args []ast.Expr) ast.Expr {
+	// controller-runtime Create/CreateOrUpdate/CreateOrPatch calls normally
+	// receive context first and the object second. Small test clients often
+	// expose a one-argument form, which is also supported. Restricting this to
+	// the object position avoids treating a context or option literal as a
+	// created Kubernetes resource.
+	if len(args) >= 2 {
+		return args[1]
+	}
+	if len(args) == 1 {
+		return args[0]
+	}
+	return nil
+}
+
+func createTypeName(expr ast.Expr, variables map[string]string) string {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return variables[value.Name]
+	case *ast.ParenExpr:
+		return createTypeName(value.X, variables)
+	case *ast.UnaryExpr:
+		if value.Op == token.AND {
+			return createTypeName(value.X, variables)
+		}
+	case *ast.CompositeLit:
+		return expressionTypeName(value.Type)
+	}
+	return ""
+}
+
+func expressionTypeName(expr ast.Expr) string {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return value.Name
+	case *ast.SelectorExpr:
+		return value.Sel.Name
+	case *ast.StarExpr:
+		return expressionTypeName(value.X)
+	case *ast.ArrayType:
+		return expressionTypeName(value.Elt)
+	}
+	return ""
+}
+
+func appendUniqueStrings(existing, additions []string) []string {
+	seen := make(map[string]bool, len(existing))
+	for _, value := range existing {
+		seen[value] = true
+	}
+	for _, value := range additions {
+		if !seen[value] {
+			seen[value] = true
+			existing = append(existing, value)
+		}
+	}
+	return existing
+}
+
+func appendUniqueDomainSites(existing, additions []domain.Site) []domain.Site {
+	seen := make(map[string]bool, len(existing))
+	for _, site := range existing {
+		seen[site.Name+"\x00"+site.Source.File+"\x00"+fmt.Sprint(site.Source.Line)] = true
+	}
+	for _, site := range additions {
+		key := site.Name + "\x00" + site.Source.File + "\x00" + fmt.Sprint(site.Source.Line)
+		if !seen[key] {
+			seen[key] = true
+			existing = append(existing, site)
+		}
+	}
+	return existing
+}
+
+func detectImplements(spec *ast.ValueSpec, pairs map[string][]string, sites map[string][]domain.Site, filePath string, fset *token.FileSet) {
 	if len(spec.Names) == 0 || spec.Names[0].Name != "_" {
 		return
 	}
@@ -315,10 +549,22 @@ func detectImplements(spec *ast.ValueSpec, pairs map[string][]string) {
 	}
 
 	pairs[structName] = append(pairs[structName], ifaceName)
+	sites[structName] = append(sites[structName], domain.Site{
+		Name: ifaceName,
+		Source: domain.Source{
+			Parser: "go-ast",
+			File:   filePath,
+			Line:   fset.Position(spec.Pos()).Line,
+		},
+	})
 }
 
 func (p *GoParser) parseFile(path string) (*ast.File, error) {
-	file, err := parser.ParseFile(p.fset, path, nil, parser.ParseComments)
+	parsePath := path
+	if p.rootDir != "" {
+		parsePath = filepath.Join(p.rootDir, filepath.FromSlash(path))
+	}
+	file, err := parser.ParseFile(p.fset, parsePath, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("failed parsing go file: %w", err)
 	}
@@ -359,6 +605,25 @@ func extractImports(astFile *ast.File) []string {
 	return imports
 }
 
+func extractImportSites(astFile *ast.File, filePath string, fset *token.FileSet) []domain.Site {
+	var sites []domain.Site
+	for _, imp := range astFile.Imports {
+		importPath := strings.Trim(imp.Path.Value, `"`)
+		if importPath == "" {
+			continue
+		}
+		sites = append(sites, domain.Site{
+			Name: importPath,
+			Source: domain.Source{
+				Parser: "go-ast",
+				File:   filePath,
+				Line:   fset.Position(imp.Pos()).Line,
+			},
+		})
+	}
+	return sites
+}
+
 func extractLiterals(body *ast.BlockStmt) []string {
 	seen := make(map[string]bool)
 	var literals []string
@@ -392,15 +657,37 @@ func extractEmbeds(astFile *ast.File) []string {
 	for _, cg := range astFile.Comments {
 		for _, c := range cg.List {
 			if strings.HasPrefix(c.Text, "//go:embed ") {
-				pattern := strings.TrimPrefix(c.Text, "//go:embed ")
-				pattern = strings.TrimSpace(pattern)
-				if pattern != "" {
-					embeds = append(embeds, pattern)
+				for _, pattern := range strings.Fields(strings.TrimPrefix(c.Text, "//go:embed ")) {
+					if pattern != "" {
+						embeds = append(embeds, pattern)
+					}
 				}
 			}
 		}
 	}
 	return embeds
+}
+
+func extractEmbedSites(astFile *ast.File, fset *token.FileSet, filePath string) []domain.Site {
+	var sites []domain.Site
+	for _, cg := range astFile.Comments {
+		for _, c := range cg.List {
+			if !strings.HasPrefix(c.Text, "//go:embed ") {
+				continue
+			}
+			for _, pattern := range strings.Fields(strings.TrimPrefix(c.Text, "//go:embed ")) {
+				sites = append(sites, domain.Site{
+					Name: pattern,
+					Source: domain.Source{
+						Parser: "go-ast",
+						File:   filePath,
+						Line:   fset.Position(c.Pos()).Line,
+					},
+				})
+			}
+		}
+	}
+	return sites
 }
 
 func extractTypeName(expr ast.Expr) string {
@@ -415,62 +702,21 @@ func extractTypeName(expr ast.Expr) string {
 
 	switch t := compLit.Type.(type) {
 	case *ast.SelectorExpr:
+		if t.Sel.Name == "Kind" {
+			for _, element := range compLit.Elts {
+				keyValue, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := keyValue.Key.(*ast.Ident); ok && key.Name == "Type" {
+					return extractTypeName(keyValue.Value)
+				}
+			}
+		}
 		return t.Sel.Name
 	case *ast.Ident:
 		return t.Name
 	}
 
 	return ""
-}
-
-var k8sResourceTypes = map[string]bool{
-	"Deployment": true, "StatefulSet": true, "DaemonSet": true,
-	"ReplicaSet": true, "Job": true, "CronJob": true,
-	"Service": true, "ConfigMap": true, "Secret": true,
-}
-
-func extractK8sTypesFromHelpers(astFile *ast.File, controllerType, receiverVar string, helperNames []string) []string {
-	helperSet := make(map[string]bool, len(helperNames))
-	for _, name := range helperNames {
-		helperSet[name] = true
-	}
-
-	seen := make(map[string]bool)
-	var props []string
-
-	for _, decl := range astFile.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || fn.Recv == nil {
-			continue
-		}
-		if receiverTypeName(fn) != controllerType {
-			continue
-		}
-		if !helperSet[fn.Name.Name] {
-			continue
-		}
-
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			unary, ok := n.(*ast.UnaryExpr)
-			if !ok || unary.Op != token.AND {
-				return true
-			}
-			comp, ok := unary.X.(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
-			sel, ok := comp.Type.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			typeName := sel.Sel.Name
-			if k8sResourceTypes[typeName] && !seen[typeName] {
-				seen[typeName] = true
-				props = append(props, "creates:"+typeName)
-			}
-			return true
-		})
-	}
-
-	return props
 }

@@ -13,10 +13,14 @@ func Compile(entities []domain.Entity, rels []domain.Relationship) map[string]do
 	for i := range entities {
 		byID[entities[i].ID] = &entities[i]
 	}
+	sortedRels := append([]domain.Relationship(nil), rels...)
+	sort.Slice(sortedRels, func(i, j int) bool {
+		return sortedRels[i].ID < sortedRels[j].ID
+	})
 
-	from := make(map[string][]domain.Relationship, len(rels)/4)
-	to := make(map[string][]domain.Relationship, len(rels)/4)
-	for _, r := range rels {
+	from := make(map[string][]domain.Relationship, len(sortedRels)/4)
+	to := make(map[string][]domain.Relationship, len(sortedRels)/4)
+	for _, r := range sortedRels {
 		from[r.From] = append(from[r.From], r)
 		to[r.To] = append(to[r.To], r)
 	}
@@ -38,14 +42,19 @@ func Compile(entities []domain.Entity, rels []domain.Relationship) map[string]do
 
 func compileController(e *domain.Entity, outRels, inRels []domain.Relationship, byID map[string]*domain.Entity) domain.View {
 	v := baseView(e)
+	appendViewRelationships(&v, outRels, "outgoing", byID)
+	appendViewRelationships(&v, inRels, "incoming", byID)
 
-	v.Watches = e.Watches
+	// Views are sorted independently for display; copy the slice so this does
+	// not reorder the entity's aligned watchMethods/watchSites facts.
+	v.Watches = append([]string(nil), e.Watches...)
 
+	var reconciles []string
 	for _, r := range outRels {
 		switch r.Type {
 		case domain.RelReconciles:
 			if t := byID[r.To]; t != nil {
-				v.Reconciles = t.Name
+				reconciles = appendUniqueName(reconciles, t.Name)
 			}
 		case domain.RelCreates:
 			if t := byID[r.To]; t != nil {
@@ -61,19 +70,8 @@ func compileController(e *domain.Entity, outRels, inRels []domain.Relationship, 
 			}
 		}
 	}
-
-	existingCreates := make(map[string]bool, len(v.Creates))
-	for _, c := range v.Creates {
-		existingCreates[c] = true
-	}
-	for _, p := range e.Properties {
-		if strings.HasPrefix(p, "creates:") {
-			name := strings.TrimPrefix(p, "creates:")
-			if !existingCreates[name] {
-				existingCreates[name] = true
-				v.Creates = append(v.Creates, name)
-			}
-		}
+	if len(reconciles) == 1 {
+		v.Reconciles = reconciles[0]
 	}
 
 	for _, r := range inRels {
@@ -94,6 +92,8 @@ func compileController(e *domain.Entity, outRels, inRels []domain.Relationship, 
 
 func compileCRD(e *domain.Entity, outRels, inRels []domain.Relationship, byID map[string]*domain.Entity) domain.View {
 	v := baseView(e)
+	appendViewRelationships(&v, outRels, "outgoing", byID)
+	appendViewRelationships(&v, inRels, "incoming", byID)
 
 	for _, r := range outRels {
 		if r.Type == domain.RelTestedBy {
@@ -103,17 +103,21 @@ func compileCRD(e *domain.Entity, outRels, inRels []domain.Relationship, byID ma
 		}
 	}
 
+	var reconciledBy []string
 	for _, r := range inRels {
 		switch r.Type {
 		case domain.RelReconciles:
 			if t := byID[r.From]; t != nil {
-				v.ReconciledBy = t.Name
+				reconciledBy = appendUniqueName(reconciledBy, t.Name)
 			}
 		case domain.RelCreates:
 			if t := byID[r.From]; t != nil {
 				v.CreatedBy = append(v.CreatedBy, t.Name)
 			}
 		}
+	}
+	if len(reconciledBy) == 1 {
+		v.ReconciledBy = reconciledBy[0]
 	}
 
 	v.TestCount = len(v.Tests)
@@ -129,7 +133,7 @@ func baseView(e *domain.Entity) domain.View {
 		Package:     e.Package,
 		File:        e.Source.File,
 		Description: e.Description,
-		Files:       e.Files,
+		Files:       append([]string(nil), e.Files...),
 	}
 	if e.LastAuthor != "" {
 		v.LastAuthor = e.LastAuthor
@@ -145,8 +149,24 @@ func baseView(e *domain.Entity) domain.View {
 // CompileQuestions generates deterministic Q&A pairs from pre-computed views.
 func CompileQuestions(views map[string]domain.View) map[string]string {
 	qa := make(map[string]string, len(views)*3)
-	for _, v := range views {
+	ids := make([]string, 0, len(views))
+	for id := range views {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	nameCounts := make(map[string]int, len(ids))
+	for _, id := range ids {
+		nameCounts[strings.ToLower(views[id].EntityName)]++
+	}
+	for _, id := range ids {
+		v := views[id]
 		name := v.EntityName
+		// A name-keyed Q&A is safe only when the graph proves that the
+		// name identifies one view. Never let map iteration decide which
+		// same-named controller/CRD wins.
+		if nameCounts[strings.ToLower(name)] != 1 {
+			continue
+		}
 		if v.Reconciles != "" {
 			qa["reconciles:"+name] = v.Reconciles
 		}
@@ -176,6 +196,7 @@ func CompileQuestions(views map[string]domain.View) map[string]string {
 }
 
 func sortAll(v *domain.View) {
+	sort.Strings(v.Watches)
 	sort.Strings(v.Creates)
 	sort.Strings(v.Calls)
 	sort.Strings(v.Tests)
@@ -183,6 +204,34 @@ func sortAll(v *domain.View) {
 	sort.Strings(v.CalledBy)
 	sort.Strings(v.Files)
 	sort.Strings(v.Owners)
+	sort.Slice(v.Relationships, func(i, j int) bool {
+		if v.Relationships[i].ID != v.Relationships[j].ID {
+			return v.Relationships[i].ID < v.Relationships[j].ID
+		}
+		return v.Relationships[i].Direction < v.Relationships[j].Direction
+	})
+}
+
+func appendViewRelationships(view *domain.View, rels []domain.Relationship, direction string, byID map[string]*domain.Entity) {
+	for _, rel := range rels {
+		entityID := rel.To
+		if direction == "incoming" {
+			entityID = rel.From
+		}
+		entity := byID[entityID]
+		if entity == nil {
+			continue
+		}
+		view.Relationships = append(view.Relationships, domain.ViewRelationship{
+			ID:         rel.ID,
+			Direction:  direction,
+			Type:       rel.Type,
+			EntityID:   entity.ID,
+			EntityName: entity.Name,
+			Confidence: rel.Confidence,
+			Evidence:   rel.Evidence,
+		})
+	}
 }
 
 func join(ss []string) string {
@@ -194,4 +243,13 @@ func join(ss []string) string {
 		result += ", " + s
 	}
 	return result
+}
+
+func appendUniqueName(names []string, name string) []string {
+	for _, existing := range names {
+		if existing == name {
+			return names
+		}
+	}
+	return append(names, name)
 }

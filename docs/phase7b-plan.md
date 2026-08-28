@@ -38,6 +38,12 @@ test:pkg.TestMyController | pkg/controller_test.go:1 | -
 crd:group.HostedCluster | api/types.go:5
 resource:Deployment.my-deploy | deploy.yaml:1
 
+=== Relationship Evidence (4) ===
+controller:pkg.MyController --calls--> function:pkg.reconcileEtcd | inferred | controller.go:25
+function:pkg.reconcileEtcd --tested_by--> test:pkg.TestReconcileEtcd | inferred | etcd_test.go:1
+controller:pkg.MyController --reconciles--> crd:group.HostedCluster | proven | controller.go:10
+controller:pkg.MyController --creates--> resource:Deployment.my-deploy | inferred | controller.go:30
+
 === Files Affected (3) ===
 pkg/etcd.go
 pkg/controller.go
@@ -67,7 +73,7 @@ bob@redhat.com
    - Check outgoing `reconciles` / `creates` edges → add targets to Resources
    - Collect `Source.File` → Files
    - If `LastAuthor != ""` → add to Owners, add entity to RecentChanges
-4. Deduplicate all lists. Sort Controllers/Tests/Resources by ID. Sort Files alphabetically. Sort Owners alphabetically. Sort RecentChanges by LastModified desc.
+4. Return the supporting call/test/resource relationships with evidence. Deduplicate all lists. Sort Controllers/Tests/Resources and relationships by ID. Sort Files alphabetically. Sort Owners alphabetically. Sort RecentChanges by LastModified desc.
 
 ### Types
 
@@ -75,6 +81,7 @@ bob@redhat.com
 type ImpactResult struct {
     Entity        *domain.Entity
     CallChain     []*domain.Entity   // transitive callers (BFS order, root excluded)
+    Relationships []*domain.Relationship // supporting edges for returned impact items
     Controllers   []*domain.Entity   // controllers found in call chain
     Tests         []*domain.Entity   // tests covering any entity in chain
     Resources     []*domain.Entity   // resources touched by any entity in chain
@@ -116,6 +123,7 @@ type ImpactResult struct {
 | Resources | 30 |
 | Files | 50 |
 | Owners | 20 |
+| Relationships | 80 |
 
 ## Verification
 

@@ -1,10 +1,51 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
+
+func TestYAMLParser_IgnoresNonKubernetesDocument(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "playbook.yml")
+	content := []byte("- name: cleanup\n  hosts: localhost\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	entities, err := NewYAMLParser().Parse(domain.File{RelativePath: "playbook.yml"})
+	if err != nil {
+		t.Fatalf("non-Kubernetes YAML should be ignored, got error: %v", err)
+	}
+	if len(entities) != 0 {
+		t.Fatalf("got %d entities for non-Kubernetes YAML, want 0", len(entities))
+	}
+}
+
+func TestYAMLParser_ParseMultipleDocuments(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "resources.yaml")
+	content := []byte("---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: second\n")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Chdir(dir)
+	entities, err := NewYAMLParser().Parse(domain.File{RelativePath: "resources.yaml"})
+	if err != nil {
+		t.Fatalf("multi-document YAML should parse, got error: %v", err)
+	}
+	if len(entities) != 2 {
+		t.Fatalf("got %d entities, want 2", len(entities))
+	}
+	if entities[0].Source.Line != 2 || entities[1].Source.Line != 7 {
+		t.Fatalf("unexpected document source lines: %d, %d", entities[0].Source.Line, entities[1].Source.Line)
+	}
+}
 
 func TestYAMLParser_Parse_Resource(t *testing.T) {
 	yp := NewYAMLParser()

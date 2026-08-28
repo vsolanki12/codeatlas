@@ -98,6 +98,15 @@ func TestScan_EndToEnd(t *testing.T) {
 	if len(g.FileTimestamps) == 0 {
 		t.Error("expected FileTimestamps to be populated")
 	}
+	if len(g.FileFingerprints) == 0 {
+		t.Error("expected FileFingerprints to be populated")
+	}
+	if !g.ScanComplete {
+		t.Errorf("test repository scan should be complete, warnings: %v", g.ScanWarnings)
+	}
+	if g.EntityIdentity != domain.CurrentEntityIdentity {
+		t.Errorf("entity identity = %q, want %q", g.EntityIdentity, domain.CurrentEntityIdentity)
+	}
 }
 
 func TestScan_Incremental(t *testing.T) {
@@ -111,6 +120,10 @@ func TestScan_Incremental(t *testing.T) {
 	}
 	if r1.Incremental {
 		t.Error("first scan should not be incremental")
+	}
+	firstBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read first graph: %v", err)
 	}
 
 	// Second scan with same output — should be incremental with 0 changes
@@ -126,6 +139,13 @@ func TestScan_Incremental(t *testing.T) {
 	}
 	if r2.EntityCount != r1.EntityCount {
 		t.Errorf("entity count mismatch: full=%d incremental=%d", r1.EntityCount, r2.EntityCount)
+	}
+	secondBytes, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read incremental graph: %v", err)
+	}
+	if string(firstBytes) != string(secondBytes) {
+		t.Fatal("unchanged full and incremental scans produced different graph bytes")
 	}
 
 	// Modify a file and re-scan
@@ -152,6 +172,33 @@ func ExtraFunc() {}
 	}
 }
 
+func TestScan_IncompleteGraphForcesFullRescan(t *testing.T) {
+	repoDir := setupTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repoDir, "broken.yaml"), []byte("kind: ["), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outPath := filepath.Join(t.TempDir(), "atlas.json")
+
+	first, err := Scan(repoDir, outPath, ScanOptions{})
+	if err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+	if first.Graph.ScanComplete || len(first.Graph.ScanWarnings) == 0 {
+		t.Fatalf("expected incomplete initial graph, got complete=%v warnings=%v", first.Graph.ScanComplete, first.Graph.ScanWarnings)
+	}
+
+	second, err := Scan(repoDir, outPath, ScanOptions{PreviousGraph: outPath})
+	if err != nil {
+		t.Fatalf("rescan: %v", err)
+	}
+	if second.Incremental {
+		t.Fatal("incomplete graph must force a full rescan")
+	}
+	if second.Graph.ScanComplete || len(second.Graph.ScanWarnings) == 0 {
+		t.Fatalf("expected incomplete rescan result, got complete=%v warnings=%v", second.Graph.ScanComplete, second.Graph.ScanWarnings)
+	}
+}
+
 func TestChangedFiles(t *testing.T) {
 	now := time.Now().UTC()
 	files := []domain.File{
@@ -160,10 +207,10 @@ func TestChangedFiles(t *testing.T) {
 		{RelativePath: "c.go", ModifiedTime: now.Add(time.Hour)},
 	}
 	oldTS := map[string]string{
-		"a.go": now.Format(time.RFC3339),
-		"b.go": now.Format(time.RFC3339),
-		"c.go": now.Format(time.RFC3339),
-		"d.go": now.Format(time.RFC3339),
+		"a.go": fileFingerprint(files[0]),
+		"b.go": fileFingerprint(files[1]),
+		"c.go": fileFingerprint(domain.File{RelativePath: "c.go", ModifiedTime: now, Size: 0}),
+		"d.go": fileFingerprint(domain.File{RelativePath: "d.go", ModifiedTime: now}),
 	}
 
 	changed, unchanged, deleted := changedFiles(files, oldTS)
@@ -175,6 +222,25 @@ func TestChangedFiles(t *testing.T) {
 	}
 	if len(deleted) != 1 || deleted[0] != "d.go" {
 		t.Errorf("expected 1 deleted (d.go), got %v", deleted)
+	}
+}
+
+func TestChangedFiles_ContentHash(t *testing.T) {
+	files := []domain.File{
+		{RelativePath: "same.go", ContentHash: "sha256:same"},
+		{RelativePath: "changed.go", ContentHash: "sha256:new"},
+	}
+	previous := map[string]string{
+		"same.go":    "sha256:same",
+		"changed.go": "sha256:old",
+	}
+
+	changed, unchanged, _ := changedFiles(files, previous)
+	if len(changed) != 1 || changed[0].RelativePath != "changed.go" {
+		t.Errorf("changed = %v, want changed.go", changed)
+	}
+	if len(unchanged) != 1 || unchanged[0].RelativePath != "same.go" {
+		t.Errorf("unchanged = %v, want same.go", unchanged)
 	}
 }
 
@@ -215,5 +281,88 @@ func TestScan_WarningsOnBadFile(t *testing.T) {
 
 	if len(result.Warnings) == 0 {
 		t.Error("expected warnings for invalid Go file, got none")
+	}
+}
+
+func TestScan_MergesControllerFactsAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/project\n\ngo 1.23\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	controllerDir := filepath.Join(dir, "controllers")
+	if err := os.MkdirAll(controllerDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controllerDir, "reconcile.go"), []byte(`package controllers
+
+type WidgetReconciler struct{}
+
+func (r *WidgetReconciler) Reconcile() {}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(controllerDir, "setup.go"), []byte(`package controllers
+
+func (r *WidgetReconciler) SetupWithManager(mgr interface{}) error {
+	return builder.For(&Widget{}).Complete(r)
+}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifestDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "widget-crd.yaml"), []byte(`apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: widgets.example.com
+spec:
+  group: example.com
+  names:
+    kind: Widget
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "atlas.json")
+	result, err := Scan(dir, outPath, ScanOptions{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(result.Graph.ScanWarnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", result.Graph.ScanWarnings)
+	}
+
+	var controller *domain.Entity
+	for i := range result.Graph.Entities {
+		if result.Graph.Entities[i].Kind == domain.KindController {
+			controller = &result.Graph.Entities[i]
+			break
+		}
+	}
+	if controller == nil {
+		t.Fatal("expected merged controller entity")
+	}
+	if len(controller.Files) != 2 || controller.Files[0] != "controllers/reconcile.go" || controller.Files[1] != "controllers/setup.go" {
+		t.Fatalf("controller files = %v, want both implementation files", controller.Files)
+	}
+	if len(controller.Watches) != 1 || controller.Watches[0] != "Widget" || controller.WatchMethods[0] != "For" {
+		t.Fatalf("controller watch facts = %v/%v, want Widget/For", controller.Watches, controller.WatchMethods)
+	}
+
+	wantTarget := "crd:example.com.widget"
+	wantRelation := domain.NewRelationshipID(controller.ID, domain.RelReconciles, wantTarget)
+	found := false
+	for _, relation := range result.Graph.Relationship {
+		if relation.ID == wantRelation {
+			found = true
+			if relation.Evidence.File != "controllers/setup.go" {
+				t.Errorf("relationship evidence file = %q, want controllers/setup.go", relation.Evidence.File)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected reconciles relationship %s, got %v", wantRelation, result.Graph.Relationship)
 	}
 }

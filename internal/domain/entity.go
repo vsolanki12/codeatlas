@@ -5,9 +5,10 @@ import "strings"
 
 // Source records where in the codebase an entity or relationship was discovered, including the parser used, the file path, and the line number.
 type Source struct {
-	Parser string `json:"parser"`
-	File   string `json:"file"`
-	Line   int    `json:"line"`
+	Parser  string `json:"parser"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	EndLine int    `json:"endLine,omitempty"`
 }
 
 // EntityKind categorizes what an entity represents in the Atlas graph.
@@ -29,25 +30,40 @@ const (
 // Entity is a single discovered element in the codebase, such as controller, CRD,
 // function, package, test, document, or other component that Atlas tracks.
 type Entity struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Kind        EntityKind `json:"kind"`
-	Description string     `json:"description,omitempty"`
-	Package     string     `json:"package,omitempty"`
-	Files       []string   `json:"files,omitempty"`
-	Watches    []string   `json:"watches,omitempty"`
-	Calls      []string   `json:"calls,omitempty"`
-	Implements []string   `json:"implements,omitempty"`
-	EnvVars      []string `json:"env_vars,omitempty"`
-	Imports      []string `json:"imports,omitempty"`
-	Literals     []string `json:"literals,omitempty"`
-	Properties   []string `json:"properties,omitempty"`
-	Embeds       []string `json:"embeds,omitempty"`
-	LastAuthor   string   `json:"lastAuthor,omitempty"`
-	LastModified string   `json:"lastModified,omitempty"`
-	ChangeCount  int      `json:"changeCount,omitempty"`
-	Content      string   `json:"content,omitempty"`
-	Source      Source     `json:"source"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Kind                EntityKind `json:"kind"`
+	Description         string     `json:"description,omitempty"`
+	Package             string     `json:"package,omitempty"`
+	Files               []string   `json:"files,omitempty"`
+	Watches             []string   `json:"watches,omitempty"`
+	WatchMethods        []string   `json:"watchMethods,omitempty"`
+	WatchSites          []Site     `json:"watchSites,omitempty"`
+	Creates             []string   `json:"creates,omitempty"`
+	CreateSites         []Site     `json:"createSites,omitempty"`
+	Calls               []string   `json:"calls,omitempty"`
+	CallSites           []Site     `json:"callSites,omitempty"`
+	Implements          []string   `json:"implements,omitempty"`
+	ImplementationSites []Site     `json:"implementationSites,omitempty"`
+	EnvVars             []string   `json:"env_vars,omitempty"`
+	Imports             []string   `json:"imports,omitempty"`
+	ImportSites         []Site     `json:"importSites,omitempty"`
+	Literals            []string   `json:"literals,omitempty"`
+	Properties          []string   `json:"properties,omitempty"`
+	Embeds              []string   `json:"embeds,omitempty"`
+	EmbedSites          []Site     `json:"embedSites,omitempty"`
+	LastAuthor          string     `json:"lastAuthor,omitempty"`
+	LastModified        string     `json:"lastModified,omitempty"`
+	ChangeCount         int        `json:"changeCount,omitempty"`
+	Content             string     `json:"content,omitempty"`
+	Source              Source     `json:"source"`
+}
+
+// Site records the exact source location associated with a named fact on an
+// entity, such as a call, watch, or //go:embed pattern.
+type Site struct {
+	Name   string `json:"name"`
+	Source Source `json:"source"`
 }
 
 // String returns the lowercase name of the entity kind.

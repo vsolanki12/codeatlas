@@ -9,4 +9,5 @@ type File struct {
 	RelativePath string
 	Size         int64
 	ModifiedTime time.Time
+	ContentHash  string
 }

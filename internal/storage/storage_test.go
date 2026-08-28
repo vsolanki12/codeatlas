@@ -19,22 +19,30 @@ func TestRoundTrip(t *testing.T) {
 	testFilePath := filepath.Join(tempDir, "graph.json")
 
 	originalGraph := domain.Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: "1.4.0",
 		Entities: []domain.Entity{
 			{
-				ID:   "ent-1",
-				Name: "Auth-Service",
+				ID:     "function:auth.Service",
+				Name:   "Service",
+				Kind:   domain.KindFunction,
+				Source: domain.Source{Parser: "go", File: "auth.go", Line: 1},
 			},
 			{
-				ID:   "ent-2",
-				Name: "User Database",
+				ID:     "resource:User.Database",
+				Name:   "Database",
+				Kind:   domain.KindResource,
+				Source: domain.Source{Parser: "yaml", File: "database.yaml", Line: 1},
 			},
 		},
 		Relationship: []domain.Relationship{
 			{
-				ID:   "ent-1--queries--ent-2",
-				From: "ent-1",
-				To:   "ent-2",
-				Type: "queries",
+				ID:         domain.NewRelationshipID("function:auth.Service", domain.RelCalls, "resource:User.Database"),
+				From:       "function:auth.Service",
+				To:         "resource:User.Database",
+				Type:       domain.RelCalls,
+				Confidence: domain.ConfidenceInferred,
+				Evidence:   domain.Evidence{Parser: "go-ast", File: "auth.go", Line: 2, Reason: "call detected"},
 			},
 		},
 	}

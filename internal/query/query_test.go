@@ -1,10 +1,56 @@
 package query
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
+
+func TestCompactAskPreservesEvidenceAndReducesPayload(t *testing.T) {
+	graph := testGraph()
+	graph.Entities[0].Content = strings.Repeat("content ", 100)
+	idx := newIndex(graph)
+	full := idx.Ask("MyController", "debug")
+	compact := CompactAsk(full)
+
+	fullJSON, err := json.Marshal(full)
+	if err != nil {
+		t.Fatalf("marshal full result: %v", err)
+	}
+	compactJSON, err := json.Marshal(compact)
+	if err != nil {
+		t.Fatalf("marshal compact result: %v", err)
+	}
+	if len(compactJSON) >= len(fullJSON) {
+		t.Fatalf("compact result did not reduce payload: full=%d compact=%d", len(fullJSON), len(compactJSON))
+	}
+	if compact.Entity == nil || compact.Entity.Kind != "controller" {
+		t.Fatalf("compact entity lost identity: %+v", compact.Entity)
+	}
+	if compact.Investigation == nil || len(compact.Investigation.OutRels[domain.RelCalls]) == 0 {
+		t.Fatal("compact result lost outgoing call relationship")
+	}
+	rel := compact.Investigation.OutRels[domain.RelCalls][0]
+	if rel.Relationship == nil || rel.Relationship.Evidence.File == "" || rel.Target == nil {
+		t.Fatalf("compact relationship lost evidence or target: %+v", rel)
+	}
+	if strings.Contains(string(compactJSON), "\"content\"") {
+		t.Fatal("compact result should not include entity content")
+	}
+}
+
+func TestAskDoesNotExposeQuestionWithoutRelationshipEvidence(t *testing.T) {
+	graph := testGraph()
+	graph.Relationship = nil
+	graph.Questions = map[string]string{"reconciles:MyController": "HostedCluster"}
+
+	result := newIndex(graph).Ask("MyController", "understand")
+	if result.QAHit != "" || len(result.QAEvidence) != 0 {
+		t.Fatalf("Ask() exposed an ungrounded quick answer: %+v", result)
+	}
+}
 
 func TestGetEntity(t *testing.T) {
 	idx := newIndex(testGraph())
@@ -199,6 +245,19 @@ func TestSearch_NoResults(t *testing.T) {
 	results := idx.Search("zzzznonexistent", 0)
 	if len(results) != 0 {
 		t.Fatalf("got %d, want 0", len(results))
+	}
+}
+
+func TestSearchWithStatusReportsTruncation(t *testing.T) {
+	idx := newIndex(testGraph())
+	results, truncated := idx.SearchWithStatus("reconcile", 2)
+	if len(results) != 2 || !truncated {
+		t.Fatalf("bounded search = %d results, truncated=%v; want 2,true", len(results), truncated)
+	}
+	allResults := idx.Search("reconcile", 0)
+	results, truncated = idx.SearchWithStatus("reconcile", 20)
+	if len(results) != len(allResults) || truncated {
+		t.Fatalf("untruncated search = %d results, truncated=%v; want %d,false", len(results), truncated, len(allResults))
 	}
 }
 
@@ -617,6 +676,14 @@ func TestImpact_Function(t *testing.T) {
 	if len(r.Resources) != 2 {
 		t.Fatalf("resources: got %d, want 2", len(r.Resources))
 	}
+	if len(r.Relationships) != 4 {
+		t.Fatalf("relationship evidence: got %d, want 4", len(r.Relationships))
+	}
+	for _, relationship := range r.Relationships {
+		if relationship.Evidence.File == "" || relationship.Evidence.Line == 0 {
+			t.Fatalf("relationship %s lacks evidence: %+v", relationship.ID, relationship.Evidence)
+		}
+	}
 
 	// Files: pkg/etcd.go (root) + pkg/controller.go (caller)
 	if len(r.Files) != 2 {
@@ -645,6 +712,9 @@ func TestImpact_Controller(t *testing.T) {
 	// Resources from controller's own edges
 	if len(r.Resources) != 2 {
 		t.Fatalf("resources: got %d, want 2", len(r.Resources))
+	}
+	if len(r.Relationships) != 2 {
+		t.Fatalf("relationship evidence: got %d, want 2", len(r.Relationships))
 	}
 }
 

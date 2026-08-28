@@ -23,14 +23,14 @@ func TestBuildGraph_Metadata(t *testing.T) {
 	if g.SchemaVersion != "1.4.0" {
 		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.4.0")
 	}
-	if g.GeneratedAt == "" {
-		t.Error("GeneratedAt should not be empty")
+	if g.GeneratedAt != "" {
+		t.Errorf("GeneratedAt = %q, want empty for repository without git metadata", g.GeneratedAt)
 	}
 	if g.Repository != "/tmp/fake-repo" {
 		t.Errorf("Repository = %q, want %q", g.Repository, "/tmp/fake-repo")
 	}
-	if g.ScanDuration != "2s" {
-		t.Errorf("ScanDuration = %q, want %q", g.ScanDuration, "2s")
+	if g.ScanDuration != "" {
+		t.Errorf("ScanDuration = %q, want empty for deterministic graph metadata", g.ScanDuration)
 	}
 	if len(g.Entities) != 1 {
 		t.Errorf("expected 1 entity, got %d", len(g.Entities))

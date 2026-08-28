@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -43,4 +44,30 @@ func TestGraphMarshal(t *testing.T) {
 	if decoded.Entities[0].Kind != g.Entities[0].Kind {
 		t.Errorf("Entity kind = %v, want %v", decoded.Entities[0].Kind, g.Entities[0].Kind)
 	}
+}
+
+func TestGraphRelationshipWireKey(t *testing.T) {
+	g := Graph{Schema: "codeatlas", SchemaVersion: "1.4.0", Relationship: []Relationship{{ID: "r"}}}
+	data, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if string(data) == "" || !containsJSONKey(string(data), `"relationships"`) {
+		t.Fatalf("canonical relationships key missing: %s", data)
+	}
+	if containsJSONKey(string(data), `"relationship"`) {
+		t.Fatalf("legacy singular relationships key emitted: %s", data)
+	}
+
+	var legacy Graph
+	if err := json.Unmarshal([]byte(`{"schema":"codeatlas","schemaVersion":"1.4.0","relationship":[{"id":"legacy"}]}`), &legacy); err != nil {
+		t.Fatalf("legacy graph should remain readable: %v", err)
+	}
+	if len(legacy.Relationship) != 1 || legacy.Relationship[0].ID != "legacy" {
+		t.Fatalf("legacy relationships were not loaded: %+v", legacy.Relationship)
+	}
+}
+
+func containsJSONKey(data, key string) bool {
+	return len(data) >= len(key) && strings.Contains(data, key+":")
 }

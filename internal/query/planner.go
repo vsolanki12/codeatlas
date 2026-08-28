@@ -7,37 +7,45 @@ import (
 )
 
 type AskResult struct {
-	Entity        *domain.Entity
-	View          *domain.View
-	QAHit         string
-	Explanation   *ExplainResult
-	Impact        *ImpactResult
-	Investigation *InvestigateResult
-	Detail        bool
+	Graph         GraphMetadata          `json:"graph"`
+	Entity        *domain.Entity         `json:"entity"`
+	Candidates    []*domain.Entity       `json:"candidates,omitempty"`
+	Match         string                 `json:"match"`
+	Ambiguous     bool                   `json:"ambiguous,omitempty"`
+	View          *domain.View           `json:"view,omitempty"`
+	QAHit         string                 `json:"quickAnswer,omitempty"`
+	QAEvidence    []*domain.Relationship `json:"quickAnswerEvidence,omitempty"`
+	Explanation   *ExplainResult         `json:"explanation,omitempty"`
+	Impact        *ImpactResult          `json:"impact,omitempty"`
+	Investigation *InvestigateResult     `json:"investigation,omitempty"`
+	Detail        bool                   `json:"detail,omitempty"`
 }
 
 func (idx *Index) Ask(entity string, intent string) *AskResult {
-	e := idx.GetEntity(entity)
+	e, candidates := idx.Resolve(entity)
 	if e == nil {
-		results := idx.Search(entity, 1)
-		if len(results) > 0 {
-			e = results[0]
+		return &AskResult{
+			Graph:      idx.GraphMetadata(),
+			Candidates: candidates,
+			Match:      "ambiguous",
+			Ambiguous:  len(candidates) > 0,
 		}
 	}
-	if e == nil {
-		return nil
+	match := "id"
+	if entity != e.ID {
+		match = "name"
 	}
 
-	r := &AskResult{Entity: e}
-	r.View = idx.GetView(e.ID)
-	if r.View == nil {
-		r.View = idx.SearchView(e.Name)
-	}
+	r := &AskResult{Graph: idx.GraphMetadata(), Entity: e, Match: match}
+	r.View = idx.ResolveView(e.ID)
 
 	switch strings.ToLower(intent) {
 	case "understand":
 		if ans, ok := idx.LookupQuestion("reconciles", e.Name); ok {
-			r.QAHit = ans
+			if evidence := idx.questionEvidence(e.ID, "reconciles"); len(evidence) > 0 {
+				r.QAHit = ans
+				r.QAEvidence = evidence
+			}
 		}
 		r.Explanation = idx.Explain(e.ID, 2)
 	case "impact":
@@ -47,11 +55,34 @@ func (idx *Index) Ask(entity string, intent string) *AskResult {
 	default:
 		for _, verb := range []string{"reconciles", "creates", "tests", "watches"} {
 			if ans, ok := idx.LookupQuestion(verb, e.Name); ok {
-				r.QAHit = verb + ": " + ans
-				break
+				if evidence := idx.questionEvidence(e.ID, verb); len(evidence) > 0 {
+					r.QAHit = verb + ": " + ans
+					r.QAEvidence = evidence
+					break
+				}
 			}
 		}
 	}
 
 	return r
+}
+
+func (idx *Index) questionEvidence(entityID, verb string) []*domain.Relationship {
+	typeName := domain.RelationshipType(verb)
+	direction := "from"
+	switch verb {
+	case "reconciled-by":
+		typeName = domain.RelReconciles
+		direction = "to"
+	case "created-by":
+		typeName = domain.RelCreates
+		direction = "to"
+	case "tests":
+		typeName = domain.RelTestedBy
+	case "watches":
+		typeName = domain.RelWatches
+	case "owns":
+		typeName = domain.RelOwns
+	}
+	return idx.GetRelationships(entityID, direction, string(typeName))
 }

@@ -209,18 +209,18 @@ Development progresses in phases. Each builds on the previous.
 
 **Delivered:** `atlas review` — deterministic PR review using the Atlas graph.
 
-- `internal/review` package: diff parser, entity mapper, enrichment, formatter
+- `internal/review` package: bounded diff evidence, diff parser, entity mapper, enrichment, formatter
 - Git unified diff parsing (handles new files, deleted files, renames, multiple hunks, binary files)
 - Three-dot diff (`base...head`) for PR review semantics
-- Approximate entity-to-hunk mapping using start-line ordering (no EndLine in graph)
-- Test-to-function inference: naming convention match, then same-file fallback
+- Entity-to-hunk mapping uses parser source spans (`endLine`) when available; merged implementation files and legacy spans are labeled approximate
+- Test-to-function links use stored `tested_by` edges first; naming and same-file fallback remain explicitly inferred
 - Callee noise filtering: stdlib packages + generic K8s/Go methods
 - Evidence classification: FOUND, NOT_FOUND, INSUFFICIENT_EVIDENCE (never "Missing test")
 - Facts vs recommendations separation — output shows what Atlas knows, not what it guesses
 - `--diff` flag: read diff from file or stdin (no git fetch needed)
-- Human-readable output: function names, file paths, callers, blast radius, test links
+- Human-readable and JSON output: bounded changed diff, changed entities/hunks, callers, blast radius, test links, freshness, and limitations
 
-**Result:** Deterministic PR review from Atlas graph. Reviewer sees changed functions, who calls them, what controllers/resources they affect, and which tests cover them — all backed by evidence.
+**Result:** Deterministic PR review from Atlas graph. Reviewer sees changed entities and diff hunks, who calls them, what controllers/resources they affect, and which tests are structurally linked — with evidence and inference labels preserved.
 
 ---
 
@@ -228,47 +228,54 @@ Development progresses in phases. Each builds on the previous.
 
 **Delivered:** Corrected semantic falsehoods and strengthened the graph evidence contract.
 
-- **Watches vs creates**: `Watches[1:]` now emits `RelWatches` (inferred), not `RelCreates` (proven). Watching is not creating.
-- **Implements confidence**: Changed to `inferred` — target is resolved by first name match, not Go type identity.
-- **Embeds confidence**: Changed to `inferred` — resources matched by directory proximity, not embed glob pattern.
-- **Validation contract**: Entities require source file; relationships require evidence file, valid confidence, unique IDs.
+- **Watches vs creates**: `For`, `Owns`, and `Watches` are retained as aligned observations and emit distinct relationship types. Watching is not creating.
+- **Implements**: Interface assertions remain observations; no `implements` edge is emitted without a first-class interface entity.
+- **Embeds**: Resources are matched against the actual `//go:embed` pattern relative to its declaration file before an `embeds` edge is emitted.
+- **Validation contract**: Entities require source and kind-matching IDs; relationships require deterministic IDs, valid endpoints, evidence, and valid confidence.
 - **Question index**: `Ask()` now calls `LookupQuestion()` — the index was generated but never served.
 - **PR review tests**: Graph-linked tests rendered per function (were calculated but omitted from output).
-- **PR review coordinates**: Mapper uses `NewStart`/`NewCount` (head-side) to match graph entity locations.
+- **PR review coordinates**: Mapper uses parser source spans and `NewStart`/`NewCount` (head-side) to match graph entity locations; approximate mappings are labeled.
 - **Deleted file reporting**: Explicitly reported as "no head-side mapping" instead of silently skipped.
 - **Discovery**: `testdata/` added to skip list (code now matches documented behavior).
 
 **Graph metadata in stats:** `atlas stats` now outputs `commit`, `branch`, and `generated` fields from graph metadata, enabling downstream freshness checks.
 
-**Outstanding:**
-- Embed matching still uses directory proximity, not actual `//go:embed` glob patterns. Correctly labeled `inferred`, but overly broad.
-- Relationship ID format not validated (`from--type--to`). Duplicate detection works, but malformed or empty IDs pass validation.
+**Current contract:**
+- Embed matching uses the actual `//go:embed` pattern relative to the declaration file and is marked `proven` only when a scanned resource path matches.
+- Relationship IDs must equal the deterministic `from--type--to` form; duplicate, orphan, unsupported, and evidence-less edges are rejected before persistence.
+- Repository scans use `repository-path-v1` entity identity. Incremental reuse and implementation-oriented consumers require a current, complete graph with verifiable file state.
 
-**Result:** 150 of 153 relationships in self-graph correctly labeled `inferred`. Validation catches evidence contract violations at scan time. 183 tests across 13 packages.
+**Result:** Validation catches graph identity, endpoint, deterministic-ID, evidence, and completeness violations at scan and storage boundaries. Review output separates deterministic facts, inferred links, and unsupported coverage claims.
 
 ---
 
-## Vision: Deterministic Reasoning Engine
+## Vision: Deterministic Query and Evidence Engine
 
-CodeAtlas is not a graph queried by AI. It is a **deterministic reasoning engine for software architecture**.
+CodeAtlas is not an AI reasoning engine. It is a **deterministic query and
+evidence engine for software architecture**.
 
-A graph stores facts. A reasoning engine derives higher-level, reusable engineering knowledge from those facts — without inventing anything. Claude (or any AI assistant) becomes the presentation layer, turning deterministic results into natural language.
+A graph stores facts. Deterministic views and compound queries derive bounded,
+reusable engineering context from those facts — without inventing anything.
+Claude, CodeAtlas Assistant, or another AI consumer may reason over that
+context, but remains a replaceable downstream consumer and presentation layer.
 
 ### Evolution
 
 **Stage 1** (done): Graph → MCP → Claude. ~70-80% token reduction vs grep+read.
 
-**Stage 2**: Move orchestration into Atlas. One call replaces search → investigate → explain → impact chain. Atlas traverses internally, returns one structured object. Claude receives the answer, not raw graph data.
+**Stage 2** (done): Move orchestration into Atlas. One call replaces search → investigate → explain → impact chain. Atlas traverses internally, returns one structured object. Consumers receive bounded evidence, not an unbounded raw graph dump.
 
-**Stage 3**: Pre-computed views at scan time. Entity views, lifecycle views, subsystem views, impact views — generated during `atlas scan`, not traversed during inference. Query becomes pure lookup. No graph traversal during AI inference.
+**Stage 3** (done): Pre-computed views at scan time. Entity and lifecycle views are generated during `atlas scan`; query consumers use bounded view and graph evidence rather than traversing source during inference.
 
-**Stage 4**: Question → answer storage. During scan, discover patterns (e.g., "NodePool lifecycle") and derive deterministic answers. At query time, look up the pre-computed answer. Claude only rewrites into English. Target: ~95% reduction in architecture-related reasoning tokens.
+**Stage 4** (future): Expand deterministic question → answer storage for stable repository patterns. AI consumers may rewrite or reason over those answers, but cannot add unsupported repository facts. Target: further reduction in architecture-related reasoning tokens.
 
 ---
 
-## Next: Moving Reasoning from Claude into Atlas
+## Next: Reducing Consumer Work Without Moving Probabilistic Reasoning into Atlas
 
-Phases 1–10 optimized retrieval. Phases 11–13 optimize what Claude has to think about. The remaining token cost is Claude reasoning over graph data — the fix is to move that reasoning into the scan phase.
+Phases 1–14 optimize retrieval and deterministic review preparation. Remaining
+work should reduce repeated context and add evidence-backed analysis; it must
+not move probabilistic repository reasoning into the CodeAtlas core.
 
 | Phase | Goal | Status |
 |-------|------|--------|
@@ -279,7 +286,7 @@ Phases 1–10 optimized retrieval. Phases 11–13 optimize what Claude has to th
 | 15. PR Metadata | Fetch PR title, description, labels from GitHub API (`--pr` flag) | Planned |
 | 16. Pattern Analysis | Compare PR against repo conventions: naming, error handling, logging | Planned |
 | 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Planned |
-| 18. LLM Integration | Optional AI layer for natural language summary and recommendations | Planned |
+| 18. LLM Integration | Optional downstream AI layer for natural language summary and recommendations | Implemented in `codeatlas-assistant` |
 
 Target: ~92–95% total reduction (from current ~70–80%).
 
@@ -325,7 +332,7 @@ Evaluate test sufficiency for changed code.
 
 ---
 
-### Phase 18: LLM Integration (Planned)
+### Phase 18: LLM Integration (Implemented downstream)
 
 Optional AI layer — last in the pipeline, never first.
 
@@ -334,6 +341,9 @@ Optional AI layer — last in the pipeline, never first.
 - Optionally suggests review focus areas based on blast radius
 - Uses `codeatlas-assistant` as the integration layer
 - Atlas output is the ground truth; LLM is the presentation layer
+- Assistant implementation prompts use exact graph-selected source files and
+  functions when a repository checkout is supplied; ambiguous or unverifiable
+  implementation context is refused or reported.
 
 **Principle:** LLM adds clarity, not knowledge. All facts come from Atlas. If Atlas can't prove it, LLM can't claim it.
 

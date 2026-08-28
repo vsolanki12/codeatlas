@@ -12,6 +12,7 @@ import (
 type ChangedEntity struct {
 	Entity      *domain.Entity
 	Approximate bool
+	Path        string
 	Hunks       []Hunk
 }
 
@@ -45,23 +46,53 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 				changed = append(changed, ChangedEntity{
 					Entity:      e,
 					Approximate: false,
+					Path:        d.Path,
 					Hunks:       d.Hunks,
 				})
 			}
 			continue
 		}
 
-		sort.Slice(entities, func(i, j int) bool {
-			return entities[i].Source.Line < entities[j].Source.Line
+		// A merged entity can be declared in one file and have implementation
+		// files recorded in Files. Its primary source span is not meaningful for
+		// a hunk in one of those additional files, so map the hunk to the entity
+		// conservatively and label it approximate instead of comparing unrelated
+		// line numbers.
+		for _, entity := range entities {
+			if entity.Source.File == path {
+				continue
+			}
+			changed = append(changed, ChangedEntity{
+				Entity:      entity,
+				Approximate: true,
+				Path:        d.Path,
+				Hunks:       d.Hunks,
+			})
+		}
+
+		sourceEntities := make([]*domain.Entity, 0, len(entities))
+		for _, entity := range entities {
+			if entity.Source.File == path {
+				sourceEntities = append(sourceEntities, entity)
+			}
+		}
+		sort.Slice(sourceEntities, func(i, j int) bool {
+			if sourceEntities[i].Source.Line != sourceEntities[j].Source.Line {
+				return sourceEntities[i].Source.Line < sourceEntities[j].Source.Line
+			}
+			return sourceEntities[i].ID < sourceEntities[j].ID
 		})
 
-		for i, entity := range entities {
+		for i, entity := range sourceEntities {
 			startLine := entity.Source.Line
 			endLine := math.MaxInt32
-			if i+1 < len(entities) {
-				endLine = entities[i+1].Source.Line - 1
-				if endLine < startLine {
-					endLine = startLine
+			if entity.Source.EndLine >= startLine {
+				endLine = entity.Source.EndLine
+			}
+			if i+1 < len(sourceEntities) {
+				nextStart := sourceEntities[i+1].Source.Line - 1
+				if nextStart >= startLine && nextStart < endLine {
+					endLine = nextStart
 				}
 			}
 
@@ -79,7 +110,8 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 			if len(overlapping) > 0 {
 				changed = append(changed, ChangedEntity{
 					Entity:      entity,
-					Approximate: true,
+					Approximate: entity.Source.EndLine == 0,
+					Path:        d.Path,
 					Hunks:       overlapping,
 				})
 			}
@@ -90,12 +122,20 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 }
 
 func entitiesInFile(idx *query.Index, path string) []*domain.Entity {
-	all := idx.Where(path, 200)
-	var exact []*domain.Entity
-	for _, e := range all {
-		if e.Source.File == path {
-			exact = append(exact, e)
+	candidates := idx.EntitiesInFile(path, 200)
+	entities := make([]*domain.Entity, 0, len(candidates))
+	for _, entity := range candidates {
+		if entity.Source.File == path {
+			entities = append(entities, entity)
+			continue
+		}
+		// Files can legitimately span a controller assembled from setup and
+		// implementation files. A package entity, however, records its package
+		// file set and has no source span for each file; mapping its foreign-file
+		// match would create a false line-level change.
+		if entity.Kind == domain.KindController || entity.Kind == domain.KindFunction || entity.Kind == domain.KindTest {
+			entities = append(entities, entity)
 		}
 	}
-	return exact
+	return entities
 }

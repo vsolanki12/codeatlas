@@ -2,6 +2,13 @@
 
 This document is the contract between the scanner and everything that consumes the Atlas Graph. If an entity or field isn't defined here, it doesn't exist in CodeAtlas.
 
+The graph is an evidence-bearing snapshot, not a claim that every repository
+fact was discovered. `scanComplete: false` and `scanWarnings` mean the graph is
+usable for the facts it contains but cannot support completeness claims.
+Consumers must preserve that distinction. Relationships that cannot be
+resolved from a supported parser signal are omitted; relationships resolved by
+convention or name matching are retained only as `confidence: inferred`.
+
 ---
 
 ## Core Concept: Everything is an Entity
@@ -19,128 +26,95 @@ Different kinds carry different optional fields. The scanner populates only the 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | string | yes | Unique, deterministic identifier (see ID rules below) |
-| `name` | string | yes | Human-readable name (e.g., "HostedClusterReconciler") |
-| `kind` | enum | yes | What this entity represents (see Kind table) |
-| `description` | string | no | Extracted from GoDoc or documentation. Never written by CodeAtlas. |
-| `package` | string | no | Go package path (e.g., `pkg/controllers/hostedcluster`) |
-| `files` | string[] | no | Files that implement this entity |
-| `source` | Source | yes | Where this entity was discovered |
+| `name` | string | yes | Display name extracted from the source |
+| `kind` | enum | yes | Entity category (see Kind table) |
+| `description` | string | no | GoDoc, Markdown-derived text, or manifest description |
+| `package` | string | no | Repository-relative package identity or Go module import path |
+| `files` | string[] | no | Additional files merged into the same entity |
+| `watches` | string[] | no | Resource type names observed in `SetupWithManager` calls |
+| `watchMethods` | string[] | no | Method aligned with each `watches` entry: `For`, `Owns`, or `Watches` |
+| `watchSites` | Site[] | no | Source sites aligned with each `watches` entry |
+| `creates` | string[] | no | Type names observed in explicit create/upsert calls |
+| `createSites` | Site[] | no | Source sites for `creates` observations |
+| `calls` | string[] | no | Call expressions observed in a function, test, or controller reconcile body |
+| `callSites` | Site[] | no | Source sites for `calls` observations |
+| `implements` | string[] | no | Interface names observed in compile-time assertions |
+| `implementationSites` | Site[] | no | Source sites for `implements` observations |
+| `env_vars` | string[] | no | Literal environment-variable names passed to `os.Getenv` |
+| `imports` | string[] | no | Import paths observed in a Go package |
+| `importSites` | Site[] | no | Source sites for `imports` observations |
+| `literals` | string[] | no | Bounded literal values observed in Go function bodies |
+| `properties` | string[] | no | Flattened, bounded YAML properties such as `kind=Deployment` |
+| `embeds` | string[] | no | `//go:embed` patterns observed in a Go package |
+| `embedSites` | Site[] | no | Source sites for `embeds` observations |
+| `lastAuthor` | string | no | Optional git enrichment |
+| `lastModified` | string | no | Optional git enrichment |
+| `changeCount` | number | no | Optional git enrichment |
+| `content` | string | no | Bounded Markdown content excerpt |
+| `source` | Source | yes | Primary location where this entity was discovered |
 
-### Kind-Specific Fields
-
-Additional fields based on `kind`. All optional — the scanner includes them when it can extract them.
-
-#### kind: `controller`
-
-| Field | Type | Description |
-|---|---|---|
-| `reconciles` | string | CRD or resource kind this controller manages |
-| `reconcileFile` | string | File containing the `Reconcile()` method |
-| `reconcileLine` | number | Line number of `Reconcile()` |
-| `setupFile` | string | File containing `SetupWithManager()` |
-| `watches` | string[] | Resources this controller watches |
-
-#### kind: `crd`
-
-| Field | Type | Description |
-|---|---|---|
-| `group` | string | API group (e.g., `hypershift.openshift.io`) |
-| `version` | string | API version (e.g., `v1beta1`) |
-| `scope` | enum | `Namespaced` or `Cluster` |
-| `specFile` | string | Go file defining the spec struct |
-| `conditions` | string[] | Status conditions this CRD emits |
-
-#### kind: `function`
-
-| Field | Type | Description |
-|---|---|---|
-| `receiver` | string | Struct receiver, if a method |
-| `file` | string | File where this function is defined |
-| `line` | number | Line number of the declaration |
-| `signature` | string | Full function signature |
-| `calls` | string[] | IDs of functions this function calls |
-| `doc` | string | GoDoc comment |
-
-Note: `calledBy` is **not stored**. It is computed at load time by inverting `calls`. Same principle as `importedBy` — store the forward edge, compute the reverse.
-
-#### kind: `package`
-
-| Field | Type | Description |
-|---|---|---|
-| `path` | string | Directory path relative to repo root |
-| `goFiles` | string[] | `.go` files (excluding tests) |
-| `testFiles` | string[] | `_test.go` files |
-| `imports` | string[] | Internal packages this package imports |
-
-Note: `importedBy` is **not stored**. Computed at load time.
-
-#### kind: `test`
-
-| Field | Type | Description |
-|---|---|---|
-| `testType` | enum | `unit`, `integration`, or `e2e` |
-| `file` | string | Test file path |
-| `line` | number | Line number of the test function |
-
-#### kind: `document`
-
-| Field | Type | Description |
-|---|---|---|
-| `path` | string | File path relative to repo root |
-| `docType` | enum | `readme`, `design`, `enhancement`, `guide`, `api-reference` |
-| `headings` | string[] | All headings extracted from the document |
-
-#### kind: `operator`
-
-| Field | Type | Description |
-|---|---|---|
-| `entrypoint` | string | Path to `main.go` |
-| `controllers` | string[] | Controller entity IDs registered by this operator |
-
-#### kind: `resource`
-
-| Field | Type | Description |
-|---|---|---|
-| `resourceKind` | string | Kubernetes kind (e.g., `Deployment`, `Service`, `ConfigMap`) |
-| `namespace` | string | Target namespace, if specified |
+The scanner populates only fields supported by the parser. Relationship-like
+fields are observations, not edges. A site is not a relationship by itself;
+the relationship builder must resolve the observation to an entity before it
+emits a graph edge.
 
 ### Kind Table
 
-| Kind | What It Represents | How Scanner Finds It |
+| Kind | What It Represents | Current scanner signal |
 |---|---|---|
-| `operator` | A binary that registers controllers | `main.go` that calls `SetupWithManager` |
-| `controller` | A struct with a `Reconcile()` method | `reconcile.Reconciler` implementation |
-| `crd` | A Custom Resource Definition | `+kubebuilder` markers or CRD YAML |
+| `controller` | A receiver with a `Reconcile` or `SetupWithManager` method | Go AST method declarations |
+| `crd` | A Custom Resource Definition | Kubernetes CRD YAML with `spec.names.kind`, or supported CRD manifest shape |
 | `function` | A Go function or method | `go/ast.FuncDecl` |
-| `package` | A Go package | `go/parser.ParseDir` |
-| `test` | A test function (`Test*`) | Functions in `_test.go` files |
-| `document` | A markdown file | `.md` files in `docs/`, `enhancements/`, root |
-| `resource` | A Kubernetes resource in YAML | Deployment/Service/ConfigMap YAML files |
+| `package` | A Go package in a scanned directory | Go AST package clause; files are merged by repository package identity |
+| `test` | A top-level `Test*` function in a test file | Go AST function declarations in `_test.go` |
+| `document` | A Markdown document | Markdown files discovered by the scanner |
+| `resource` | A named Kubernetes object in YAML | YAML with `kind` and `metadata.name` |
+| `operator` | Reserved entity kind | Not emitted by the current parsers |
 
-### Entity Examples
+The current scanner does not emit separate component, interface, or operator
+entities. An interface assertion is retained as an observation on the entity;
+it is not converted into an `implements` edge without a modeled interface
+target.
 
-**Controller:**
+### Important kind details
+
+- Controller `watches`, `watchMethods`, and `watchSites` are aligned by index.
+  `For` is the deterministic source for a `reconciles` edge, `Owns` for an
+  `owns` edge, and `Watches` for a `watches` edge. A controller found only from
+  `SetupWithManager` can have no reconcile-body calls.
+- Function receiver names are encoded in the function ID; there is no separate
+  `receiver`, `file`, `line`, `signature`, or `doc` field. Use `source` and the
+  ID to locate the declaration.
+- A CRD stores its group in `package` and uses a normalized, lower-case kind in
+  its ID. Group/version/scope are not separate Entity fields in the current
+  schema.
+- A resource stores its namespace in `package` and its Kubernetes kind in the
+  `properties` observation `kind=<Kind>`.
+- In repository scans, package, function, and test IDs use the Go module import
+  path so equal short package names in different directories cannot collide.
+  Fixture-only parser constructors may retain legacy short IDs.
+
+### Entity examples
+
+**Repository-mode controller:**
 
 ```json
 {
-  "id": "controller:hosted-cluster-reconciler",
-  "name": "HostedClusterReconciler",
+  "id": "controller:example.com/project/controllers.WidgetReconciler",
+  "name": "WidgetReconciler",
   "kind": "controller",
-  "description": "Reconciles HostedCluster resources and manages the lifecycle of hosted control planes",
-  "package": "pkg/controllers/hostedcluster",
-  "files": [
-    "pkg/controllers/hostedcluster/hostedcluster_controller.go",
-    "pkg/controllers/hostedcluster/status.go",
-    "pkg/controllers/hostedcluster/kas.go"
+  "package": "example.com/project/controllers",
+  "watches": ["Widget", "ConfigMap"],
+  "watchMethods": ["For", "Owns"],
+  "watchSites": [
+    {"name": "Widget", "source": {"parser": "go-ast", "file": "controllers/widget_setup.go", "line": 24}},
+    {"name": "ConfigMap", "source": {"parser": "go-ast", "file": "controllers/widget_setup.go", "line": 25}}
   ],
-  "reconciles": "HostedCluster",
-  "reconcileFile": "pkg/controllers/hostedcluster/hostedcluster_controller.go",
-  "reconcileLine": 142,
-  "watches": ["HostedCluster", "HostedControlPlane", "Secret"],
   "source": {
-    "parser": "go-ast",
-    "file": "pkg/controllers/hostedcluster/hostedcluster_controller.go",
-    "line": 58
+    "parser": "go",
+    "file": "controllers/widget_controller.go",
+    "line": 31,
+    "endLine": 47
   }
 }
 ```
@@ -149,45 +123,32 @@ Note: `importedBy` is **not stored**. Computed at load time.
 
 ```json
 {
-  "id": "function:hostedcluster.HostedClusterReconciler.syncEtcd",
-  "name": "syncEtcd",
+  "id": "function:example.com/project/controllers.WidgetReconciler.sync",
+  "name": "sync",
   "kind": "function",
-  "package": "pkg/controllers/hostedcluster",
-  "receiver": "HostedClusterReconciler",
-  "file": "pkg/controllers/hostedcluster/etcd.go",
-  "line": 24,
-  "signature": "func (r *HostedClusterReconciler) syncEtcd(ctx context.Context, hcp *hyperv1.HostedControlPlane) error",
-  "calls": [
-    "function:manifests.EtcdStatefulSet",
-    "function:hostedcluster.reconcileEtcdStatefulSet",
-    "function:controllerutil.CreateOrUpdate"
+  "package": "example.com/project/controllers",
+  "calls": ["helper"],
+  "callSites": [
+    {"name": "helper", "source": {"parser": "go-ast", "file": "controllers/widget_controller.go", "line": 42}}
   ],
-  "doc": "syncEtcd ensures the etcd StatefulSet exists and is up to date",
   "source": {
-    "parser": "go-ast",
-    "file": "pkg/controllers/hostedcluster/etcd.go",
-    "line": 24
+    "parser": "go",
+    "file": "controllers/widget_controller.go",
+    "line": 38,
+    "endLine": 45
   }
 }
 ```
 
-**CRD:**
+**CRD manifest:**
 
 ```json
 {
-  "id": "crd:hypershift.openshift.io/v1beta1.HostedCluster",
-  "name": "HostedCluster",
+  "id": "crd:example.io.widget",
+  "name": "Widget",
   "kind": "crd",
-  "group": "hypershift.openshift.io",
-  "version": "v1beta1",
-  "scope": "Namespaced",
-  "specFile": "api/hypershift/v1beta1/hostedcluster_types.go",
-  "conditions": ["Available", "Progressing", "Degraded", "ValidConfiguration"],
-  "source": {
-    "parser": "go-ast",
-    "file": "api/hypershift/v1beta1/hostedcluster_types.go",
-    "line": 42
-  }
+  "package": "example.io",
+  "source": {"parser": "yaml", "file": "config/crd.yaml", "line": 1}
 }
 ```
 
@@ -214,11 +175,21 @@ This is what makes CodeAtlas trustworthy. Every relationship carries proof — n
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `parser` | enum | yes | Which parser discovered this: `go-ast`, `yaml`, `markdown`, `git` |
+| `parser` | enum | yes | Source of the evidence: `go`, `go-ast`, `test`, `yaml`, `markdown`, or `git` |
 | `file` | string | yes | File path relative to repo root |
-| `line` | number | yes | Line number (0 if not applicable) |
+| `line` | number | yes | Positive source line number |
 | `snippet` | string | no | The actual code or text that proves the relationship (1-2 lines max) |
-| `reason` | string | no | Human-readable explanation of why this relationship exists |
+| `reason` | string | yes | Human-readable explanation of why this relationship exists |
+
+### Site
+
+Sites attach exact source locations to repeated entity facts such as a call,
+watch, or explicit create operation.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | Extracted operation or target name |
+| `source` | Source | yes | File and line where the operation was observed |
 
 When a user clicks a relationship and asks "why does CodeAtlas think HostedCluster creates HostedControlPlane?" — the `evidence` answers it.
 
@@ -226,28 +197,30 @@ When a user clicks a relationship and asks "why does CodeAtlas think HostedClust
 
 | Level | Meaning | Example |
 |---|---|---|
-| `proven` | Directly observed in code, YAML, or AST with exact semantic match | A `CreateOrUpdate()` call creating a HostedControlPlane; first watch in `SetupWithManager` proving reconciliation target |
-| `inferred` | Derived from naming conventions, proximity, or name-based resolution | Test file name matches controller file name; interface implementation resolved by name match; resource linked by directory proximity |
+| `proven` | Directly observed with an exact supported semantic match | A `SetupWithManager.For(...)` registration, an exact package import, or an embed pattern matching a resource file |
+| `inferred` | The source operation is observed, but target resolution relies on a convention or name match | A test name matching a function, a call resolved within the caller package, or a create type matched to a unique manifest kind |
 
-Two levels only. No percentages. If it's a guess, it doesn't go in the graph. If the relationship type is correct but the target was resolved by name rather than type identity, use `inferred`.
+Two levels only. No percentages. An unresolved or ambiguous observation is
+kept on the entity (when supported) and is not emitted as an edge. A
+relationship target resolved by convention or name is explicitly `inferred`.
 
 ### Relationship Types
 
 | Type | From → To | Meaning |
 |---|---|---|
 | `reconciles` | controller → crd/resource | This controller manages this resource |
-| `creates` | controller/operator → resource/crd | This entity creates this Kubernetes resource |
-| `owns` | crd → crd | Parent-child ownership |
+| `creates` | controller → resource | An explicit create/upsert observation resolved to one manifest kind |
+| `owns` | controller → crd/resource | `SetupWithManager.Owns(...)` registers the target |
 | `watches` | controller → crd/resource | Changes to this resource trigger reconciliation |
-| `calls` | function → function | This function calls that function |
-| `tested_by` | any → test | This entity is tested by this test |
-| `documented_in` | any → document | This entity is described in this document |
-| `depends_on` | any → any | This entity requires that entity to function |
-| `imports` | package → package | This package imports that package |
-| `implements` | controller → any | This struct implements that interface |
-| `emits` | crd/controller → any | This entity sets this condition or fires this event |
-| `contains` | package/operator → function/controller | This entity contains that entity |
-| `part_of` | controller → operator | This controller belongs to this operator |
+| `calls` | controller/function → function | A call observation resolved to a function entity |
+| `tested_by` | function → test | A test name matches a function by package-local convention |
+| `imports` | package → package | An exact internal package import resolved to a package entity |
+| `embeds` | package → resource | A `//go:embed` pattern matches a scanned resource file |
+
+The domain vocabulary also reserves `documented_in`, `depends_on`,
+`implements`, `emits`, `contains`, and `part_of`; the current scanner does not
+emit those types. Their presence in the enum does not mean the graph proves
+such relationships.
 
 ### Inverse Relationships
 
@@ -255,12 +228,10 @@ These are **not stored** in the graph. They are computed at load time:
 
 | Stored | Computed Inverse |
 |---|---|
-| `calls` | `called_by` |
-| `imports` | `imported_by` |
-| `contains` | `contained_in` |
-| `owns` | `owned_by` |
-| `tested_by` | `tests` |
-| `documented_in` | `documents` |
+| `calls` | callers (query direction `to`) |
+| `imports` | imported-by (query direction `to`) |
+| `owns` | owned-by (query direction `to`) |
+| `tested_by` | tests (query direction `to`) |
 
 This avoids inconsistency. One direction is the source of truth; the other is derived.
 
@@ -268,17 +239,17 @@ This avoids inconsistency. One direction is the source of truth; the other is de
 
 ```json
 {
-  "id": "controller:hosted-cluster-reconciler--creates--crd:hypershift.openshift.io/v1beta1.HostedControlPlane",
-  "from": "controller:hosted-cluster-reconciler",
-  "to": "crd:hypershift.openshift.io/v1beta1.HostedControlPlane",
+  "id": "controller:example.com/project/controllers.WidgetReconciler--creates--resource:deployment._cluster/api@config/deployment.yaml",
+  "from": "controller:example.com/project/controllers.WidgetReconciler",
+  "to": "resource:deployment._cluster/api@config/deployment.yaml",
   "type": "creates",
-  "confidence": "proven",
+  "confidence": "inferred",
   "evidence": {
     "parser": "go-ast",
-    "file": "pkg/controllers/hostedcluster/hostedcluster_controller.go",
+  "file": "controllers/widget_controller.go",
     "line": 213,
-    "snippet": "controllerutil.CreateOrUpdate(ctx, r.Client, hcp, func() error {",
-    "reason": "HostedClusterReconciler calls CreateOrUpdate to create a HostedControlPlane resource"
+  "snippet": "controllerutil.CreateOrUpdate(ctx, r.Client, deployment, mutate)",
+    "reason": "explicit create/upsert call; target matched by unique manifest kind"
   }
 }
 ```
@@ -287,17 +258,34 @@ This avoids inconsistency. One direction is the source of truth; the other is de
 
 ## Relationship Resolution
 
-The relationship builder (`internal/graph/builder.go`) resolves call strings extracted by the parser into graph relationships. Resolution follows a priority chain:
+The relationship builder (`internal/graph/builder.go`) resolves parser
+observations only when the target can be identified without an arbitrary
+choice. Resolution is intentionally conservative.
 
-### Call Resolution Order
+### Controller/resource resolution
 
-1. **Qualified name match**: If the call contains `.` (e.g., `"configrefs.SecretRefs"`), try exact match against the qualified name index (`function:pkg.Name` with prefix stripped).
+- `For`, `Owns`, and `Watches` observations are matched to exactly one CRD by
+  name, or to resource entities by their exact Kubernetes `kind` when no CRD
+  name match exists. Ambiguous matches are omitted.
+- An explicit create/upsert call is matched only when exactly one scanned
+  resource has the observed Kubernetes kind. The edge is `inferred` because a
+  type-level call does not identify a particular manifest instance.
+- `//go:embed` edges are emitted only when the pattern matches the resource
+  path relative to the package's source file.
 
-2. **Unique bare name**: Extract the bare name after the last `.` (e.g., `"r.reconcile"` → `"reconcile"`). If only one function in the entire graph has this name, resolve to it.
+### Call resolution order
 
-3. **Same-package disambiguation**: If the bare name is ambiguous (multiple functions share it across packages), prefer the match in the caller's package. Only resolves if exactly one function with that name exists in the caller's package.
+1. **Exact qualified match:** an import-path-qualified call is matched against
+   the repository-qualified function ID.
+2. **Exact caller-package match:** an unqualified call or receiver method is
+   resolved only when exactly one function with that name exists in the
+   caller's package.
+3. **Otherwise omit:** a call that is external, unsupported, or ambiguous is
+   retained as an entity-level `calls` observation but does not become an edge.
 
-4. **Skip list**: Common names like `Get`, `Set`, `Error`, `String`, `New`, `Close`, `Read`, `Write`, `Marshal`, `Unmarshal`, etc. are skipped entirely to avoid false-positive edges.
+Common generic names (`Get`, `Set`, `Error`, `String`, `New`, `Close`, `Read`,
+`Write`, `Marshal`, `Unmarshal`, and similar built-ins) are skipped to avoid
+false-positive edges.
 
 ### Deduplication
 
@@ -307,13 +295,17 @@ All relationship types use a shared `seen` map keyed by relationship ID. This pr
 
 | Type | From | To | How |
 |---|---|---|---|
-| `reconciles` | controller | CRD | First entry in controller's `watches` array |
-| `watches` | controller | CRD/resource | Remaining entries in `watches` array |
-| `calls` | controller | function | Call strings from controller's `calls` array |
-| `calls` | function | function | Call strings from function's `calls` array |
-| `tested_by` | function | test | Test name matches function name by convention (`TestFoo` → `Foo`) |
-| `implements` | entity | function | `var _ Interface = &Type{}` assertion detected |
-| `embeds` | package | resource | `//go:embed` directive + directory proximity |
+| `reconciles` | controller | CRD/resource | A `For` watch observation resolves to one target |
+| `owns` | controller | CRD/resource | An `Owns` watch observation resolves to one target |
+| `watches` | controller | CRD/resource | A `Watches` observation resolves to one target |
+| `creates` | controller | resource | An explicit create/upsert observation resolves to one manifest kind |
+| `imports` | package | package | An import path exactly matches one scanned package |
+| `calls` | controller/function | function | A call observation resolves by exact qualification or caller package |
+| `tested_by` | function | test | `TestFoo` matches `Foo` in the same package |
+| `embeds` | package | resource | `//go:embed` pattern matches a resource path |
+
+The `implements` parser observation is intentionally not an emitted edge until
+interface declarations have a first-class entity model.
 
 ---
 
@@ -325,24 +317,29 @@ Every entity carries a `source` proving where it was discovered.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `parser` | enum | yes | One of: `go-ast`, `yaml`, `markdown`, `git` |
+| `parser` | enum | yes | One of: `go`, `go-ast`, `test`, `yaml`, `markdown`, or `git` |
 | `file` | string | yes | File path relative to repo root |
-| `line` | number | yes | Line number (0 if not applicable) |
+| `line` | number | yes | Positive source line number |
+| `endLine` | number | no | End line for a source span, when the parser can determine it |
 
 ### ID Rules
 
-IDs are deterministic. Same commit, same IDs. No UUIDs, no counters.
+IDs are deterministic for the same repository layout. No UUIDs, no counters,
+and no runtime timestamps in IDs. Repository scans use the current
+`repository-path-v1` identity scheme; older fixture constructors may emit
+legacy short IDs and are not safe for incremental reuse or implementation
+guidance.
 
 | Kind | ID Format | Example |
 |---|---|---|
-| `operator` | `operator:{name}` | `operator:control-plane-operator` |
-| `controller` | `controller:{kebab-name}` | `controller:hosted-cluster-reconciler` |
-| `crd` | `crd:{group/version.Kind}` | `crd:hypershift.openshift.io/v1beta1.HostedCluster` |
-| `function` | `function:{pkg.Receiver.Name}` | `function:hostedcluster.HostedClusterReconciler.syncEtcd` |
-| `package` | `package:{path}` | `package:pkg/controllers/hostedcluster` |
-| `test` | `test:{pkg.TestName}` | `test:hostedcluster.TestReconcileHostedCluster` |
-| `document` | `document:{path}` | `document:docs/hostedcluster.md` |
-| `resource` | `resource:{kind}/{name}` | `resource:Deployment/kube-apiserver` |
+| `operator` | `operator:{name}` | Reserved; not emitted by current scanner |
+| `controller` | `controller:{module/package}.{Receiver}` | `controller:example.com/project/controllers.WidgetReconciler` |
+| `crd` | `crd:{group}.{lowercase-kind}` | `crd:example.io.widget` |
+| `function` | `function:{module/package}.{Receiver.}Name` | `function:example.com/project/controllers.WidgetReconciler.sync` |
+| `package` | `package:{module/package}` | `package:example.com/project/controllers` |
+| `test` | `test:{module/package}.TestName` | `test:example.com/project/controllers.TestSync` |
+| `document` | `document:{repository-relative-path}` | `document:docs/hostedcluster.md` |
+| `resource` | `resource:{lowerkind}.{namespace-or-_cluster}/{name}@{repository-relative-file}` | `resource:deployment.openshift-config/api@config/deployment.yaml` |
 
 The `kind:` prefix prevents ID collisions between different entity types that might share names.
 
@@ -354,52 +351,41 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 
 ```json
 {
-  "schema": "atlas-graph",
+  "schema": "codeatlas",
   "schemaVersion": "1.4.0",
+  "entityIdentity": "repository-path-v1",
   "generatedAt": "2026-07-14T16:00:00Z",
-  "repository": "https://github.com/openshift/hypershift",
+  "repository": "/work/project",
   "commit": "abc1234def5678",
   "branch": "main",
-  "scanDuration": "12.4s",
+  "scanDuration": "",
 
   "entities": [],
   "relationships": [],
   "fileTimestamps": {},
+  "fileFingerprints": {},
+  "scanComplete": true,
+  "scanWarnings": [],
   "views": {},
-  "questions": {},
-
-  "stats": {
-    "entities": {
-      "operator": 0,
-      "controller": 0,
-      "crd": 0,
-      "function": 0,
-      "package": 0,
-      "test": 0,
-      "document": 0,
-      "resource": 0,
-      "total": 0
-    },
-    "relationships": {
-      "total": 0,
-      "proven": 0,
-      "inferred": 0
-    }
-  }
+  "questions": {}
 }
 ```
 
 **Key fields:**
-- `schema` — always `"atlas-graph"`. Identifies this file as an Atlas Graph.
+- `schema` — always `"codeatlas"` for the current graph contract. Identifies this file as an Atlas Graph.
 - `schemaVersion` — semver. Consumers check this to know which fields exist. Bump major on breaking changes, minor on new optional fields.
-- `generatedAt` — UTC RFC3339 timestamp for when the graph was generated. Use with `commit` and `branch` to check graph freshness.
+- `entityIdentity` — identity scheme used by the scanner. Current repository scans use `repository-path-v1`; consumers must reject legacy identities when exact implementation context is required.
+- `generatedAt` — commit timestamp when available. It is provenance, not a wall-clock scan timestamp; this keeps the graph deterministic for a fixed commit.
 - `commit` — exact git commit that was scanned. Enables diffing two graphs.
 - `branch` — git branch. Enables comparing `release-4.19` vs `release-4.20`.
 - `entities` — flat array of all entities (all kinds mixed together, distinguished by `kind`).
 - `relationships` — flat array of all relationships.
-- `fileTimestamps` — per-file RFC3339 timestamps, used for incremental scanning (skip unchanged files on re-scan). Optional; omitted on first scan.
+- `fileTimestamps` — per-file RFC3339 modification times used as incremental state when fingerprints are unavailable.
+- `fileFingerprints` — content fingerprints for supported files. Used to detect changes that preserve a timestamp.
+- `scanComplete` — true only when all discovered files were parsed without warnings. False means the graph is partial.
+- `scanWarnings` — deterministic parser or discovery warnings that explain why completeness is unavailable.
 - `views` — pre-computed engineering views for controllers and CRDs, generated during scan. Each keyed by entity ID, containing ownership, resources, tests, files, and temporal data.
-- `questions` — deterministic Q&A pairs derived from views (e.g., `"reconciles:HostedClusterReconciler"` → `"HostedCluster"`). Enables instant lookup for common engineering questions.
+- `questions` — deterministic Q&A pairs derived from views (for example, `"reconciles:Widget"` → `"Widget"`). Entity/relationship counts are computed by `atlas stats`; they are not stored as a top-level graph field.
 
 ---
 
@@ -408,8 +394,8 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 1. **No entity without a source.** If the scanner can't point to a file and line, it doesn't create the entity.
 2. **No relationship without evidence.** Every edge carries `evidence` explaining what was found and why it constitutes this relationship.
 3. **No manual entries.** If a fact needs to be added by hand, that's a missing parser, not a data entry task.
-4. **IDs are deterministic.** Same commit → same graph. No UUIDs, no timestamps in IDs.
-5. **Only internal imports.** Package imports only track HyperShift-internal packages.
+4. **IDs are deterministic.** Same repository layout → same IDs. No UUIDs, no timestamps in IDs.
+5. **Imports preserve observations.** The package entity records every parsed import path. An `imports` relationship is emitted only for an exact match to one scanned package in the same graph.
 6. **Store forward, compute inverse.** `calls` is stored; `called_by` is computed. `imports` is stored; `imported_by` is computed. One direction is truth.
 7. **One entity per thing.** HostedClusterReconciler is one entity with `kind: controller`. Not a Component and a Controller.
 
@@ -438,7 +424,10 @@ A workflow would be an ordered sequence of steps, each pointing to a function en
 
 ### Core Schema vs. Extensions
 
-Today, kind-specific fields (`reconciles`, `watches`, `conditions`, `group`, `version`) live directly on the Entity. This works for V1 because HyperShift is the only target.
+Today, parser observations (`watches`, `creates`, `calls`, imports, literals,
+and so on) live directly on the Entity. The current CRD/resource parsers do not
+expose separate group/version/scope fields. This flat shape is intentionally
+small for V1.
 
 Eventually, if CodeAtlas supports other projects (controller-runtime, Operator SDK, Kubebuilder, plain Kubernetes), the schema should split:
 
@@ -447,10 +436,10 @@ Entity (core — universal)
 ├── id, name, kind, description, package, files, source
 
 ControllerExtension (Kubernetes-specific)
-├── reconciles, watches, setupFile
+├── watches, watchMethods, watchSites, creates, createSites
 
 CRDExtension (Kubernetes-specific)
-├── group, version, scope, conditions
+├── future manifest/API metadata
 
 OperatorExtension (Kubernetes-specific)
 ├── entrypoint, controllers
@@ -478,7 +467,7 @@ A future `discoveredBy` field would replace the single `source` with an array:
   "discoveredBy": [
     { "parser": "go-ast", "file": "api/hypershift/v1beta1/hostedcluster_types.go", "line": 42 },
     { "parser": "yaml", "file": "config/crds/hostedclusters.yaml", "line": 1 },
-    { "parser": "markdown", "file": "docs/hostedcluster.md", "line": 0 }
+    { "parser": "markdown", "file": "docs/hostedcluster.md", "line": 1 }
   ]
 }
 ```

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -10,17 +11,19 @@ import (
 	"time"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/freshness"
 	"github.com/vsolanki12/codeatlas/internal/mcpserver"
 	"github.com/vsolanki12/codeatlas/internal/query"
 	"github.com/vsolanki12/codeatlas/internal/review"
 	"github.com/vsolanki12/codeatlas/internal/scanner"
+	"github.com/vsolanki12/codeatlas/internal/storage"
 )
 
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: atlas <command> [flags]")
 		fmt.Fprintln(os.Stderr, "commands: scan, search, explain, impact, investigate, ask, view,")
-		fmt.Fprintln(os.Stderr, "          context, where, stats, serve, query, review")
+		fmt.Fprintln(os.Stderr, "          context, where, stats, freshness, serve, query, review")
 		os.Exit(1)
 	}
 
@@ -47,6 +50,8 @@ func main() {
 		runWhere(os.Args[2:])
 	case "stats":
 		runStats(os.Args[2:])
+	case "freshness":
+		runFreshness(os.Args[2:])
 	case "review":
 		runReview(os.Args[2:])
 	case "serve":
@@ -119,6 +124,8 @@ func runSearch(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	kind := fs.String("kind", "", "filter by entity kind (controller, function, crd, etc.)")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	q := fs.Arg(0)
@@ -134,29 +141,42 @@ func runSearch(args []string) {
 	}
 
 	var results []*domain.Entity
+	var truncated bool
 	if q != "" {
-		results = idx.Search(q, 20)
+		if *kind != "" {
+			results, truncated = idx.LookupWithStatus(*kind, q, 20)
+		} else {
+			results, truncated = idx.SearchWithStatus(q, 20)
+		}
 	} else {
-		results = idx.Lookup(*kind, "", 20)
+		results, truncated = idx.LookupWithStatus(*kind, "", 20)
 	}
 
-	if *kind != "" && q != "" {
-		filtered := results[:0]
-		for _, e := range results {
-			if e.Kind.String() == *kind {
-				filtered = append(filtered, e)
-			}
+	if *jsonOutput {
+		if *compact {
+			result := idx.CompactEntityListResult(results, false, 0)
+			result.Truncated = result.Truncated || truncated
+			printJSON(result)
+			return
 		}
-		results = filtered
+		result := idx.EntityListResult(results, false, 0)
+		result.Truncated = result.Truncated || truncated
+		printJSON(result)
+		return
 	}
 
 	fmt.Print(query.FormatEntityList(results))
+	if truncated {
+		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
+	}
 }
 
 func runExplain(args []string) {
 	fs := flag.NewFlagSet("explain", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	depth := fs.Int("depth", 2, "traversal depth (max 3)")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
@@ -182,12 +202,22 @@ func runExplain(args []string) {
 		fmt.Fprintf(os.Stderr, "no explanation for: %s\n", entity.ID)
 		os.Exit(1)
 	}
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactExplain(result))
+			return
+		}
+		printJSON(result)
+		return
+	}
 	fmt.Print(query.FormatExplanation(result))
 }
 
 func runImpact(args []string) {
 	fs := flag.NewFlagSet("impact", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
@@ -213,12 +243,22 @@ func runImpact(args []string) {
 		fmt.Fprintf(os.Stderr, "no impact data for: %s\n", entity.ID)
 		os.Exit(1)
 	}
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactImpact(result))
+			return
+		}
+		printJSON(result)
+		return
+	}
 	fmt.Print(query.FormatImpact(result))
 }
 
 func runInvestigate(args []string) {
 	fs := flag.NewFlagSet("investigate", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
@@ -244,6 +284,14 @@ func runInvestigate(args []string) {
 		fmt.Fprintf(os.Stderr, "no data for: %s\n", entity.ID)
 		os.Exit(1)
 	}
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactInvestigate(result))
+			return
+		}
+		printJSON(result)
+		return
+	}
 	fmt.Print(query.FormatInvestigation(result))
 }
 
@@ -252,6 +300,8 @@ func runAsk(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	intent := fs.String("intent", "", "understand, impact, or debug (default: view only)")
 	detail := fs.Bool("detail", false, "full verbose output (no compact formatting)")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entity := fs.Arg(0)
@@ -272,12 +322,22 @@ func runAsk(args []string) {
 		os.Exit(1)
 	}
 	result.Detail = *detail
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactAsk(result))
+			return
+		}
+		printJSON(result)
+		return
+	}
 	fmt.Print(query.FormatAsk(result))
 }
 
 func runView(args []string) {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entity := fs.Arg(0)
@@ -292,13 +352,18 @@ func runView(args []string) {
 		os.Exit(1)
 	}
 
-	v := idx.GetView(entity)
-	if v == nil {
-		v = idx.SearchView(entity)
-	}
+	v := idx.ResolveView(entity)
 	if v == nil {
 		fmt.Fprintf(os.Stderr, "no view found for: %s\n", entity)
 		os.Exit(1)
+	}
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactViewResult(v))
+			return
+		}
+		printJSON(v)
+		return
 	}
 	fmt.Print(query.FormatView(v))
 }
@@ -306,6 +371,8 @@ func runView(args []string) {
 func runQuery(args []string) {
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	remaining := fs.Args()
@@ -331,7 +398,7 @@ func runQuery(args []string) {
 		os.Exit(1)
 	}
 
-	results := idx.Lookup(kind, name, 20)
+	results, resultTruncated := idx.LookupWithStatus(kind, name, 20)
 	if len(results) == 0 {
 		fmt.Fprintf(os.Stderr, "no entities of kind %q", kind)
 		if name != "" {
@@ -342,13 +409,28 @@ func runQuery(args []string) {
 		fmt.Fprintln(os.Stderr, "tip: use 'atlas search' for text search across all entity types")
 		os.Exit(1)
 	}
-	fmt.Print(query.FormatEntityList(results))
-
-	for _, e := range results {
-		rels := idx.GetRelationships(e.ID, "both", "")
-		if len(rels) > 0 {
-			fmt.Print(query.FormatRelationshipList(rels))
+	if *jsonOutput {
+		if *compact {
+			result := idx.CompactEntityListResult(results, true, 40)
+			result.Truncated = result.Truncated || resultTruncated
+			printJSON(result)
+			return
 		}
+		result := idx.EntityListResult(results, true, 40)
+		result.Truncated = result.Truncated || resultTruncated
+		printJSON(result)
+		return
+	}
+	fmt.Print(query.FormatEntityList(results))
+	entityResult := idx.EntityListResult(results, true, 40)
+	if len(entityResult.Relationships) > 0 {
+		fmt.Print(query.FormatRelationshipList(entityResult.Relationships))
+	}
+	if entityResult.Truncated {
+		fmt.Println("[TRUNCATED: relationship context capped; omitted relationships are not evidence of absence.]")
+	}
+	if resultTruncated {
+		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
 	}
 }
 
@@ -356,6 +438,8 @@ func runContext(args []string) {
 	fs := flag.NewFlagSet("context", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	depth := fs.Int("depth", 1, "BFS traversal depth")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	entityID := fs.Arg(0)
@@ -371,12 +455,22 @@ func runContext(args []string) {
 	}
 
 	sg := idx.Neighbors(entityID, *depth)
+	if *jsonOutput {
+		if *compact {
+			printJSON(query.CompactSubgraph(sg))
+			return
+		}
+		printJSON(sg)
+		return
+	}
 	fmt.Print(query.FormatSubgraph(sg))
 }
 
 func runWhere(args []string) {
 	fs := flag.NewFlagSet("where", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
 
 	symbol := fs.Arg(0)
@@ -391,13 +485,29 @@ func runWhere(args []string) {
 		os.Exit(1)
 	}
 
-	results := idx.Where(symbol, 30)
+	results, resultTruncated := idx.WhereWithStatus(symbol, 30)
+	if *jsonOutput {
+		if *compact {
+			result := idx.CompactEntityListResult(results, false, 0)
+			result.Truncated = result.Truncated || resultTruncated
+			printJSON(result)
+			return
+		}
+		result := idx.EntityListResult(results, false, 0)
+		result.Truncated = result.Truncated || resultTruncated
+		printJSON(result)
+		return
+	}
 	fmt.Print(query.FormatEntityList(results))
+	if resultTruncated {
+		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
+	}
 }
 
 func runStats(args []string) {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	fs.Parse(reorderArgs(args))
 
 	idx, err := query.LoadGraph(*graphPath)
@@ -406,7 +516,56 @@ func runStats(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Print(query.FormatStats(idx.Stats()))
+	stats := idx.Stats()
+	if *jsonOutput {
+		printJSON(stats)
+		return
+	}
+	fmt.Print(query.FormatStats(stats))
+}
+
+func runFreshness(args []string) {
+	fs := flag.NewFlagSet("freshness", flag.ExitOnError)
+	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	repo := fs.String("repo", "", "path to the repository checkout")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	fs.Parse(reorderArgs(args))
+
+	g, err := storage.ReadGraph(*graphPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load graph: %v\n", err)
+		os.Exit(1)
+	}
+	result := freshness.CheckWithGraphPath(*repo, g, *graphPath)
+	if *jsonOutput {
+		printJSON(result)
+		return
+	}
+	fmt.Fprintf(os.Stdout, "repository: %s\n", result.Repository)
+	fmt.Fprintf(os.Stdout, "graph repository: %s\n", result.GraphRepository)
+	fmt.Fprintf(os.Stdout, "graph commit: %s\n", result.GraphCommit)
+	fmt.Fprintf(os.Stdout, "repo HEAD: %s\n", result.RepoHead)
+	fmt.Fprintf(os.Stdout, "entity identity: %s\n", result.EntityIdentity)
+	fmt.Fprintf(os.Stdout, "scan: %s\n", freshnessStatus(result.ScanComplete))
+	fmt.Fprintf(os.Stdout, "repository match: %t\n", result.RepositoryMatch)
+	fmt.Fprintf(os.Stdout, "state verification: %t\n", result.StateVerifiable)
+	fmt.Fprintf(os.Stdout, "dirty: %t\n", result.Dirty)
+	for _, path := range result.ChangedFiles {
+		fmt.Fprintf(os.Stdout, "changed file: %s\n", path)
+	}
+	for _, path := range result.NewFiles {
+		fmt.Fprintf(os.Stdout, "new file: %s\n", path)
+	}
+	for _, path := range result.DeletedFiles {
+		fmt.Fprintf(os.Stdout, "deleted file: %s\n", path)
+	}
+}
+
+func freshnessStatus(complete bool) string {
+	if complete {
+		return "complete"
+	}
+	return "incomplete"
 }
 
 func runServe(args []string) {
@@ -425,15 +584,20 @@ func runReview(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	base := fs.String("base", "", "base git ref (e.g., upstream/main)")
 	head := fs.String("head", "HEAD", "head git ref")
-	repo := fs.String("repo", ".", "path to the git repository")
+	repo := fs.String("repo", "", "path to the git repository (required for verified diff review)")
 	diffSource := fs.String("diff", "", "read diff from file or stdin (-)")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	fs.Parse(reorderArgs(args))
 
 	var result *review.ReviewResult
 	var err error
 
 	if *diffSource != "" {
-		result, err = review.RunFromDiff(*diffSource, *graphPath, *base, *head)
+		if *repo != "" {
+			result, err = review.RunFromDiffInRepo(*diffSource, *graphPath, *base, *head, *repo)
+		} else {
+			result, err = review.RunFromDiff(*diffSource, *graphPath, *base, *head)
+		}
 	} else {
 		if *base == "" {
 			fmt.Fprintln(os.Stderr, "usage: atlas review --base <ref> [--head <ref>] [--graph path] [--repo path]")
@@ -443,6 +607,9 @@ func runReview(args []string) {
 			fmt.Fprintln(os.Stderr, "  --diff: read diff from file or stdin (- for pipe)")
 			os.Exit(1)
 		}
+		if *repo == "" {
+			*repo = "."
+		}
 		result, err = review.Run(*base, *head, *repo, *graphPath)
 	}
 
@@ -451,16 +618,22 @@ func runReview(args []string) {
 		os.Exit(1)
 	}
 
+	if *jsonOutput {
+		printJSON(result)
+		return
+	}
 	fmt.Print(review.FormatReview(result))
 }
 
+func printJSON(value any) {
+	encoder := json.NewEncoder(os.Stdout)
+	if err := encoder.Encode(value); err != nil {
+		fmt.Fprintf(os.Stderr, "JSON output failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func resolveEntity(idx *query.Index, nameOrID string) *domain.Entity {
-	if e := idx.GetEntity(nameOrID); e != nil {
-		return e
-	}
-	results := idx.Search(nameOrID, 1)
-	if len(results) > 0 {
-		return results[0]
-	}
-	return nil
+	entity, _ := idx.Resolve(nameOrID)
+	return entity
 }

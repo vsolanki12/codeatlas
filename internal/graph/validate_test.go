@@ -9,12 +9,21 @@ import (
 
 func TestValidateGraph_Valid(t *testing.T) {
 	g := domain.Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: "1.4.0",
 		Entities: []domain.Entity{
-			{ID: "function:pkg.A", Source: domain.Source{File: "a.go"}},
-			{ID: "function:pkg.B", Source: domain.Source{File: "b.go"}},
+			{ID: "function:pkg.A", Name: "A", Kind: domain.KindFunction, Source: domain.Source{Parser: "go", File: "a.go", Line: 1}},
+			{ID: "function:pkg.B", Name: "B", Kind: domain.KindFunction, Source: domain.Source{Parser: "go", File: "b.go", Line: 1}},
 		},
 		Relationship: []domain.Relationship{
-			{ID: "rel1", From: "function:pkg.A", To: "function:pkg.B", Confidence: domain.ConfidenceInferred, Evidence: domain.Evidence{File: "a.go"}},
+			{
+				ID:         domain.NewRelationshipID("function:pkg.A", domain.RelCalls, "function:pkg.B"),
+				From:       "function:pkg.A",
+				To:         "function:pkg.B",
+				Type:       domain.RelCalls,
+				Confidence: domain.ConfidenceInferred,
+				Evidence:   domain.Evidence{Parser: "go-ast", File: "a.go", Line: 2, Reason: "call detected"},
+			},
 		},
 	}
 
@@ -120,6 +129,21 @@ func TestValidateGraph_MissingSourceFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no source file") {
 		t.Errorf("error should mention missing source file: %v", err)
+	}
+}
+
+func TestValidateGraph_EntityIDMustMatchKind(t *testing.T) {
+	g := domain.Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: "1.4.0",
+		Entities: []domain.Entity{
+			{ID: "controller:pkg.NotAFunction", Name: "NotAFunction", Kind: domain.KindFunction, Source: domain.Source{Parser: "go", File: "a.go", Line: 1}},
+		},
+	}
+
+	err := ValidateGraph(g)
+	if err == nil || !strings.Contains(err.Error(), "does not match kind") {
+		t.Fatalf("expected kind/ID mismatch error, got %v", err)
 	}
 }
 

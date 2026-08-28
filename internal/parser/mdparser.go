@@ -12,16 +12,30 @@ import (
 
 var _ Parser = (*MarkdownParser)(nil)
 
-type MarkdownParser struct{}
+type MarkdownParser struct {
+	rootDir string
+}
 
 func NewMarkdownParser() *MarkdownParser {
 	return &MarkdownParser{}
 }
 
+func NewMarkdownParserForRepo(repoPath string) *MarkdownParser {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		abs = repoPath
+	}
+	return &MarkdownParser{rootDir: filepath.Clean(abs)}
+}
+
 func (p *MarkdownParser) Parse(file domain.File) ([]domain.Entity, error) {
 	filePath := file.RelativePath
 
-	f, err := os.Open(filePath)
+	openPath := filePath
+	if p.rootDir != "" {
+		openPath = filepath.Join(p.rootDir, filepath.FromSlash(filePath))
+	}
+	f, err := os.Open(openPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open markdown file: %w", err)
 	}
@@ -66,6 +80,10 @@ func (p *MarkdownParser) Parse(file domain.File) ([]domain.Entity, error) {
 	}
 
 	fileName := filepath.Base(filePath)
+	documentID := fileName
+	if p.rootDir != "" {
+		documentID = filepath.ToSlash(filePath)
+	}
 	summaryDescription := strings.Join(headings, "; ")
 
 	content := strings.Join(contentLines, " ")
@@ -75,7 +93,7 @@ func (p *MarkdownParser) Parse(file domain.File) ([]domain.Entity, error) {
 
 	var entities []domain.Entity
 	entities = append(entities, domain.Entity{
-		ID:          fmt.Sprintf("document:%s", fileName),
+		ID:          fmt.Sprintf("document:%s", documentID),
 		Name:        fileName,
 		Kind:        domain.KindDocument,
 		Description: summaryDescription,

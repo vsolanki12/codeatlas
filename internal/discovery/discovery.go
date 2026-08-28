@@ -2,11 +2,14 @@
 package discovery
 
 import (
+	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
@@ -30,7 +33,7 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 		}
 		if entry.IsDir() {
 			name := entry.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" || name == "testdata" {
+			if name == ".git" || name == ".worktrees" || name == "vendor" || name == "node_modules" || name == "testdata" {
 				return filepath.SkipDir // skip this directory and its contents
 			}
 			return nil // keep going, it's a directory we want to scan
@@ -45,10 +48,15 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 		if err != nil {
 			return err // stop walking and return the error
 		}
+		contentHash, err := contentHash(path, filepath.Ext(relPath))
+		if err != nil {
+			return err
+		}
 		files = append(files, domain.File{
 			RelativePath: relPath,
 			Size:         info.Size(),
 			ModifiedTime: info.ModTime(),
+			ContentHash:  contentHash,
 		})
 		return nil // keep going
 	})
@@ -56,6 +64,42 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 		return nil, walkErr // return the error from WalkDir
 	}
 	return files, nil
+}
+
+func contentHash(path, extension string) (string, error) {
+	switch extension {
+	case ".go", ".yaml", ".yml", ".md":
+	default:
+		return "", nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
+}
+
+// Fingerprint returns the stable file identity used by incremental scans and
+// freshness checks. Supported source files use their content hash; other
+// discovered files fall back to metadata because they are not parsed.
+func Fingerprint(file domain.File) string {
+	if file.ContentHash != "" {
+		return file.ContentHash
+	}
+	return fmt.Sprintf("%d:%d", file.ModifiedTime.UnixNano(), file.Size)
+}
+
+// FingerprintTimestamp is kept small and explicit for callers that need to
+// compare a discovery result with a legacy timestamp-only graph.
+func FingerprintTimestamp(file domain.File) string {
+	return file.ModifiedTime.UTC().Format(time.RFC3339)
 }
 
 // New validates the repository path and returns a ready-to-use Discovery.

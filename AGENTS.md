@@ -36,7 +36,7 @@ There is no `Makefile`, CI, or Docker configuration — the project builds with 
 The codebase follows a strict dependency hierarchy. Violating these rules breaks the architecture:
 
 - **`internal/domain` depends on nothing.** It defines the shared vocabulary (`Entity`, `Relationship`, `Evidence`, `Graph`, `Source`). Every other package imports it. If `domain` ever imports another CodeAtlas package, the architecture is broken.
-- **Leaf packages are independent.** `discovery`, `parser`, `graph`, `storage`, `origin`, and `temporal` do not depend on each other. Only `scanner` composes them.
+- **Graph-producing packages use `domain`; `scanner` composes them.** `discovery`, `parser`, `graph`, `storage`, `temporal`, and `views` do not parse or query through another producer. `freshness` is a read-only verifier for stored graph provenance and file state.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
 - **`mcpserver` depends only on `query`.** It is a thin MCP wrapper over the query engine.
 
@@ -53,6 +53,7 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 | `internal/views` | Pre-computed controller/CRD knowledge views and question index |
 | `internal/storage` | JSON graph read/write |
 | `internal/query` | In-memory index, search, explain, impact, investigate, ask |
+| `internal/freshness` | Read-only graph/check-out provenance and file-state verification |
 | `internal/review` | PR diff parsing, entity-to-hunk mapping, blast radius, test coverage |
 | `internal/mcpserver` | 11 MCP tools served via stdio transport |
 
@@ -64,7 +65,7 @@ The Atlas Graph JSON (schema 1.4.0) is the product. All consumers read the same 
 2. **No relationship without evidence.** Every edge carries `evidence` (parser, file, line, snippet, reason).
 3. **No manual entries.** If a fact must be added by hand, that's a missing parser — not a data entry task.
 4. **IDs are deterministic.** Same commit produces the same graph. No UUIDs, no timestamps in IDs.
-5. **Store forward, compute inverse.** `calls` is stored; `called_by` is computed at load time. Same for `imports`/`imported_by`, `contains`/`contained_in`, etc.
+5. **Store forward, compute inverse.** Supported forward edges such as `calls`, `imports`, `owns`, and `tested_by` are stored once; query direction computes the reverse traversal instead of persisting a second copy.
 
 See [docs/data-model.md](docs/data-model.md) for the full schema specification.
 

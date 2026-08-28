@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"path/filepath"
 	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
@@ -14,7 +15,10 @@ import (
 var _ Parser = (*TestParser)(nil)
 
 type TestParser struct {
-	fset *token.FileSet
+	fset            *token.FileSet
+	rootDir         string
+	packageResolver *packageResolver
+	useImportPaths  bool
 }
 
 func NewTestParser() *TestParser {
@@ -23,16 +27,39 @@ func NewTestParser() *TestParser {
 	}
 }
 
+// NewTestParserForRepo mirrors NewGoParserForRepo so test entities use the
+// same repository-unique package identity as the production code they test.
+func NewTestParserForRepo(repoPath string) *TestParser {
+	abs, err := filepath.Abs(repoPath)
+	if err != nil {
+		abs = repoPath
+	}
+	return &TestParser{
+		fset:            token.NewFileSet(),
+		rootDir:         filepath.Clean(abs),
+		packageResolver: newPackageResolver(abs),
+		useImportPaths:  true,
+	}
+}
+
 func (p *TestParser) Parse(file domain.File) ([]domain.Entity, error) {
 	filePath := file.RelativePath
 
 	// 1. Parse the target Go test file into an Abstract Syntax Tree (AST)
-	astFile, err := parser.ParseFile(p.fset, filePath, nil, parser.ParseComments)
+	parsePath := filePath
+	if p.rootDir != "" {
+		parsePath = filepath.Join(p.rootDir, filepath.FromSlash(filePath))
+	}
+	astFile, err := parser.ParseFile(p.fset, parsePath, nil, parser.ParseComments)
 	if err != nil {
 		return nil, fmt.Errorf("failed parsing go test file %s: %w", filePath, err)
 	}
 
 	packageName := astFile.Name.Name
+	packagePath := packageName
+	if p.packageResolver != nil {
+		packagePath = p.packageResolver.resolve(filePath, packageName)
+	}
 	var entities []domain.Entity
 
 	// 2. Walk the AST to extract function declarations
@@ -51,16 +78,20 @@ func (p *TestParser) Parse(file domain.File) ([]domain.Entity, error) {
 			}
 
 			// 4. Create KindTest entity with format: test:pkg.TestFuncName
+			calls, callSites, _ := extractCallsAndEnvVars(fn.Body, buildImportAliasMap(astFile, p.useImportPaths), filePath, p.fset)
 			entities = append(entities, domain.Entity{
-				ID:          fmt.Sprintf("test:%s.%s", packageName, fn.Name.Name),
+				ID:          fmt.Sprintf("test:%s.%s", packagePath, fn.Name.Name),
 				Name:        fn.Name.Name,
 				Kind:        domain.KindTest,
 				Description: description,
-				Package:     packageName,
+				Package:     packagePath,
+				Calls:       calls,
+				CallSites:   callSites,
 				Source: domain.Source{
-					Parser: "test",
-					File:   filePath,
-					Line:   p.fset.Position(fn.Pos()).Line,
+					Parser:  "test",
+					File:    filePath,
+					Line:    p.fset.Position(fn.Pos()).Line,
+					EndLine: p.fset.Position(fn.End()).Line,
 				},
 			})
 		}

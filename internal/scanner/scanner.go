@@ -2,8 +2,8 @@ package scanner
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -36,6 +36,11 @@ type ScanOptions struct {
 
 func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error) {
 	start := time.Now()
+	absRepo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve repository path: %w", err)
+	}
+	repoPath = absRepo
 
 	// Resolve output path before chdir changes working directory
 	absOutput, err := filepath.Abs(outputPath)
@@ -54,6 +59,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	if err != nil {
 		return nil, fmt.Errorf("file discovery: %w", err)
 	}
+	files = excludeOutputFile(files, repoPath, outputPath)
 
 	// Step 1b: Incremental detection — skip unchanged files
 	allFiles := files
@@ -63,9 +69,18 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 
 	if opts.PreviousGraph != "" {
 		prev, err := storage.ReadGraph(opts.PreviousGraph)
-		if err == nil && len(prev.FileTimestamps) > 0 {
-			changed, unchanged, deleted := changedFiles(files, prev.FileTimestamps)
-			if len(changed) < len(files) {
+		// An incomplete graph is not a safe source of reusable facts: a parser
+		// warning may belong to an unchanged file, and reusing that file while
+		// marking the new graph complete would turn an unknown into a false fact.
+		// Legacy graphs also have ScanComplete=false, so they receive one full
+		// migration scan before incremental mode is enabled.
+		if err == nil && prev.ScanComplete && prev.EntityIdentity == domain.CurrentEntityIdentity && sameRepository(prev.Repository, repoPath) && (len(prev.FileTimestamps) > 0 || len(prev.FileFingerprints) > 0) {
+			previousState := prev.FileFingerprints
+			if len(previousState) == 0 {
+				previousState = prev.FileTimestamps
+			}
+			changed, unchanged, deleted := changedFiles(files, previousState)
+			if len(changed) < len(files) && !packageRescanRequired(prev.Entities, changed, deleted) {
 				incremental = true
 				changedCount = len(changed)
 				reusedCount = len(unchanged)
@@ -77,7 +92,6 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 					unchangedSet[f.RelativePath] = true
 				}
 				oldEntities = entitiesFromFiles(prev.Entities, unchangedSet)
-				_ = deleted
 			}
 		}
 	}
@@ -85,23 +99,13 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	// Step 2: Classify files by extension
 	groups := parser.Classify(files)
 
-	// Step 3: Parse each file group
-	// Parsers read files using relative paths, so we temporarily change
-	// to the repo directory. Restored via defer.
-	oldDir, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("getwd: %w", err)
-	}
-	if err := os.Chdir(repoPath); err != nil {
-		return nil, fmt.Errorf("chdir to repo: %w", err)
-	}
-	defer os.Chdir(oldDir)
-
+	// Step 3: Parse each file group. Parsers resolve relative paths against the
+	// repository root, so scanning does not mutate the process working directory.
 	var entities []domain.Entity
 	var warnings []string
 
 	// Go source files (skip _test.go — those go to TestParser)
-	goParser := parser.NewGoParser()
+	goParser := parser.NewGoParserForRepo(repoPath)
 	for _, f := range groups[".go"] {
 		if strings.HasSuffix(f.RelativePath, "_test.go") {
 			continue
@@ -115,7 +119,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	// Test files
-	testParser := parser.NewTestParser()
+	testParser := parser.NewTestParserForRepo(repoPath)
 	for _, f := range groups[".go"] {
 		if !strings.HasSuffix(f.RelativePath, "_test.go") {
 			continue
@@ -129,7 +133,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	// YAML files (.yaml and .yml)
-	yamlParser := parser.NewYAMLParser()
+	yamlParser := parser.NewYAMLParserForRepo(repoPath)
 	for _, ext := range []string{".yaml", ".yml"} {
 		for _, f := range groups[ext] {
 			ents, err := yamlParser.Parse(f)
@@ -142,7 +146,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	// Markdown files
-	mdParser := parser.NewMarkdownParser()
+	mdParser := parser.NewMarkdownParserForRepo(repoPath)
 	for _, f := range groups[".md"] {
 		ents, err := mdParser.Parse(f)
 		if err != nil {
@@ -162,17 +166,35 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	deduped := entities[:0]
 	for _, e := range entities {
 		if idx, ok := seenIdx[e.ID]; ok {
+			if deduped[idx].Description == "" && e.Description != "" {
+				deduped[idx].Description = e.Description
+			}
 			deduped[idx].Files = appendUnique(deduped[idx].Files, e.Files)
+			deduped[idx].Watches, deduped[idx].WatchMethods, deduped[idx].WatchSites = appendUniqueWatchFacts(
+				deduped[idx].Watches, deduped[idx].WatchMethods, deduped[idx].WatchSites,
+				e.Watches, e.WatchMethods, e.WatchSites,
+			)
 			deduped[idx].Imports = appendUnique(deduped[idx].Imports, e.Imports)
+			deduped[idx].ImportSites = appendUniqueSites(deduped[idx].ImportSites, e.ImportSites)
 			deduped[idx].Literals = appendUnique(deduped[idx].Literals, e.Literals)
 			deduped[idx].Properties = appendUnique(deduped[idx].Properties, e.Properties)
 			deduped[idx].Embeds = appendUnique(deduped[idx].Embeds, e.Embeds)
+			deduped[idx].Calls = appendUnique(deduped[idx].Calls, e.Calls)
+			deduped[idx].Creates = appendUnique(deduped[idx].Creates, e.Creates)
+			deduped[idx].CreateSites = appendUniqueSites(deduped[idx].CreateSites, e.CreateSites)
+			deduped[idx].CallSites = appendUniqueSites(deduped[idx].CallSites, e.CallSites)
+			deduped[idx].ImplementationSites = appendUniqueSites(deduped[idx].ImplementationSites, e.ImplementationSites)
+			deduped[idx].EmbedSites = appendUniqueSites(deduped[idx].EmbedSites, e.EmbedSites)
+			deduped[idx].Implements = appendUnique(deduped[idx].Implements, e.Implements)
+			deduped[idx].EnvVars = appendUnique(deduped[idx].EnvVars, e.EnvVars)
 			continue
 		}
 		seenIdx[e.ID] = len(deduped)
 		deduped = append(deduped, e)
 	}
 	entities = deduped
+	normalizePackageFiles(entities, allFiles)
+	sortEntities(entities)
 
 	// Step 5: Temporal enrichment (optional)
 	if opts.Temporal {
@@ -180,6 +202,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 			warnings = append(warnings, fmt.Sprintf("temporal: %v", err))
 		}
 	}
+	sort.Strings(warnings)
 
 	// Step 6: Build relationships
 	builder := graph.NewRelationshipBuilder(repoPath)
@@ -195,6 +218,13 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		timestamps[f.RelativePath] = f.ModifiedTime.UTC().Format(time.RFC3339)
 	}
 	g.FileTimestamps = timestamps
+	fingerprints := make(map[string]string, len(allFiles))
+	for _, f := range allFiles {
+		fingerprints[f.RelativePath] = fileFingerprint(f)
+	}
+	g.FileFingerprints = fingerprints
+	g.ScanComplete = len(warnings) == 0
+	g.ScanWarnings = append([]string(nil), warnings...)
 
 	// Step 8: Validate
 	if err := graph.ValidateGraph(g); err != nil {
@@ -202,6 +232,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	// Step 8b: Compile knowledge views and question index
+	sort.Slice(g.Relationship, func(i, j int) bool { return g.Relationship[i].ID < g.Relationship[j].ID })
 	g.Views = views.Compile(g.Entities, g.Relationship)
 	g.Questions = views.CompileQuestions(g.Views)
 
@@ -232,7 +263,7 @@ func changedFiles(files []domain.File, oldTimestamps map[string]string) (changed
 			changed = append(changed, f)
 			continue
 		}
-		if f.ModifiedTime.UTC().Format(time.RFC3339) != oldTS {
+		if !matchesFileState(f, oldTS) {
 			changed = append(changed, f)
 		} else {
 			unchanged = append(unchanged, f)
@@ -246,21 +277,261 @@ func changedFiles(files []domain.File, oldTimestamps map[string]string) (changed
 	return
 }
 
+func excludeOutputFile(files []domain.File, repoPath, outputPath string) []domain.File {
+	relative, err := filepath.Rel(repoPath, outputPath)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return files
+	}
+	relative = filepath.ToSlash(relative)
+	filtered := make([]domain.File, 0, len(files))
+	for _, file := range files {
+		if file.RelativePath != relative {
+			filtered = append(filtered, file)
+		}
+	}
+	return filtered
+}
+
+func matchesFileState(file domain.File, previous string) bool {
+	if timestamp, err := time.Parse(time.RFC3339, previous); err == nil {
+		return file.ModifiedTime.UTC().Format(time.RFC3339) == timestamp.UTC().Format(time.RFC3339)
+	}
+	return fileFingerprint(file) == previous
+}
+
 func entitiesFromFiles(entities []domain.Entity, unchangedPaths map[string]bool) []domain.Entity {
 	var result []domain.Entity
 	for _, e := range entities {
-		if unchangedPaths[e.Source.File] {
+		if entityFilesUnchanged(e, unchangedPaths) {
 			result = append(result, e)
-			continue
-		}
-		for p := range unchangedPaths {
-			if strings.HasPrefix(p, e.Source.File+"/") {
-				result = append(result, e)
-				break
-			}
 		}
 	}
 	return result
+}
+
+func entityFilesUnchanged(e domain.Entity, unchangedPaths map[string]bool) bool {
+	if len(e.Files) > 0 {
+		for _, file := range e.Files {
+			if !unchangedPaths[file] {
+				return false
+			}
+		}
+		return true
+	}
+	return unchangedPaths[e.Source.File]
+}
+
+func packageRescanRequired(previous []domain.Entity, changed []domain.File, deleted []string) bool {
+	// Module paths are part of every repository-mode Go entity ID. A module
+	// file change can therefore invalidate identities even when no .go file
+	// changed.
+	for _, file := range changed {
+		if filepath.Base(file.RelativePath) == "go.mod" {
+			return true
+		}
+	}
+	for _, deletedPath := range deleted {
+		if filepath.Base(deletedPath) == "go.mod" {
+			return true
+		}
+	}
+	var packageDirs []string
+	for _, entity := range previous {
+		if entity.Kind != domain.KindPackage {
+			continue
+		}
+		for _, file := range append(append([]string(nil), entity.Files...), entity.Source.File) {
+			if filepath.Ext(file) == ".go" {
+				packageDirs = append(packageDirs, filepath.ToSlash(filepath.Dir(file)))
+			}
+		}
+	}
+	if len(packageDirs) == 0 {
+		return false
+	}
+	for _, file := range changed {
+		if filepath.Ext(file.RelativePath) != ".go" || strings.HasSuffix(file.RelativePath, "_test.go") {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(file.RelativePath))
+		for _, packageDir := range packageDirs {
+			if dir == packageDir {
+				// A new file can be merged safely. Existing package files need a
+				// full package rescan because package-level imports and embeds are
+				// aggregated and do not retain per-file provenance.
+				found := false
+				for _, entity := range previous {
+					if entity.Kind != domain.KindPackage {
+						continue
+					}
+					for _, oldFile := range entity.Files {
+						if oldFile == file.RelativePath {
+							found = true
+							break
+						}
+					}
+				}
+				if found {
+					return true
+				}
+			}
+		}
+	}
+	for _, deletedPath := range deleted {
+		if filepath.Ext(deletedPath) != ".go" || strings.HasSuffix(deletedPath, "_test.go") {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(deletedPath))
+		for _, packageDir := range packageDirs {
+			if dir == packageDir {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sameRepository(previous, current string) bool {
+	if previous == "" || current == "" {
+		return false
+	}
+	previousAbs, err := filepath.Abs(previous)
+	if err != nil {
+		return false
+	}
+	currentAbs, err := filepath.Abs(current)
+	if err != nil {
+		return false
+	}
+	previousResolved, previousErr := filepath.EvalSymlinks(previousAbs)
+	currentResolved, currentErr := filepath.EvalSymlinks(currentAbs)
+	if previousErr == nil {
+		previousAbs = previousResolved
+	}
+	if currentErr == nil {
+		currentAbs = currentResolved
+	}
+	return filepath.Clean(previousAbs) == filepath.Clean(currentAbs)
+}
+
+func fileFingerprint(f domain.File) string {
+	return discovery.Fingerprint(f)
+}
+
+func sortEntities(entities []domain.Entity) {
+	for i := range entities {
+		sort.Strings(entities[i].Files)
+		sort.Strings(entities[i].Imports)
+		sort.Strings(entities[i].Literals)
+		sort.Strings(entities[i].Properties)
+		sort.Strings(entities[i].Embeds)
+		sort.Strings(entities[i].Creates)
+		sort.Strings(entities[i].Calls)
+		sort.Strings(entities[i].Implements)
+		sort.Strings(entities[i].EnvVars)
+		sort.Slice(entities[i].ImportSites, func(a, b int) bool { return siteLess(entities[i].ImportSites[a], entities[i].ImportSites[b]) })
+		sortWatchFacts(&entities[i])
+		sort.Slice(entities[i].CreateSites, func(a, b int) bool { return siteLess(entities[i].CreateSites[a], entities[i].CreateSites[b]) })
+		sort.Slice(entities[i].CallSites, func(a, b int) bool { return siteLess(entities[i].CallSites[a], entities[i].CallSites[b]) })
+		sort.Slice(entities[i].ImplementationSites, func(a, b int) bool {
+			return siteLess(entities[i].ImplementationSites[a], entities[i].ImplementationSites[b])
+		})
+		sort.Slice(entities[i].EmbedSites, func(a, b int) bool { return siteLess(entities[i].EmbedSites[a], entities[i].EmbedSites[b]) })
+	}
+	sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
+}
+
+// sortWatchFacts keeps a watch target, its registration method, and its
+// source site aligned while making the serialized graph independent of parse
+// or incremental merge order.
+func sortWatchFacts(entity *domain.Entity) {
+	if len(entity.Watches) == 0 || len(entity.WatchMethods) != len(entity.Watches) {
+		return
+	}
+	type watchFact struct {
+		name   string
+		method string
+		site   domain.Site
+	}
+	facts := make([]watchFact, len(entity.Watches))
+	for i, name := range entity.Watches {
+		facts[i].name = name
+		facts[i].method = entity.WatchMethods[i]
+		if i < len(entity.WatchSites) {
+			facts[i].site = entity.WatchSites[i]
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].name != facts[j].name {
+			return facts[i].name < facts[j].name
+		}
+		if facts[i].method != facts[j].method {
+			return facts[i].method < facts[j].method
+		}
+		return siteLess(facts[i].site, facts[j].site)
+	})
+	for i, fact := range facts {
+		entity.Watches[i] = fact.name
+		entity.WatchMethods[i] = fact.method
+		if i < len(entity.WatchSites) {
+			entity.WatchSites[i] = fact.site
+		}
+	}
+}
+
+func siteLess(a, b domain.Site) bool {
+	if a.Source.File != b.Source.File {
+		return a.Source.File < b.Source.File
+	}
+	if a.Source.Line != b.Source.Line {
+		return a.Source.Line < b.Source.Line
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Source.Parser < b.Source.Parser
+}
+
+func normalizePackageFiles(entities []domain.Entity, files []domain.File) {
+	available := make(map[string]bool, len(files))
+	for _, file := range files {
+		if filepath.Ext(file.RelativePath) == ".go" && !strings.HasSuffix(file.RelativePath, "_test.go") {
+			available[file.RelativePath] = true
+		}
+	}
+	for i := range entities {
+		if entities[i].Kind != domain.KindPackage {
+			continue
+		}
+		var current []string
+		seen := make(map[string]bool)
+		add := func(file string) {
+			if available[file] && !seen[file] {
+				seen[file] = true
+				current = append(current, file)
+			}
+		}
+		// Parsed package entities already carry every file encountered for that
+		// package name, including files added during an incremental scan. The
+		// availability check below removes deleted files without assuming that a
+		// package name maps to one directory.
+		for _, file := range entities[i].Files {
+			add(file)
+		}
+		if filepath.Ext(entities[i].Source.File) == ".go" {
+			add(entities[i].Source.File)
+		} else {
+			// Preserve compatibility with graphs whose package source was a
+			// directory rather than a concrete Go file.
+			prefix := strings.TrimSuffix(entities[i].Source.File, "/") + "/"
+			for file := range available {
+				if strings.HasPrefix(file, prefix) {
+					add(file)
+				}
+			}
+		}
+		entities[i].Files = current
+	}
 }
 
 func appendUnique(existing, additions []string) []string {
@@ -275,4 +546,75 @@ func appendUnique(existing, additions []string) []string {
 		}
 	}
 	return existing
+}
+
+func appendUniqueSites(existing, additions []domain.Site) []domain.Site {
+	seen := make(map[string]bool, len(existing))
+	for _, site := range existing {
+		seen[site.Name+"\x00"+site.Source.File+"\x00"+fmt.Sprint(site.Source.Line)] = true
+	}
+	for _, site := range additions {
+		key := site.Name + "\x00" + site.Source.File + "\x00" + fmt.Sprint(site.Source.Line)
+		if !seen[key] {
+			seen[key] = true
+			existing = append(existing, site)
+		}
+	}
+	return existing
+}
+
+func appendUniqueWatchFacts(existingNames, existingMethods []string, existingSites []domain.Site, names, methods []string, sites []domain.Site) ([]string, []string, []domain.Site) {
+	// Keep legacy entities untouched when their pre-method schema cannot
+	// preserve target/method alignment. Current scanner output always supplies
+	// one method per target and one site per registration.
+	if len(existingMethods) != len(existingNames) || len(methods) != len(names) {
+		return appendUnique(existingNames, names), appendUnique(existingMethods, methods), appendUniqueSites(existingSites, sites)
+	}
+	type watchFact struct {
+		name   string
+		method string
+		site   domain.Site
+	}
+	facts := make([]watchFact, 0, len(existingNames)+len(names))
+	seen := make(map[string]bool)
+	add := func(name, method string, site domain.Site) {
+		key := name + "\x00" + method + "\x00" + site.Source.File + "\x00" + fmt.Sprint(site.Source.Line)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		facts = append(facts, watchFact{name: name, method: method, site: site})
+	}
+	for i, name := range existingNames {
+		var site domain.Site
+		if i < len(existingSites) {
+			site = existingSites[i]
+		}
+		add(name, existingMethods[i], site)
+	}
+	for i, name := range names {
+		var site domain.Site
+		if i < len(sites) {
+			site = sites[i]
+		}
+		add(name, methods[i], site)
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].name != facts[j].name {
+			return facts[i].name < facts[j].name
+		}
+		if facts[i].method != facts[j].method {
+			return facts[i].method < facts[j].method
+		}
+		return siteLess(facts[i].site, facts[j].site)
+	})
+	resultNames := make([]string, len(facts))
+	resultMethods := make([]string, len(facts))
+	resultSites := make([]domain.Site, len(facts))
+	for i, fact := range facts {
+		resultNames[i] = fact.name
+		resultMethods[i] = fact.method
+		resultSites[i] = fact.site
+	}
+	return resultNames, resultMethods, resultSites
 }

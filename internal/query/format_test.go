@@ -41,6 +41,40 @@ func TestFormatEntity_TruncatesDescription(t *testing.T) {
 	}
 }
 
+func TestFormatEntityFullDoesNotMutateGraphSlices(t *testing.T) {
+	calls := make([]string, 12, 16)
+	for i := range calls {
+		calls[i] = "call"
+	}
+	e := &domain.Entity{
+		ID:     "function:pkg.Reconcile",
+		Name:   "Reconcile",
+		Kind:   domain.KindFunction,
+		Calls:  calls,
+		Source: domain.Source{File: "pkg/reconcile.go", Line: 1},
+	}
+
+	FormatEntityFull(e)
+	if len(e.Calls) != 12 || e.Calls[10] != "call" || e.Calls[11] != "call" {
+		t.Fatalf("formatter mutated entity calls: %#v", e.Calls)
+	}
+}
+
+func TestFormatEntityFullIncludesBoundedDocumentContent(t *testing.T) {
+	e := &domain.Entity{
+		ID:      "document:docs/design.md",
+		Name:    "design.md",
+		Kind:    domain.KindDocument,
+		Content: strings.Repeat("x", 700),
+		Source:  domain.Source{File: "docs/design.md", Line: 1},
+	}
+
+	got := FormatEntityFull(e)
+	if !strings.Contains(got, "Content:") || !strings.Contains(got, "[TRUNCATED:") {
+		t.Fatalf("document content was not exposed with a bound: %q", got)
+	}
+}
+
 func TestFormatRelationship(t *testing.T) {
 	r := &domain.Relationship{
 		From:       "controller:pkg.MyController",
@@ -280,8 +314,16 @@ func TestFormatImpact(t *testing.T) {
 	}
 
 	r := &ImpactResult{
-		Entity:        entity,
-		CallChain:     []*domain.Entity{controller},
+		Entity:    entity,
+		CallChain: []*domain.Entity{controller},
+		Relationships: []*domain.Relationship{{
+			ID:         domain.NewRelationshipID(controller.ID, domain.RelCalls, entity.ID),
+			From:       controller.ID,
+			To:         entity.ID,
+			Type:       domain.RelCalls,
+			Confidence: domain.ConfidenceInferred,
+			Evidence:   domain.Evidence{Parser: "go-ast", File: "pkg/controller.go", Line: 25, Reason: "call site"},
+		}},
 		Controllers:   []*domain.Entity{controller},
 		Tests:         []*domain.Entity{test},
 		Resources:     []*domain.Entity{crd},
@@ -296,6 +338,8 @@ func TestFormatImpact(t *testing.T) {
 		"=== Impact: function:pkg.reconcileEtcd ===",
 		"=== Call Chain (1 callers) ===",
 		"controller:pkg.MyController",
+		"=== Relationship Evidence (1) ===",
+		"controller:pkg.MyController --calls--> function:pkg.reconcileEtcd",
 		"=== Controllers (1) ===",
 		"=== Tests (1) ===",
 		"test:pkg.TestReconcileEtcd",

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -224,5 +225,22 @@ func TestParseDiff_Empty(t *testing.T) {
 	files := ParseDiff("")
 	if len(files) != 0 {
 		t.Errorf("expected 0 files, got %d", len(files))
+	}
+}
+
+func TestBoundedDiffExcerpt(t *testing.T) {
+	diff := strings.Repeat("diff --git a/pkg/example.go b/pkg/example.go\n+changed line\n", maxDiffExcerptBytes)
+	excerpt, truncated := boundedDiffExcerpt(diff)
+	if !truncated {
+		t.Fatal("expected large diff to be marked truncated")
+	}
+	if len(excerpt) > maxDiffExcerptBytes {
+		t.Fatalf("excerpt length = %d, want <= %d", len(excerpt), maxDiffExcerptBytes)
+	}
+	if !strings.Contains(excerpt, "DIFF EXCERPT TRUNCATED") {
+		t.Fatal("excerpt missing truncation marker")
+	}
+	if !strings.Contains(excerpt, "+changed line") {
+		t.Fatal("excerpt lost changed-line evidence")
 	}
 }

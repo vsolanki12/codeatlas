@@ -1,10 +1,63 @@
 package parser
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 )
+
+func TestGoParserForRepo_EmitsControllerFromSetupFile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	setupPath := filepath.Join(repo, "controllers", "setup.go")
+	if err := os.MkdirAll(filepath.Dir(setupPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(setupPath, []byte(`package controllers
+
+type Reconciler struct{}
+type Widget struct{}
+type Builder struct{}
+
+func (r *Reconciler) SetupWithManager() error {
+	return NewBuilder().For(&Widget{}).Complete(r)
+}
+
+func NewBuilder() *Builder { return &Builder{} }
+func (b *Builder) For(obj interface{}) *Builder { return b }
+func (b *Builder) Complete(obj interface{}) error { return nil }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities, err := NewGoParserForRepo(repo).Parse(domain.File{RelativePath: "controllers/setup.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	for _, entity := range entities {
+		if entity.Kind != domain.KindController {
+			continue
+		}
+		if entity.ID != "controller:example.com/repo/controllers.Reconciler" {
+			t.Fatalf("controller ID = %q, want repository-qualified ID", entity.ID)
+		}
+		if len(entity.Watches) != 1 || entity.Watches[0] != "Widget" {
+			t.Fatalf("controller watches = %v, want [Widget]", entity.Watches)
+		}
+		if len(entity.WatchMethods) != 1 || entity.WatchMethods[0] != "For" {
+			t.Fatalf("controller watch methods = %v, want [For]", entity.WatchMethods)
+		}
+		if len(entity.WatchSites) != 1 || entity.WatchSites[0].Source.File != "controllers/setup.go" {
+			t.Fatalf("controller watch sites = %+v, want setup.go evidence", entity.WatchSites)
+		}
+		return
+	}
+	t.Fatal("expected a controller entity from SetupWithManager file")
+}
 
 func TestParseFixtures(t *testing.T) {
 	tests := []struct {
@@ -144,6 +197,36 @@ func TestParseEnvVars(t *testing.T) {
 	noEnv := byName["noEnvVars"]
 	if len(noEnv.EnvVars) != 0 {
 		t.Errorf("noEnvVars.EnvVars = %v, want empty", noEnv.EnvVars)
+	}
+}
+
+func TestParseCreates(t *testing.T) {
+	p := NewGoParser()
+	entities, err := p.Parse(domain.File{RelativePath: "testdata/creates.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	var controller *domain.Entity
+	for i := range entities {
+		if entities[i].Kind == domain.KindController {
+			controller = &entities[i]
+			break
+		}
+	}
+	if controller == nil {
+		t.Fatal("expected Reconciler controller entity")
+	}
+	if len(controller.Creates) != 2 || controller.Creates[0] != "Secret" || controller.Creates[1] != "ConfigMap" {
+		t.Fatalf("Creates = %v, want [Secret ConfigMap]", controller.Creates)
+	}
+	if len(controller.CreateSites) != 2 {
+		t.Fatalf("CreateSites = %v, want two sites", controller.CreateSites)
+	}
+	for _, site := range controller.CreateSites {
+		if site.Source.Parser != "go-ast" || site.Source.File != "testdata/creates.go" || site.Source.Line == 0 {
+			t.Errorf("invalid create site: %+v", site)
+		}
 	}
 }
 

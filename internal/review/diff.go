@@ -15,20 +15,20 @@ const (
 )
 
 type Hunk struct {
-	OldStart int
-	OldCount int
-	NewStart int
-	NewCount int
-	Header   string
+	OldStart int    `json:"oldStart"`
+	OldCount int    `json:"oldCount"`
+	NewStart int    `json:"newStart"`
+	NewCount int    `json:"newCount"`
+	Header   string `json:"header,omitempty"`
 }
 
 type FileDiff struct {
-	Path         string
-	OldPath      string
-	Status       FileStatus
-	Hunks        []Hunk
-	AddedLines   int
-	DeletedLines int
+	Path         string     `json:"path"`
+	OldPath      string     `json:"oldPath,omitempty"`
+	Status       FileStatus `json:"status"`
+	Hunks        []Hunk     `json:"hunks"`
+	AddedLines   int        `json:"addedLines"`
+	DeletedLines int        `json:"deletedLines"`
 }
 
 func ParseDiff(output string) []FileDiff {

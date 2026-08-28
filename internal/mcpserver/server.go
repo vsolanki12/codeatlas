@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/query"
 )
 
@@ -39,7 +38,6 @@ func registerTools(s *mcp.Server, idx *query.Index) {
 	registerAsk(s, idx)
 }
 
-
 type entityInput struct {
 	ID    string   `json:"id,omitempty" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
 	IDs   []string `json:"ids,omitempty" jsonschema:"list of entity IDs to fetch"`
@@ -52,8 +50,16 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, and calls. Use brief=true for compact output (ID, file, line only).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entityInput) (*mcp.CallToolResult, any, error) {
 		if len(input.IDs) > 0 {
+			const maxBatch = 50
+			ids := input.IDs
+			truncated := false
+			if len(ids) > maxBatch {
+				ids = ids[:maxBatch]
+				truncated = true
+			}
 			var lines []string
-			for _, id := range input.IDs {
+			entities := idx.EntitiesByID(ids)
+			for _, id := range ids {
 				if e := idx.GetEntity(id); e != nil {
 					lines = append(lines, query.FormatEntity(e))
 				}
@@ -62,8 +68,14 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 			if len(lines) > 0 {
 				text = joinLines(lines)
 			}
+			if truncated {
+				text += "[TRUNCATED: entity batch capped at 50 IDs; omitted IDs were not queried.]\n"
+			}
+			result := idx.CompactEntityListResult(entities, false, 0)
+			result.Truncated = result.Truncated || truncated
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: text}},
+				Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+				StructuredContent: result,
 			}, nil, nil
 		}
 		e := idx.GetEntity(input.ID)
@@ -73,21 +85,33 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 			}, nil, nil
 		}
 		if input.Brief {
+			entity := query.CompactEntitySummary(e)
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: query.FormatEntity(e) + "\n"}},
+				Content:           []mcp.Content{&mcp.TextContent{Text: query.FormatEntity(e) + "\n"}},
+				StructuredContent: map[string]any{"graph": idx.GraphMetadata(), "entity": entity, "truncated": entity.Truncated},
 			}, nil, nil
 		}
 		text := query.FormatEntityFull(e)
 		rels := idx.GetRelationships(input.ID, "both", "")
+		truncated := false
+		if len(rels) > 40 {
+			rels = rels[:40]
+			truncated = true
+		}
 		if len(rels) > 0 {
 			text += "Relationships:\n" + query.FormatRelationshipList(rels)
 		}
+		if truncated {
+			text += "[TRUNCATED: relationship context capped; omitted relationships are not evidence of absence.]\n"
+		}
+		result := idx.CompactEntityListResult(idx.EntitiesByID([]string{e.ID}), true, 40)
+		result.Truncated = result.Truncated || truncated
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: result,
 		}, nil, nil
 	})
 }
-
 
 type contextInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to center the subgraph on"`
@@ -106,7 +130,8 @@ func registerContext(s *mcp.Server, idx *query.Index) {
 		sg := idx.Neighbors(input.EntityID, depth)
 		text := query.FormatSubgraph(sg)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: query.CompactSubgraph(sg),
 		}, nil, nil
 	})
 }
@@ -119,17 +144,21 @@ type searchInput struct {
 func registerSearch(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
-		Description: "Find entities in the codebase by kind and/or name. Returns matching entities with file locations.",
+		Description: "Find entities in the codebase by kind and/or name. Returns bounded entity summaries with file locations; use atlas_entity for full details.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
-		var results []*domain.Entity
+		results, truncated := idx.SearchWithStatus(input.Query, 20)
 		if input.Kind != "" {
-			results = idx.Lookup(input.Kind, input.Query, 20)
-		} else {
-			results = idx.Search(input.Query, 20)
+			results, truncated = idx.LookupWithStatus(input.Kind, input.Query, 20)
 		}
 		text := query.FormatEntityList(results)
+		if truncated {
+			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
+		}
+		result := idx.CompactEntityListResult(results, false, 0)
+		result.Truncated = result.Truncated || truncated
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: result,
 		}, nil, nil
 	})
 }
@@ -144,15 +173,24 @@ func registerWhere(s *mcp.Server, idx *query.Index) {
 		Name:        "atlas_where",
 		Description: "Find entities by file path. Returns entities defined in files matching the path substring. Use detail=true to get full entity info (replaces multiple atlas_entity calls for single-file investigation).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input whereInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Where(input.Path, 30)
+		results, truncated := idx.WhereWithStatus(input.Path, 30)
 		var text string
 		if input.Detail {
 			text = query.FormatEntityDetailList(results)
 		} else {
 			text = query.FormatEntityList(results)
 		}
+		if truncated {
+			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
+		}
+		// Detail expands only the human-readable text. Keep MCP structured
+		// content bounded so a large file/package cannot bypass the token
+		// contract.
+		result := idx.CompactEntityListResult(results, input.Detail, 40)
+		result.Truncated = result.Truncated || truncated
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: result,
 		}, nil, nil
 	})
 }
@@ -170,7 +208,7 @@ func registerTemporal(s *mcp.Server, idx *query.Index) {
 		Name:        "atlas_temporal",
 		Description: "Search entities by git history: who changed what and when. Requires --temporal scan.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input temporalInput) (*mcp.CallToolResult, any, error) {
-		results := idx.Temporal(input.Kind, input.Name, input.Since, input.Author, input.Stale, 20)
+		results, truncated := idx.TemporalWithStatus(input.Kind, input.Name, input.Since, input.Author, input.Stale, 20)
 		if len(results) == 0 {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: "No temporal data. Re-scan with --temporal flag."}},
@@ -182,8 +220,14 @@ func registerTemporal(s *mcp.Server, idx *query.Index) {
 				e.ID, e.Source.File, e.Source.Line, e.ChangeCount, e.LastModified, e.LastAuthor))
 		}
 		text := joinLines(lines)
+		if truncated {
+			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
+		}
+		result := idx.CompactEntityListResult(results, false, 0)
+		result.Truncated = result.Truncated || truncated
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: result,
 		}, nil, nil
 	})
 }
@@ -205,11 +249,11 @@ func registerStats(s *mcp.Server, idx *query.Index) {
 	}, func(_ context.Context, _ *mcp.CallToolRequest, _ statsInput) (*mcp.CallToolResult, any, error) {
 		text := query.FormatStats(idx.Stats())
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: idx.Stats(),
 		}, nil, nil
 	})
 }
-
 
 type investigateInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to investigate"`
@@ -218,7 +262,7 @@ type investigateInput struct {
 func registerInvestigate(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_investigate",
-		Description: "Get everything about an entity in one call: full details, all relationships grouped by type, callers, tests, and same-file siblings. Replaces 4-5 primitive tool calls.",
+		Description: "Get bounded details about an entity in one call: relationships grouped by type, callers, tests, and same-file siblings. Structured output is compact and evidence-bearing; use atlas_entity for full entity fields.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input investigateInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Investigate(input.EntityID)
 		if r == nil {
@@ -228,7 +272,8 @@ func registerInvestigate(s *mcp.Server, idx *query.Index) {
 		}
 		text := query.FormatInvestigation(r)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: query.CompactInvestigate(r),
 		}, nil, nil
 	})
 }
@@ -251,7 +296,8 @@ func registerExplain(s *mcp.Server, idx *query.Index) {
 		}
 		text := query.FormatExplanation(r)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: query.CompactExplain(r),
 		}, nil, nil
 	})
 }
@@ -263,7 +309,7 @@ type impactInput struct {
 func registerImpact(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_impact",
-		Description: "Blast radius analysis: walk the call chain upstream to find all controllers, tests, resources, files, and owners affected by changing this entity. Use for PR review preparation.",
+		Description: "Blast radius analysis: walk the call chain upstream to find bounded controllers, tests, resources, files, owners, and the supporting relationship evidence. Use for PR review preparation.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input impactInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Impact(input.EntityID)
 		if r == nil {
@@ -273,7 +319,8 @@ func registerImpact(s *mcp.Server, idx *query.Index) {
 		}
 		text := query.FormatImpact(r)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: query.CompactImpact(r),
 		}, nil, nil
 	})
 }
@@ -287,10 +334,7 @@ func registerView(s *mcp.Server, idx *query.Index) {
 		Name:        "atlas_view",
 		Description: "Get a pre-computed engineering view for a controller or CRD: what it manages, what manages it, tests, files, and ownership. Generated during scanning, zero graph traversal.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input viewInput) (*mcp.CallToolResult, any, error) {
-		v := idx.GetView(input.Entity)
-		if v == nil {
-			v = idx.SearchView(input.Entity)
-		}
+		v := idx.ResolveView(input.Entity)
 		if v == nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("No view found for: %s (views exist for controllers and CRDs only)", input.Entity)}},
@@ -298,7 +342,8 @@ func registerView(s *mcp.Server, idx *query.Index) {
 		}
 		text := query.FormatView(v)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: map[string]any{"graph": idx.GraphMetadata(), "view": query.CompactViewResult(v)},
 		}, nil, nil
 	})
 }
@@ -312,7 +357,7 @@ type askInput struct {
 func registerAsk(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_ask",
-		Description: "Ask an engineering question about an entity. Returns pre-computed knowledge view plus optional deep analysis. Use this FIRST — only use specific tools (explain, investigate, impact) for fine-grained control.",
+		Description: "Ask an engineering question about an entity. Returns compact pre-computed knowledge view plus optional evidence-bearing analysis. Use detail=true for the full structured payload.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Ask(input.Entity, input.Intent)
 		if r == nil {
@@ -322,8 +367,13 @@ func registerAsk(s *mcp.Server, idx *query.Index) {
 		}
 		r.Detail = input.Detail
 		text := query.FormatAsk(r)
+		// MCP's machine-readable contract stays bounded even when detail=true;
+		// detail expands the human text only. This prevents a large document or
+		// package entity from bypassing the token guard through raw JSON.
+		structured := query.CompactAsk(r)
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
+			StructuredContent: structured,
 		}, nil, nil
 	})
 }

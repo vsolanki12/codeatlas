@@ -22,6 +22,7 @@ func FormatEntity(e *domain.Entity) string {
 
 func FormatEntityFull(e *domain.Entity) string {
 	var b strings.Builder
+	truncated := false
 	fmt.Fprintf(&b, "ID: %s\n", e.ID)
 	fmt.Fprintf(&b, "Name: %s\n", e.Name)
 	fmt.Fprintf(&b, "Kind: %s\n", e.Kind)
@@ -30,49 +31,24 @@ func FormatEntityFull(e *domain.Entity) string {
 	if e.Description != "" {
 		fmt.Fprintf(&b, "Description: %s\n", e.Description)
 	}
-	if len(e.Watches) > 0 {
-		fmt.Fprintf(&b, "Watches: %s\n", strings.Join(e.Watches, ", "))
-	}
-	if len(e.Calls) > 0 {
-		calls := e.Calls
-		if len(calls) > 10 {
-			calls = append(calls[:10], fmt.Sprintf("...+%d more", len(e.Calls)-10))
+	if e.Kind == domain.KindDocument && e.Content != "" {
+		content := e.Content
+		if len(content) > 600 {
+			content = content[:597] + "..."
+			truncated = true
 		}
-		fmt.Fprintf(&b, "Calls: %s\n", strings.Join(calls, ", "))
+		fmt.Fprintf(&b, "Content: %s\n", content)
 	}
-	if len(e.Implements) > 0 {
-		fmt.Fprintf(&b, "Implements: %s\n", strings.Join(e.Implements, ", "))
-	}
-	if len(e.EnvVars) > 0 {
-		fmt.Fprintf(&b, "EnvVars: %s\n", strings.Join(e.EnvVars, ", "))
-	}
-	if len(e.Imports) > 0 {
-		imports := e.Imports
-		if len(imports) > 10 {
-			imports = append(imports[:10], fmt.Sprintf("...+%d more", len(e.Imports)-10))
-		}
-		fmt.Fprintf(&b, "Imports: %s\n", strings.Join(imports, ", "))
-	}
-	if len(e.Literals) > 0 {
-		lits := e.Literals
-		if len(lits) > 10 {
-			lits = append(lits[:10], fmt.Sprintf("...+%d more", len(e.Literals)-10))
-		}
-		fmt.Fprintf(&b, "Literals: %s\n", strings.Join(lits, ", "))
-	}
-	if len(e.Properties) > 0 {
-		props := e.Properties
-		if len(props) > 15 {
-			props = append(props[:15], fmt.Sprintf("...+%d more", len(e.Properties)-15))
-		}
-		fmt.Fprintf(&b, "Properties: %s\n", strings.Join(props, ", "))
-	}
-	if len(e.Embeds) > 0 {
-		fmt.Fprintf(&b, "Embeds: %s\n", strings.Join(e.Embeds, ", "))
-	}
-	if len(e.Files) > 0 {
-		fmt.Fprintf(&b, "Files: %s\n", strings.Join(e.Files, ", "))
-	}
+	truncated = formatBoundedStrings(&b, "Watches", e.Watches, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Creates", e.Creates, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Calls", e.Calls, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Implements", e.Implements, 8) || truncated
+	truncated = formatBoundedStrings(&b, "EnvVars", e.EnvVars, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Imports", e.Imports, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Literals", e.Literals, 12) || truncated
+	truncated = formatBoundedStrings(&b, "Properties", e.Properties, 16) || truncated
+	truncated = formatBoundedStrings(&b, "Embeds", e.Embeds, 8) || truncated
+	truncated = formatBoundedStrings(&b, "Files", e.Files, 20) || truncated
 	if e.LastAuthor != "" {
 		fmt.Fprintf(&b, "LastAuthor: %s\n", e.LastAuthor)
 	}
@@ -82,7 +58,27 @@ func FormatEntityFull(e *domain.Entity) string {
 	if e.ChangeCount > 0 {
 		fmt.Fprintf(&b, "ChangeCount: %d\n", e.ChangeCount)
 	}
+	if truncated {
+		b.WriteString("[TRUNCATED: one or more entity lists were capped; omitted entries are not evidence of absence.]\n")
+	}
 	return b.String()
+}
+
+func formatBoundedStrings(b *strings.Builder, label string, values []string, max int) bool {
+	if len(values) == 0 {
+		return false
+	}
+	shown := values
+	truncated := false
+	if max > 0 && len(values) > max {
+		shown = values[:max]
+		truncated = true
+	}
+	if truncated {
+		shown = append(append([]string(nil), shown...), fmt.Sprintf("...+%d more", len(values)-max))
+	}
+	fmt.Fprintf(b, "%s: %s\n", label, strings.Join(shown, ", "))
+	return truncated
 }
 
 func FormatEntityDetailList(entities []*domain.Entity) string {
@@ -99,8 +95,12 @@ func FormatEntityDetailList(entities []*domain.Entity) string {
 
 func FormatRelationship(r *domain.Relationship) string {
 	file := filepath.Base(r.Evidence.File)
-	return fmt.Sprintf("%s --%s--> %s | %s | %s:%d",
+	result := fmt.Sprintf("%s --%s--> %s | %s | %s:%d",
 		r.From, r.Type, r.To, r.Confidence, file, r.Evidence.Line)
+	if r.Evidence.Reason != "" {
+		result += " | evidence: " + r.Evidence.Reason
+	}
+	return result
 }
 
 func FormatEntityList(entities []*domain.Entity) string {
@@ -157,11 +157,24 @@ func FormatSubgraph(sg *Subgraph) string {
 			fmt.Fprintf(&b, "  <--%s-- %s\n", r.Type, r.From)
 		}
 	}
+	if sg.Truncated {
+		b.WriteString("[TRUNCATED: result limit reached; request narrower context or depth.]")
+		b.WriteByte('\n')
+	}
 	return b.String()
 }
 
 func FormatStats(s *GraphStats) string {
 	var b strings.Builder
+	if s.SchemaVersion != "" {
+		fmt.Fprintf(&b, "schema: codeatlas/%s\n", s.SchemaVersion)
+	}
+	if s.EntityIdentity != "" {
+		fmt.Fprintf(&b, "entity identity: %s\n", s.EntityIdentity)
+	}
+	if s.Repository != "" {
+		fmt.Fprintf(&b, "repository: %s\n", s.Repository)
+	}
 	if s.Commit != "" {
 		fmt.Fprintf(&b, "commit: %s\n", s.Commit)
 	}
@@ -170,6 +183,14 @@ func FormatStats(s *GraphStats) string {
 	}
 	if s.GeneratedAt != "" {
 		fmt.Fprintf(&b, "generated: %s\n", s.GeneratedAt)
+	}
+	if s.ScanComplete {
+		b.WriteString("scan: complete\n")
+	} else {
+		b.WriteString("scan: incomplete or legacy graph\n")
+	}
+	for _, warning := range s.ScanWarnings {
+		fmt.Fprintf(&b, "scan warning: %s\n", warning)
 	}
 	fmt.Fprintf(&b, "entities: %d\n", s.TotalEntities)
 
@@ -198,6 +219,27 @@ func FormatStats(s *GraphStats) string {
 
 func FormatAsk(r *AskResult) string {
 	var b strings.Builder
+	if r.Graph.SchemaVersion != "" {
+		fmt.Fprintf(&b, "Graph: codeatlas/%s | commit=%s | scan=%s\n", r.Graph.SchemaVersion, r.Graph.Commit, graphScanStatus(r.Graph.ScanComplete))
+		if r.Match != "" && r.Match != "id" {
+			fmt.Fprintf(&b, "Entity match: %s\n", r.Match)
+		}
+		if len(r.Graph.ScanWarnings) > 0 {
+			fmt.Fprintf(&b, "Graph warnings: %d\n", len(r.Graph.ScanWarnings))
+		}
+		b.WriteByte('\n')
+	}
+	if r.Entity == nil {
+		if r.Ambiguous && len(r.Candidates) > 0 {
+			b.WriteString("Ambiguous entity; use an exact ID:\n")
+			for _, candidate := range r.Candidates {
+				fmt.Fprintf(&b, "- %s | %s:%d\n", candidate.ID, candidate.Source.File, candidate.Source.Line)
+			}
+		} else {
+			b.WriteString("No matching entity.\n")
+		}
+		return b.String()
+	}
 
 	hasView := r.View != nil
 	if hasView {
@@ -208,6 +250,10 @@ func FormatAsk(r *AskResult) string {
 
 	if r.QAHit != "" {
 		fmt.Fprintf(&b, "\n--- Quick Answer ---\n%s\n", r.QAHit)
+		if len(r.QAEvidence) > 0 {
+			b.WriteString("Quick-answer evidence:\n")
+			b.WriteString(FormatRelationshipList(r.QAEvidence))
+		}
 	}
 
 	if r.Explanation != nil {
@@ -234,8 +280,16 @@ func FormatAsk(r *AskResult) string {
 	return b.String()
 }
 
+func graphScanStatus(complete bool) string {
+	if complete {
+		return "complete"
+	}
+	return "incomplete or legacy"
+}
+
 func FormatView(v *domain.View) string {
 	var b strings.Builder
+	truncated := false
 	fmt.Fprintf(&b, "=== %s (%s) ===\n", v.EntityName, v.Kind)
 	fmt.Fprintf(&b, "ID: %s\n", v.EntityID)
 	fmt.Fprintf(&b, "File: %s\n", v.File)
@@ -251,12 +305,8 @@ func FormatView(v *domain.View) string {
 		if v.Reconciles != "" {
 			fmt.Fprintf(&b, "Reconciles: %s\n", v.Reconciles)
 		}
-		if len(v.Creates) > 0 {
-			fmt.Fprintf(&b, "Creates: %s\n", strings.Join(v.Creates, ", "))
-		}
-		if len(v.Watches) > 0 {
-			fmt.Fprintf(&b, "Watches: %s\n", strings.Join(v.Watches, ", "))
-		}
+		truncated = formatBoundedStrings(&b, "Creates", v.Creates, 20) || truncated
+		truncated = formatBoundedStrings(&b, "Watches", v.Watches, 20) || truncated
 	}
 
 	if v.ReconciledBy != "" || len(v.CreatedBy) > 0 || len(v.CalledBy) > 0 {
@@ -264,28 +314,44 @@ func FormatView(v *domain.View) string {
 		if v.ReconciledBy != "" {
 			fmt.Fprintf(&b, "Reconciled by: %s\n", v.ReconciledBy)
 		}
-		if len(v.CreatedBy) > 0 {
-			fmt.Fprintf(&b, "Created by: %s\n", strings.Join(v.CreatedBy, ", "))
-		}
-		if len(v.CalledBy) > 0 {
-			fmt.Fprintf(&b, "Called by: %s\n", strings.Join(v.CalledBy, ", "))
-		}
+		truncated = formatBoundedStrings(&b, "Created by", v.CreatedBy, 20) || truncated
+		truncated = formatBoundedStrings(&b, "Called by", v.CalledBy, 20) || truncated
 	}
 
 	if len(v.Calls) > 0 {
-		fmt.Fprintf(&b, "\n--- Calls (%d) ---\n%s\n", len(v.Calls), strings.Join(v.Calls, ", "))
+		b.WriteString("\n--- Calls (" + fmt.Sprint(len(v.Calls)) + ") ---\n")
+		truncated = formatBoundedStrings(&b, "Calls", v.Calls, 20) || truncated
+	}
+
+	if len(v.Relationships) > 0 {
+		b.WriteString("\n--- Relationship Evidence ---\n")
+		relationships := v.Relationships
+		if len(relationships) > 40 {
+			relationships = relationships[:40]
+			truncated = true
+		}
+		for _, rel := range relationships {
+			fmt.Fprintf(&b, "%s %s %s [%s] %s:%d | %s\n",
+				rel.Direction, rel.Type, rel.EntityID, rel.Confidence,
+				rel.Evidence.File, rel.Evidence.Line, rel.Evidence.Reason)
+		}
 	}
 
 	fmt.Fprintf(&b, "\n--- Tests (%d) ---\n", v.TestCount)
 	if v.TestCount > 0 {
-		fmt.Fprintf(&b, "%s\n", strings.Join(v.Tests, ", "))
+		truncated = formatBoundedStrings(&b, "Tests", v.Tests, 20) || truncated
 	} else {
 		b.WriteString("(none)\n")
 	}
 
 	if len(v.Files) > 0 {
 		fmt.Fprintf(&b, "\n--- Files (%d) ---\n", len(v.Files))
-		for _, f := range v.Files {
+		files := v.Files
+		if len(files) > 20 {
+			files = files[:20]
+			truncated = true
+		}
+		for _, f := range files {
 			b.WriteString(f)
 			b.WriteByte('\n')
 		}
@@ -294,7 +360,7 @@ func FormatView(v *domain.View) string {
 	if len(v.Owners) > 0 || v.ChangeCount > 0 {
 		b.WriteString("\n--- Ownership ---\n")
 		if len(v.Owners) > 0 {
-			fmt.Fprintf(&b, "Owners: %s\n", strings.Join(v.Owners, ", "))
+			truncated = formatBoundedStrings(&b, "Owners", v.Owners, 20) || truncated
 		}
 		if v.ChangeCount > 0 {
 			fmt.Fprintf(&b, "Changes: %d\n", v.ChangeCount)
@@ -302,6 +368,9 @@ func FormatView(v *domain.View) string {
 		if v.LastModified != "" {
 			fmt.Fprintf(&b, "Last modified: %s by %s\n", v.LastModified, v.LastAuthor)
 		}
+	}
+	if truncated {
+		b.WriteString("\n[TRUNCATED: one or more view lists were capped; omitted entries are not evidence of absence.]\n")
 	}
 
 	return b.String()
@@ -354,6 +423,9 @@ func FormatInvestigation(r *InvestigateResult) string {
 				} else {
 					fmt.Fprintf(&b, "  %s %s | %s:%d\n", arrow, rr.Target.ID, rr.Target.Source.File, rr.Target.Source.Line)
 				}
+				if rr.Rel != nil {
+					fmt.Fprintf(&b, "    evidence: %s | %s:%d | %s\n", rr.Rel.Confidence, rr.Rel.Evidence.File, rr.Rel.Evidence.Line, rr.Rel.Evidence.Reason)
+				}
 			}
 		}
 		for rt, rs := range rels {
@@ -365,6 +437,9 @@ func FormatInvestigation(r *InvestigateResult) string {
 				fmt.Fprintf(&b, "%s (%d %s):\n", rt, len(rs), dir)
 				for _, rr := range rs {
 					fmt.Fprintf(&b, "  %s %s | %s:%d\n", arrow, rr.Target.ID, rr.Target.Source.File, rr.Target.Source.Line)
+					if rr.Rel != nil {
+						fmt.Fprintf(&b, "    evidence: %s | %s:%d | %s\n", rr.Rel.Confidence, rr.Rel.Evidence.File, rr.Rel.Evidence.Line, rr.Rel.Evidence.Reason)
+					}
 				}
 			}
 		}
@@ -401,6 +476,9 @@ func FormatInvestigation(r *InvestigateResult) string {
 			b.WriteString(FormatEntity(s))
 			b.WriteByte('\n')
 		}
+	}
+	if r.Truncated {
+		b.WriteString("\n[TRUNCATED: one or more relationship or sibling lists reached their limit.]\n")
 	}
 
 	return b.String()
@@ -511,6 +589,9 @@ func formatExplainNode(b *strings.Builder, node *ExplainNode, indent int) {
 			fmt.Fprintf(b, "%s%s | %s:%d\n", prefix, e.ID, e.Source.File, e.Source.Line)
 		}
 	}
+	if node.Relationship != nil {
+		fmt.Fprintf(b, "%s  evidence: %s | %s:%d | %s\n", prefix, node.Relationship.Confidence, node.Relationship.Evidence.File, node.Relationship.Evidence.Line, node.Relationship.Evidence.Reason)
+	}
 
 	grouped := make(map[domain.RelationshipType][]*ExplainNode)
 	for _, child := range node.Children {
@@ -577,6 +658,16 @@ func FormatImpact(r *ImpactResult) string {
 		}
 	}
 
+	fmt.Fprintf(&b, "\n=== Relationship Evidence (%d) ===\n", len(r.Relationships))
+	if len(r.Relationships) == 0 {
+		b.WriteString("(none)\n")
+	} else {
+		for _, relationship := range r.Relationships {
+			b.WriteString(FormatRelationship(relationship))
+			b.WriteByte('\n')
+		}
+	}
+
 	fmt.Fprintf(&b, "\n=== Files Affected (%d) ===\n", len(r.Files))
 	for _, f := range r.Files {
 		b.WriteString(f)
@@ -596,6 +687,9 @@ func FormatImpact(r *ImpactResult) string {
 			b.WriteString(o)
 			b.WriteByte('\n')
 		}
+	}
+	if r.Truncated {
+		b.WriteString("\n[TRUNCATED: impact traversal or result list reached its limit.]\n")
 	}
 
 	return b.String()
@@ -648,6 +742,20 @@ func FormatImpactCompact(r *ImpactResult) string {
 		b.WriteByte('\n')
 	}
 
+	if len(r.Relationships) > 0 {
+		limit := len(r.Relationships)
+		if limit > 20 {
+			limit = 20
+		}
+		fmt.Fprintf(&b, "Relationships (%d):\n", len(r.Relationships))
+		for _, relationship := range r.Relationships[:limit] {
+			fmt.Fprintf(&b, "  %s\n", FormatRelationship(relationship))
+		}
+		if limit < len(r.Relationships) {
+			b.WriteString("  ... relationship evidence capped ...\n")
+		}
+	}
+
 	if len(r.Files) > 0 {
 		fmt.Fprintf(&b, "Files (%d): ", len(r.Files))
 		short := make([]string, len(r.Files))
@@ -664,6 +772,9 @@ func FormatImpactCompact(r *ImpactResult) string {
 
 	if len(r.Owners) > 0 {
 		fmt.Fprintf(&b, "Owners: %s\n", strings.Join(r.Owners, ", "))
+	}
+	if r.Truncated {
+		b.WriteString("[TRUNCATED: impact traversal or result list reached its limit.]\n")
 	}
 
 	return b.String()

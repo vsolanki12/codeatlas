@@ -1,8 +1,8 @@
 # CodeAtlas
 
-**A deterministic reasoning engine for software architecture.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of every entity and relationship — then serves it to AI assistants through 11 [MCP](https://modelcontextprotocol.io/) tools.
+**A deterministic engineering knowledge layer for large Go repositories.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of entities and evidenced relationships — then serves bounded graph context to CLI users, AI assistants, and review tooling through 11 [MCP](https://modelcontextprotocol.io/) tools.
 
-Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Same answers, fraction of the cost, backed by evidence from the code itself.
+Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Repeated questions reuse the same deterministic facts, reducing context size and cost while keeping evidence tied to the source repository.
 
 ---
 
@@ -114,7 +114,7 @@ Source Repository
 
 Three rules:
 1. **The scanner is the only thing that parses code.** Everything else reads the graph.
-2. **The graph is the product.** Every consumer reads the same JSON.
+2. **The graph is the product.** Every consumer reads the same JSON, including its scan status, warnings, and freshness metadata.
 3. **Consumers are replaceable.** Adding a consumer never changes the graph.
 
 ---
@@ -141,11 +141,19 @@ atlas explain -graph atlas-graph.json HostedClusterReconciler
 atlas impact -graph atlas-graph.json SetStatusCondition
 atlas ask -graph atlas-graph.json NodePool -intent understand
 atlas view -graph atlas-graph.json HostedClusterReconciler
+
+# Verify that the graph still describes the checkout before implementation work
+atlas freshness -graph atlas-graph.json -repo /path/to/your/project
+
+# Compact JSON for assistants and other token-sensitive consumers
+atlas ask -graph atlas-graph.json HostedClusterReconciler -intent debug --json --compact
 ```
 
-`atlas stats` also prints the graph's `commit`, `branch`, and `generated`
-metadata when available, so consumers can verify that the graph matches the
-source revision they are reviewing.
+`atlas stats --json` exposes compact graph metadata (`commit`, `branch`,
+`generatedAt`, `entityIdentity`, `scanComplete`, and scan warnings). Query JSON envelopes include
+the same status so consumers can reject stale or incomplete evidence before
+asking an LLM to reason over it. Use `--json` for machine-facing commands to
+avoid repeating human-readable formatting in prompts.
 
 ### Review a PR
 
@@ -153,15 +161,22 @@ source revision they are reviewing.
 # Review using local git refs
 atlas review --base upstream/main --head feature-branch --graph atlas-graph.json --repo /path/to/repo
 
-# Review using a diff file (no git fetch needed)
+# Review using a diff file (no git fetch needed; this is explicitly unverified)
 gh api repos/openshift/hypershift/pulls/8968 -H 'Accept: application/vnd.github.diff' > pr.diff
 atlas review --diff pr.diff --graph atlas-graph.json
 
-# Pipe diff from stdin
+# Pipe diff from stdin (also unverified unless --repo is supplied)
 gh api repos/openshift/hypershift/pulls/8968 -H 'Accept: application/vnd.github.diff' | atlas review --diff - --graph atlas-graph.json
+
+# Verified diff review against the graph's checkout
+atlas review --diff pr.diff --graph atlas-graph.json --repo /path/to/repo --head HEAD
 ```
 
-Output shows: changed functions with callers/callees, blast radius (controllers, resources), test coverage with inference links, unmapped files, and evidence limitations.
+Output shows: the bounded changed diff, changed entities with callers/callees,
+bounded blast radius (controllers and resources), directly evidenced tests,
+explicitly labeled heuristic test links, unmapped files, graph freshness, and
+evidence limitations. It does not claim branch-level coverage. A diff review
+without `--repo` is useful for mapping but remains `unverified`.
 
 ### Connect to Claude Code
 
@@ -186,13 +201,13 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 
 | Question | Tool | What it returns |
 |----------|------|-----------------|
-| "How does X work?" | `atlas_explain` | Reconciliation chain: what it reconciles, creates, calls, and what tests cover it |
-| "What breaks if I change X?" | `atlas_impact` | Every upstream controller, test, resource, file, and owner affected |
+| "How does X work?" | `atlas_explain` | Reconciliation chain: what it reconciles, creates, calls, and what tests are linked by graph evidence |
+| "What breaks if I change X?" | `atlas_impact` | Bounded upstream callers, tests, resources, files, owners, and supporting relationship evidence |
 | "Tell me everything about X" | `atlas_investigate` | Full entity details, all relationships, callers, tests, siblings — one call |
 | "Where is X defined?" | `atlas_search` | Relevance-ranked matches across names, packages, imports, literals |
 | "What changed the most?" | `atlas_temporal` | Most-changed, stalest, or recently-modified entities by git history |
 | "Quick summary of X" | `atlas_view` | Pre-computed engineering view: manages, managed by, tests, files, owners |
-| "How does X work?" (one call) | `atlas_ask` | View + explain/impact/investigate — one call, complete answer |
+| "How does X work?" (one call) | `atlas_ask` | Bounded view + explain/impact/investigate context in one JSON-capable call |
 
 ---
 
@@ -206,7 +221,7 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 | `atlas_view` | Pre-computed engineering view for a controller or CRD. Zero graph traversal |
 | `atlas_investigate` | Everything about one entity in 1 call: details, relationships, callers, tests, siblings |
 | `atlas_explain` | Architectural narrative: reconciles → creates → calls → tested_by tree |
-| `atlas_impact` | Blast radius: upstream callers, controllers, tests, resources, owners |
+| `atlas_impact` | Blast radius: upstream callers, controllers, tests, resources, owners, and supporting relationship evidence |
 | `atlas_search` | Find entities by text or kind. Relevance-ranked across all fields |
 | `atlas_entity` | Full entity detail by ID, or batch fetch multiple IDs |
 | `atlas_where` | Find entities by file path |
@@ -225,18 +240,24 @@ The CLI mirrors MCP tools — same queries, same output, no server needed.
 | `atlas scan` | Parse a repository and generate the graph |
 | `atlas search <query>` | Text search across all entities (with optional `--kind` filter) |
 | `atlas explain <entity>` | Reconciliation chain: reconciles, creates, calls, tested_by |
-| `atlas impact <entity>` | Blast radius: upstream callers, controllers, tests, files, owners |
+| `atlas impact <entity>` | Blast radius: upstream callers, controllers, tests, files, owners, and supporting relationship evidence |
 | `atlas investigate <entity>` | Full entity details, relationships, callers, tests, siblings |
 | `atlas ask <entity>` | View + deep analysis (with optional `--intent understand\|impact\|debug`) |
 | `atlas view <entity>` | Pre-computed engineering view for a controller or CRD |
 | `atlas context <entity-id>` | BFS subgraph around an entity |
 | `atlas where <path>` | Find entities by file path |
 | `atlas stats` | Graph statistics |
-| `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius and test coverage |
+| `atlas freshness` | Compare graph commit and stored file state with a checkout |
+| `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius and structural test links |
 | `atlas serve` | Start the MCP server |
 | `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.) |
 
-All commands accept `--graph path` (defaults to `atlas.json`). Flags must come before positional arguments.
+All commands accept `--graph path` (defaults to `atlas.json`). JSON-capable
+queries also accept `--compact`, which keeps graph metadata, entity identity,
+source locations, bounded fields, and relationship evidence while removing
+repeated full entities. Use the default JSON form or `--detail` when inspecting
+the complete entity payload. Flags may appear before or after positional
+arguments.
 
 ---
 
@@ -268,6 +289,6 @@ All commands accept `--graph path` (defaults to `atlas.json`). Flags must come b
 
 ## Status
 
-**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 13 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 14 (PR Review)
+**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 14 (PR Review)
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.
