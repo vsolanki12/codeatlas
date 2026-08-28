@@ -243,9 +243,17 @@ func FormatAsk(r *AskResult) string {
 
 	hasView := r.View != nil
 	if hasView {
-		b.WriteString(FormatView(r.View))
+		if r.Detail {
+			b.WriteString(FormatView(r.View))
+		} else {
+			b.WriteString(FormatViewCompact(r.View))
+		}
 	} else {
-		b.WriteString(FormatEntityFull(r.Entity))
+		if r.Detail {
+			b.WriteString(FormatEntityFull(r.Entity))
+		} else {
+			b.WriteString(FormatEntity(r.Entity))
+		}
 	}
 
 	if r.QAHit != "" {
@@ -273,8 +281,12 @@ func FormatAsk(r *AskResult) string {
 		}
 	}
 	if r.Investigation != nil {
-		b.WriteString("\n--- Full Investigation ---\n")
-		b.WriteString(FormatInvestigation(r.Investigation))
+		b.WriteString("\n--- Investigation ---\n")
+		if r.Detail {
+			b.WriteString(FormatInvestigation(r.Investigation))
+		} else {
+			b.WriteString(FormatInvestigationCompact(r.Investigation))
+		}
 	}
 
 	return b.String()
@@ -376,6 +388,56 @@ func FormatView(v *domain.View) string {
 	return b.String()
 }
 
+// FormatViewCompact renders the pre-computed view without repeating every
+// field. The structured query result remains the authority for complete
+// fields and relationship evidence; this representation is the default text
+// form for token-sensitive consumers.
+func FormatViewCompact(v *domain.View) string {
+	if v == nil {
+		return "No view found.\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s (%s) | %s\n", v.EntityName, v.Kind, v.File)
+	fmt.Fprintf(&b, "ID: %s\n", v.EntityID)
+	if v.Package != "" {
+		fmt.Fprintf(&b, "Package: %s\n", v.Package)
+	}
+	if v.Description != "" {
+		desc := v.Description
+		if len(desc) > 120 {
+			desc = desc[:117] + "..."
+		}
+		fmt.Fprintf(&b, "Description: %s\n", desc)
+	}
+	if v.Reconciles != "" {
+		fmt.Fprintf(&b, "Reconciles: %s\n", v.Reconciles)
+	}
+	formatBoundedStrings(&b, "Creates", v.Creates, 8)
+	formatBoundedStrings(&b, "Watches", v.Watches, 8)
+	formatBoundedStrings(&b, "Calls", v.Calls, 8)
+	if v.ReconciledBy != "" {
+		formatBoundedStrings(&b, "Reconciled by", []string{v.ReconciledBy}, 1)
+	}
+	formatBoundedStrings(&b, "Created by", v.CreatedBy, 8)
+	formatBoundedStrings(&b, "Called by", v.CalledBy, 8)
+	formatBoundedStrings(&b, "Tests", v.Tests, 12)
+	if v.TestCount > len(v.Tests) {
+		fmt.Fprintf(&b, "Test count: %d\n", v.TestCount)
+	}
+	formatBoundedStrings(&b, "Files", v.Files, 8)
+	formatBoundedStrings(&b, "Owners", v.Owners, 8)
+	if v.ChangeCount > 0 {
+		fmt.Fprintf(&b, "Changes: %d\n", v.ChangeCount)
+	}
+	if v.LastModified != "" {
+		fmt.Fprintf(&b, "Last modified: %s by %s\n", v.LastModified, v.LastAuthor)
+	}
+	if len(v.Relationships) > 0 {
+		fmt.Fprintf(&b, "Relationship evidence: %d entries (see structured output)\n", len(v.Relationships))
+	}
+	return b.String()
+}
+
 var relDisplayOrder = []domain.RelationshipType{
 	domain.RelReconciles, domain.RelCreates, domain.RelCalls,
 	domain.RelWatches, domain.RelTestedBy, domain.RelOwns,
@@ -401,13 +463,8 @@ func FormatInvestigation(r *InvestigateResult) string {
 	fmt.Fprintf(&b, "\n=== Relationships (%d outgoing, %d incoming) ===\n", outCount, inCount)
 
 	writeRels := func(rels map[domain.RelationshipType][]ResolvedRel, arrow string) {
-		seen := make(map[domain.RelationshipType]bool)
-		for _, rt := range relDisplayOrder {
-			rs, ok := rels[rt]
-			if !ok || len(rs) == 0 {
-				continue
-			}
-			seen[rt] = true
+		for _, rt := range orderedRelationshipTypes(rels) {
+			rs := rels[rt]
 			dir := "outgoing"
 			if arrow == "<-" {
 				dir = "incoming"
@@ -425,21 +482,6 @@ func FormatInvestigation(r *InvestigateResult) string {
 				}
 				if rr.Rel != nil {
 					fmt.Fprintf(&b, "    evidence: %s | %s:%d | %s\n", rr.Rel.Confidence, rr.Rel.Evidence.File, rr.Rel.Evidence.Line, rr.Rel.Evidence.Reason)
-				}
-			}
-		}
-		for rt, rs := range rels {
-			if !seen[rt] && len(rs) > 0 {
-				dir := "outgoing"
-				if arrow == "<-" {
-					dir = "incoming"
-				}
-				fmt.Fprintf(&b, "%s (%d %s):\n", rt, len(rs), dir)
-				for _, rr := range rs {
-					fmt.Fprintf(&b, "  %s %s | %s:%d\n", arrow, rr.Target.ID, rr.Target.Source.File, rr.Target.Source.Line)
-					if rr.Rel != nil {
-						fmt.Fprintf(&b, "    evidence: %s | %s:%d | %s\n", rr.Rel.Confidence, rr.Rel.Evidence.File, rr.Rel.Evidence.Line, rr.Rel.Evidence.Reason)
-					}
 				}
 			}
 		}
@@ -482,6 +524,90 @@ func FormatInvestigation(r *InvestigateResult) string {
 	}
 
 	return b.String()
+}
+
+// FormatInvestigationCompact is the bounded text counterpart to
+// FormatInvestigation. It keeps identity, relationship direction, confidence,
+// and evidence locations while leaving complete evidence payloads to the
+// structured result.
+func FormatInvestigationCompact(r *InvestigateResult) string {
+	if r == nil || r.Entity == nil {
+		return "Entity not found.\n"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Entity: %s\n", FormatEntity(r.Entity))
+
+	writeRels := func(rels map[domain.RelationshipType][]ResolvedRel, arrow string) {
+		for _, rt := range orderedRelationshipTypes(rels) {
+			values := rels[rt]
+			limit := len(values)
+			if limit > 8 {
+				limit = 8
+			}
+			fmt.Fprintf(&b, "%s %s (%d):\n", arrow, rt, len(values))
+			for _, rr := range values[:limit] {
+				if rr.Target == nil {
+					continue
+				}
+				if rr.Rel == nil {
+					fmt.Fprintf(&b, "  %s %s:%d\n", rr.Target.ID, rr.Target.Source.File, rr.Target.Source.Line)
+					continue
+				}
+				fmt.Fprintf(&b, "  %s %s | %s:%d | %s | evidence: %s:%d\n",
+
+					arrow, rr.Target.ID, rr.Target.Source.File, rr.Target.Source.Line,
+					rr.Rel.Confidence, rr.Rel.Evidence.File, rr.Rel.Evidence.Line)
+			}
+			if limit < len(values) {
+				fmt.Fprintf(&b, "  ...+%d more (not evidence of absence)\n", len(values)-limit)
+			}
+		}
+	}
+
+	writeRels(r.OutRels, "->")
+	writeRels(r.InRels, "<-")
+	formatCompactEntityList := func(label string, entities []*domain.Entity, max int) {
+		fmt.Fprintf(&b, "%s (%d):\n", label, len(entities))
+		limit := len(entities)
+		if limit > max {
+			limit = max
+		}
+		for _, entity := range entities[:limit] {
+			b.WriteString("  ")
+			b.WriteString(FormatEntity(entity))
+			b.WriteByte('\n')
+		}
+		if limit < len(entities) {
+			fmt.Fprintf(&b, "  ...+%d more (not evidence of absence)\n", len(entities)-limit)
+		}
+	}
+	formatCompactEntityList("Callers", r.Callers, 12)
+	formatCompactEntityList("Tests", r.Tests, 12)
+	formatCompactEntityList("Same file", r.Siblings, 12)
+	if r.Truncated {
+		b.WriteString("[TRUNCATED: one or more relationship or entity lists reached their limit.]\n")
+	}
+	return b.String()
+}
+
+func orderedRelationshipTypes(rels map[domain.RelationshipType][]ResolvedRel) []domain.RelationshipType {
+	seen := make(map[domain.RelationshipType]bool, len(rels))
+	ordered := make([]domain.RelationshipType, 0, len(rels))
+	for _, rt := range relDisplayOrder {
+		if len(rels[rt]) == 0 {
+			continue
+		}
+		seen[rt] = true
+		ordered = append(ordered, rt)
+	}
+	var extras []domain.RelationshipType
+	for rt, values := range rels {
+		if len(values) > 0 && !seen[rt] {
+			extras = append(extras, rt)
+		}
+	}
+	sort.Slice(extras, func(i, j int) bool { return extras[i] < extras[j] })
+	return append(ordered, extras...)
 }
 
 func FormatExplanation(r *ExplainResult) string {
@@ -540,6 +666,9 @@ func formatCompactNode(b *strings.Builder, node *ExplainNode, indent int) {
 		fmt.Fprintf(b, "%s%s | %s:%d | %s\n", prefix, name, file, e.Source.Line, desc)
 	} else {
 		fmt.Fprintf(b, "%s%s | %s:%d\n", prefix, name, file, e.Source.Line)
+	}
+	if node.Relationship != nil {
+		fmt.Fprintf(b, "%s  evidence: %s | %s:%d\n", prefix, node.Relationship.Confidence, node.Relationship.Evidence.File, node.Relationship.Evidence.Line)
 	}
 	grouped := make(map[domain.RelationshipType][]*ExplainNode)
 	for _, child := range node.Children {

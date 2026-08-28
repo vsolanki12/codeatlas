@@ -172,6 +172,38 @@ func ExtraFunc() {}
 	}
 }
 
+func TestScan_IncrementalClearsPreviousTemporalDataWhenNotRequested(t *testing.T) {
+	repoDir := setupTestRepo(t)
+	outPath := filepath.Join(t.TempDir(), "atlas.json")
+
+	first, err := Scan(repoDir, outPath, ScanOptions{})
+	if err != nil {
+		t.Fatalf("initial scan: %v", err)
+	}
+	if len(first.Graph.Entities) == 0 {
+		t.Fatal("initial scan produced no entities")
+	}
+	first.Graph.Entities[0].LastAuthor = "stale@example.com"
+	first.Graph.Entities[0].LastModified = "2026-08-01T00:00:00Z"
+	first.Graph.Entities[0].ChangeCount = 99
+	if err := storage.WriteGraph(outPath, first.Graph); err != nil {
+		t.Fatalf("write temporal fixture graph: %v", err)
+	}
+
+	second, err := Scan(repoDir, outPath, ScanOptions{PreviousGraph: outPath})
+	if err != nil {
+		t.Fatalf("incremental scan: %v", err)
+	}
+	if !second.Incremental {
+		t.Fatal("expected incremental scan")
+	}
+	for _, entity := range second.Graph.Entities {
+		if entity.LastAuthor != "" || entity.LastModified != "" || entity.ChangeCount != 0 {
+			t.Fatalf("stale temporal data survived non-temporal scan for %s: %+v", entity.ID, entity)
+		}
+	}
+}
+
 func TestScan_IncompleteGraphForcesFullRescan(t *testing.T) {
 	repoDir := setupTestRepo(t)
 	if err := os.WriteFile(filepath.Join(repoDir, "broken.yaml"), []byte("kind: ["), 0644); err != nil {
@@ -241,6 +273,20 @@ func TestChangedFiles_ContentHash(t *testing.T) {
 	}
 	if len(unchanged) != 1 || unchanged[0].RelativePath != "same.go" {
 		t.Errorf("unchanged = %v, want same.go", unchanged)
+	}
+}
+
+func TestClearTemporalFields(t *testing.T) {
+	entities := []domain.Entity{
+		{ID: "function:pkg.changed", LastAuthor: "alice@example.com", LastModified: "2026-08-01T00:00:00Z", ChangeCount: 4},
+		{ID: "function:pkg.empty"},
+	}
+
+	clearTemporalFields(entities)
+	for _, entity := range entities {
+		if entity.LastAuthor != "" || entity.LastModified != "" || entity.ChangeCount != 0 {
+			t.Fatalf("temporal fields were not cleared for %s: %+v", entity.ID, entity)
+		}
 	}
 }
 

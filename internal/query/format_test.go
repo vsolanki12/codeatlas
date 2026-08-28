@@ -75,6 +75,63 @@ func TestFormatEntityFullIncludesBoundedDocumentContent(t *testing.T) {
 	}
 }
 
+func TestFormatViewCompactIsBounded(t *testing.T) {
+	view := &domain.View{
+		EntityID:      "controller:pkg.Controller",
+		EntityName:    "Controller",
+		Kind:          "controller",
+		File:          "pkg/controller.go",
+		Description:   strings.Repeat("description ", 40),
+		Reconciles:    "Widget",
+		Calls:         []string{"first", "second"},
+		Relationships: []domain.ViewRelationship{{ID: "rel-1", Type: domain.RelCalls}},
+	}
+
+	got := FormatViewCompact(view)
+	if !strings.Contains(got, "ID: controller:pkg.Controller") || !strings.Contains(got, "Reconciles: Widget") {
+		t.Fatalf("compact view lost identity or lifecycle: %q", got)
+	}
+	if !strings.Contains(got, "Relationship evidence: 1 entries") {
+		t.Fatalf("compact view lost evidence summary: %q", got)
+	}
+	if len(got) >= len(FormatView(view)) {
+		t.Fatalf("compact view did not reduce text: compact=%d full=%d", len(got), len(FormatView(view)))
+	}
+}
+
+func TestFormatInvestigationCompactPreservesEvidenceAndBoundsLists(t *testing.T) {
+	entity := &domain.Entity{
+		ID:     "function:pkg.target",
+		Name:   "target",
+		Kind:   domain.KindFunction,
+		Source: domain.Source{File: "pkg/target.go", Line: 10},
+	}
+	values := make([]ResolvedRel, 10)
+	for i := range values {
+		values[i] = ResolvedRel{
+			Rel: &domain.Relationship{
+				Confidence: domain.ConfidenceInferred,
+				Evidence:   domain.Evidence{File: "pkg/caller.go", Line: i + 1},
+			},
+			Target: &domain.Entity{
+				ID:     "function:pkg.caller" + string(rune('a'+i)),
+				Source: domain.Source{File: "pkg/caller.go", Line: i + 20},
+			},
+		}
+	}
+
+	got := FormatInvestigationCompact(&InvestigateResult{
+		Entity:  entity,
+		OutRels: map[domain.RelationshipType][]ResolvedRel{domain.RelCalls: values},
+	})
+	if !strings.Contains(got, "evidence: pkg/caller.go:1") {
+		t.Fatalf("compact investigation lost relationship evidence: %q", got)
+	}
+	if !strings.Contains(got, "...+2 more (not evidence of absence)") {
+		t.Fatalf("compact investigation did not report list truncation: %q", got)
+	}
+}
+
 func TestFormatRelationship(t *testing.T) {
 	r := &domain.Relationship{
 		From:       "controller:pkg.MyController",

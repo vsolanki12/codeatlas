@@ -2,7 +2,7 @@
 
 This file provides guidance to AI coding agents when working with code in this repository. `CLAUDE.md` is a symlink to this file so that Claude Code auto-loads it; the `AGENTS.md` name is canonical.
 
-CodeAtlas is a deterministic architecture reasoning engine for Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to AI assistants via 11 MCP tools and a CLI.
+CodeAtlas is a deterministic engineering knowledge layer for large Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to CLI users, AI assistants, and review tooling via 11 MCP tools.
 
 This file is intentionally minimal — detailed guidance lives in the referenced files below and should be updated there, not here.
 
@@ -16,7 +16,7 @@ For product, code, and pipeline architecture, see [docs/architecture.md](docs/ar
 | **Architecture (product, code, pipeline)** | [docs/architecture.md](docs/architecture.md) |
 | **Data model (entity/relationship schema)** | [docs/data-model.md](docs/data-model.md) — the contract between the scanner and all consumers |
 | **Vision and principles** | [docs/vision.md](docs/vision.md) |
-| **Roadmap (phases 1–14 done, 15–18 planned)** | [docs/roadmap.md](docs/roadmap.md) |
+| **Roadmap and delivered capabilities** | [docs/roadmap.md](docs/roadmap.md) |
 | **Architecture Decision Records (15 ADRs)** | [docs/adr/](docs/adr/) |
 | **Repo/binary/graph freshness checks** | [.claude/skills/check-repos/SKILL.md](.claude/skills/check-repos/SKILL.md) |
 

@@ -24,6 +24,7 @@ type CompactEntity struct {
 	CreateSites         []domain.Site `json:"createSites,omitempty"`
 	Calls               []string      `json:"calls,omitempty"`
 	CallSites           []domain.Site `json:"callSites,omitempty"`
+	EnvVars             []string      `json:"envVars,omitempty"`
 	Implements          []string      `json:"implements,omitempty"`
 	ImplementationSites []domain.Site `json:"implementationSites,omitempty"`
 	Imports             []string      `json:"imports,omitempty"`
@@ -300,6 +301,7 @@ func compactEntity(entity *domain.Entity) *CompactEntity {
 	result.CreateSites, truncated = cappedSitesWithFlag(entity.CreateSites, 8, truncated)
 	result.Calls, truncated = cappedStringsWithFlag(entity.Calls, 12, truncated)
 	result.CallSites, truncated = cappedSitesWithFlag(entity.CallSites, 12, truncated)
+	result.EnvVars, truncated = cappedStringsWithFlag(entity.EnvVars, 8, truncated)
 	result.Implements, truncated = cappedStringsWithFlag(entity.Implements, 6, truncated)
 	result.ImplementationSites, truncated = cappedSitesWithFlag(entity.ImplementationSites, 6, truncated)
 	result.Imports, truncated = cappedStringsWithFlag(entity.Imports, 8, truncated)

@@ -257,12 +257,13 @@ func registerStats(s *mcp.Server, idx *query.Index) {
 
 type investigateInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to investigate"`
+	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
 func registerInvestigate(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_investigate",
-		Description: "Get bounded details about an entity in one call: relationships grouped by type, callers, tests, and same-file siblings. Structured output is compact and evidence-bearing; use atlas_entity for full entity fields.",
+		Description: "Get bounded details about an entity in one call: relationships grouped by type, callers, tests, and same-file siblings. Default text is compact; use detail=true for verbose text, or atlas_entity for full entity fields.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input investigateInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Investigate(input.EntityID)
 		if r == nil {
@@ -270,7 +271,10 @@ func registerInvestigate(s *mcp.Server, idx *query.Index) {
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Entity not found: %s", input.EntityID)}},
 			}, nil, nil
 		}
-		text := query.FormatInvestigation(r)
+		text := query.FormatInvestigationCompact(r)
+		if input.Detail {
+			text = query.FormatInvestigation(r)
+		}
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: query.CompactInvestigate(r),
@@ -281,12 +285,13 @@ func registerInvestigate(s *mcp.Server, idx *query.Index) {
 type explainInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to explain"`
 	Depth    int    `json:"depth,omitempty" jsonschema:"traversal depth (default 2, max 3)"`
+	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
 func registerExplain(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_explain",
-		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a tree showing the architectural narrative. Replaces reading source files to understand flow.",
+		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a bounded tree showing the architectural narrative. Default text is compact; use detail=true for verbose text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input explainInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Explain(input.EntityID, input.Depth)
 		if r.Root == nil {
@@ -294,7 +299,10 @@ func registerExplain(s *mcp.Server, idx *query.Index) {
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Entity not found: %s", input.EntityID)}},
 			}, nil, nil
 		}
-		text := query.FormatExplanation(r)
+		text := query.FormatExplanationCompact(r)
+		if input.Detail {
+			text = query.FormatExplanation(r)
+		}
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: query.CompactExplain(r),
@@ -304,12 +312,13 @@ func registerExplain(s *mcp.Server, idx *query.Index) {
 
 type impactInput struct {
 	EntityID string `json:"entity_id" jsonschema:"entity ID to analyze blast radius for"`
+	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
 func registerImpact(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_impact",
-		Description: "Blast radius analysis: walk the call chain upstream to find bounded controllers, tests, resources, files, owners, and the supporting relationship evidence. Use for PR review preparation.",
+		Description: "Blast radius analysis: walk the call chain upstream to find bounded controllers, tests, resources, files, owners, and supporting relationship evidence. Default text is compact; use detail=true for verbose text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input impactInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Impact(input.EntityID)
 		if r == nil {
@@ -317,7 +326,10 @@ func registerImpact(s *mcp.Server, idx *query.Index) {
 				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("Entity not found: %s", input.EntityID)}},
 			}, nil, nil
 		}
-		text := query.FormatImpact(r)
+		text := query.FormatImpactCompact(r)
+		if input.Detail {
+			text = query.FormatImpact(r)
+		}
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: query.CompactImpact(r),
@@ -357,7 +369,7 @@ type askInput struct {
 func registerAsk(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_ask",
-		Description: "Ask an engineering question about an entity. Returns compact pre-computed knowledge view plus optional evidence-bearing analysis. Use detail=true for the full structured payload.",
+		Description: "Ask an engineering question about an entity. Returns bounded pre-computed knowledge view plus optional evidence-bearing analysis. Use detail=true for verbose human-readable text; structured output remains bounded.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Ask(input.Entity, input.Intent)
 		if r == nil {

@@ -59,6 +59,84 @@ func (b *Builder) Complete(obj interface{}) error { return nil }
 	t.Fatal("expected a controller entity from SetupWithManager file")
 }
 
+func TestGoParserForRepo_EmitsEveryControllerInOneFile(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/repo\n\ngo 1.22\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(repo, "controllers", "controllers.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`package controllers
+
+type FirstReconciler struct{}
+type SecondReconciler struct{}
+type FirstResource struct{}
+type SecondResource struct{}
+
+func (r *FirstReconciler) Reconcile() {
+	firstHelper()
+}
+
+func (r *FirstReconciler) SetupWithManager(mgr interface{}) error {
+	return NewBuilder().For(&FirstResource{}).Complete(r)
+}
+
+func (r *SecondReconciler) Reconcile() {
+	secondHelper()
+}
+
+func (r *SecondReconciler) SetupWithManager(mgr interface{}) error {
+	return NewBuilder().For(&SecondResource{}).Complete(r)
+}
+
+func firstHelper()  {}
+func secondHelper() {}
+func NewBuilder() *Builder { return &Builder{} }
+type Builder struct{}
+func (b *Builder) For(obj interface{}) *Builder { return b }
+func (b *Builder) Complete(obj interface{}) error { return nil }
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities, err := NewGoParserForRepo(repo).Parse(domain.File{RelativePath: "controllers/controllers.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	controllers := make(map[string]domain.Entity)
+	for _, entity := range entities {
+		if entity.Kind == domain.KindController {
+			controllers[entity.Name] = entity
+		}
+	}
+	if len(controllers) != 2 {
+		t.Fatalf("controller count = %d, want 2: %+v", len(controllers), controllers)
+	}
+
+	checks := map[string]string{
+		"FirstReconciler":  "FirstResource",
+		"SecondReconciler": "SecondResource",
+	}
+	for name, watch := range checks {
+		controller, ok := controllers[name]
+		if !ok {
+			t.Fatalf("missing controller %q", name)
+		}
+		if len(controller.Watches) != 1 || controller.Watches[0] != watch {
+			t.Errorf("%s watches = %v, want [%s]", name, controller.Watches, watch)
+		}
+		if len(controller.WatchMethods) != 1 || controller.WatchMethods[0] != "For" {
+			t.Errorf("%s watch methods = %v, want [For]", name, controller.WatchMethods)
+		}
+		if len(controller.Calls) != 1 {
+			t.Errorf("%s calls = %v, want one Reconcile call", name, controller.Calls)
+		}
+	}
+}
+
 func TestParseFixtures(t *testing.T) {
 	tests := []struct {
 		name      string

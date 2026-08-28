@@ -82,6 +82,10 @@ target.
   `For` is the deterministic source for a `reconciles` edge, `Owns` for an
   `owns` edge, and `Watches` for a `watches` edge. A controller found only from
   `SetupWithManager` can have no reconcile-body calls.
+- The Go parser emits a separate controller entity for every receiver with a
+  `Reconcile` or `SetupWithManager` method, including when multiple controllers
+  share one source file. Facts from a setup method stay attached to that
+  receiver.
 - Function receiver names are encoded in the function ID; there is no separate
   `receiver`, `file`, `line`, `signature`, or `doc` field. Use `source` and the
   ID to locate the declaration.
@@ -386,6 +390,9 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `scanWarnings` — deterministic parser or discovery warnings that explain why completeness is unavailable.
 - `views` — pre-computed engineering views for controllers and CRDs, generated during scan. Each keyed by entity ID, containing ownership, resources, tests, files, and temporal data.
 - `questions` — deterministic Q&A pairs derived from views (for example, `"reconciles:Widget"` → `"Widget"`). Entity/relationship counts are computed by `atlas stats`; they are not stored as a top-level graph field.
+- Temporal fields are opt-in. A scan without `--temporal` leaves
+  `lastAuthor`, `lastModified`, and `changeCount` empty, including when
+  unchanged entities are reused from a previous graph.
 
 ---
 

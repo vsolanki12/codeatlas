@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
@@ -54,16 +55,27 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		packagePath = p.packageResolver.resolve(file.RelativePath, packageName)
 	}
 	var entities []domain.Entity
-	var controllerTypeName string
-	var controllerSource domain.Source
-	var controllerSetupSource domain.Source
-	var controllerWatches []string
-	var controllerWatchMethods []string
-	var controllerWatchSites []domain.Site
-	var controllerCreates []string
-	var controllerCreateSites []domain.Site
-	var controllerCalls []string
-	var controllerCallSites []domain.Site
+	type controllerFacts struct {
+		isController bool
+		source       domain.Source
+		setupSource  domain.Source
+		watches      []string
+		watchMethods []string
+		watchSites   []domain.Site
+		creates      []string
+		createSites  []domain.Site
+		calls        []string
+		callSites    []domain.Site
+	}
+	controllers := make(map[string]*controllerFacts)
+	getController := func(name string) *controllerFacts {
+		facts := controllers[name]
+		if facts == nil {
+			facts = &controllerFacts{}
+			controllers[name] = facts
+		}
+		return facts
+	}
 
 	typeComments := make(map[string]string)
 	implPairs := make(map[string][]string) // structName -> []interfaceName
@@ -176,33 +188,37 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		})
 
 		if fn.Name.Name == "Reconcile" && recv != "" {
-			controllerTypeName = recv
-			controllerSource = domain.Source{
+			facts := getController(recv)
+			facts.isController = true
+			facts.source = domain.Source{
 				Parser:  "go",
 				File:    file.RelativePath,
 				Line:    position.Line,
 				EndLine: endPosition.Line,
 			}
-			controllerCalls = calls
-			controllerCallSites = callSites
+			facts.calls = calls
+			facts.callSites = callSites
 		}
 		if recv != "" && len(createSites) > 0 {
-			controllerCreates = appendUniqueStrings(controllerCreates, creates)
-			controllerCreateSites = appendUniqueDomainSites(controllerCreateSites, createSites)
+			facts := getController(recv)
+			facts.creates = appendUniqueStrings(facts.creates, creates)
+			facts.createSites = appendUniqueDomainSites(facts.createSites, createSites)
 		}
 
-		if fn.Name.Name == "SetupWithManager" && fn.Body != nil {
-			if recv != "" {
-				controllerTypeName = recv
-				if controllerSetupSource.File == "" {
-					controllerSetupSource = domain.Source{
-						Parser:  "go",
-						File:    file.RelativePath,
-						Line:    position.Line,
-						EndLine: endPosition.Line,
-					}
+		if fn.Name.Name == "SetupWithManager" && fn.Body != nil && recv != "" {
+			facts := getController(recv)
+			facts.isController = true
+			if facts.setupSource.File == "" {
+				facts.setupSource = domain.Source{
+					Parser:  "go",
+					File:    file.RelativePath,
+					Line:    position.Line,
+					EndLine: endPosition.Line,
 				}
 			}
+			var watches []string
+			var watchMethods []string
+			var watchSites []domain.Site
 			ast.Inspect(fn.Body, func(innerNode ast.Node) bool {
 				callExpr, ok := innerNode.(*ast.CallExpr)
 				if !ok {
@@ -213,9 +229,9 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 					if methodName == "For" || methodName == "Owns" || methodName == "Watches" {
 						if len(callExpr.Args) > 0 {
 							if typeName := extractTypeName(callExpr.Args[0]); typeName != "" {
-								controllerWatches = append(controllerWatches, typeName)
-								controllerWatchMethods = append(controllerWatchMethods, methodName)
-								controllerWatchSites = append(controllerWatchSites, domain.Site{
+								watches = append(watches, typeName)
+								watchMethods = append(watchMethods, methodName)
+								watchSites = append(watchSites, domain.Site{
 									Name: typeName,
 									Source: domain.Source{
 										Parser: "go-ast",
@@ -229,19 +245,35 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 				}
 				return true
 			})
-			for i, j := 0, len(controllerWatches)-1; i < j; i, j = i+1, j-1 {
-				controllerWatches[i], controllerWatches[j] = controllerWatches[j], controllerWatches[i]
-				controllerWatchMethods[i], controllerWatchMethods[j] = controllerWatchMethods[j], controllerWatchMethods[i]
-				controllerWatchSites[i], controllerWatchSites[j] = controllerWatchSites[j], controllerWatchSites[i]
+			// The AST visits the outer Complete call before the nested builder
+			// calls, so reverse only this setup method's facts. Reversing one
+			// file-wide accumulator caused a second controller in the same file
+			// to steal or reorder the first controller's watches.
+			for i, j := 0, len(watches)-1; i < j; i, j = i+1, j-1 {
+				watches[i], watches[j] = watches[j], watches[i]
+				watchMethods[i], watchMethods[j] = watchMethods[j], watchMethods[i]
+				watchSites[i], watchSites[j] = watchSites[j], watchSites[i]
 			}
+			facts.watches = append(facts.watches, watches...)
+			facts.watchMethods = append(facts.watchMethods, watchMethods...)
+			facts.watchSites = append(facts.watchSites, watchSites...)
 		}
 
 		return true
 	})
 
-	if controllerTypeName != "" {
-		if controllerSource.File == "" {
-			controllerSource = controllerSetupSource
+	var controllerNames []string
+	for name, facts := range controllers {
+		if facts.isController {
+			controllerNames = append(controllerNames, name)
+		}
+	}
+	sort.Strings(controllerNames)
+	for _, controllerTypeName := range controllerNames {
+		facts := controllers[controllerTypeName]
+		source := facts.source
+		if source.File == "" {
+			source = facts.setupSource
 		}
 		entities = append(entities, domain.Entity{
 			ID:                  fmt.Sprintf("controller:%s.%s", packagePath, controllerTypeName),
@@ -250,14 +282,14 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			Description:         typeComments[controllerTypeName],
 			Package:             packagePath,
 			Files:               []string{file.RelativePath},
-			Source:              controllerSource,
-			Watches:             controllerWatches,
-			WatchMethods:        controllerWatchMethods,
-			WatchSites:          controllerWatchSites,
-			Creates:             controllerCreates,
-			CreateSites:         controllerCreateSites,
-			Calls:               controllerCalls,
-			CallSites:           controllerCallSites,
+			Source:              source,
+			Watches:             facts.watches,
+			WatchMethods:        facts.watchMethods,
+			WatchSites:          facts.watchSites,
+			Creates:             facts.creates,
+			CreateSites:         facts.createSites,
+			Calls:               facts.calls,
+			CallSites:           facts.callSites,
 			Implements:          implPairs[controllerTypeName],
 			ImplementationSites: implSites[controllerTypeName],
 		})

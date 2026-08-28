@@ -13,6 +13,7 @@ func TestCompactAskPreservesEvidenceAndReducesPayload(t *testing.T) {
 	graph.Entities[0].Content = strings.Repeat("content ", 100)
 	idx := newIndex(graph)
 	full := idx.Ask("MyController", "debug")
+	full.Entity.EnvVars = []string{"AWS_REGION", "PLATFORM"}
 	compact := CompactAsk(full)
 
 	fullJSON, err := json.Marshal(full)
@@ -28,6 +29,9 @@ func TestCompactAskPreservesEvidenceAndReducesPayload(t *testing.T) {
 	}
 	if compact.Entity == nil || compact.Entity.Kind != "controller" {
 		t.Fatalf("compact entity lost identity: %+v", compact.Entity)
+	}
+	if len(compact.Entity.EnvVars) != 2 || compact.Entity.EnvVars[0] != "AWS_REGION" {
+		t.Fatalf("compact entity lost environment facts: %+v", compact.Entity.EnvVars)
 	}
 	if compact.Investigation == nil || len(compact.Investigation.OutRels[domain.RelCalls]) == 0 {
 		t.Fatal("compact result lost outgoing call relationship")

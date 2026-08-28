@@ -201,6 +201,12 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		if err := temporal.Enrich(repoPath, entities); err != nil {
 			warnings = append(warnings, fmt.Sprintf("temporal: %v", err))
 		}
+	} else {
+		// A previous graph may have been scanned with --temporal. Do not carry
+		// those historical facts into a graph whose current scan did not request
+		// them: incremental reuse must preserve the meaning of the current scan
+		// options, not silently retain stale optional metadata.
+		clearTemporalFields(entities)
 	}
 	sort.Strings(warnings)
 
@@ -416,6 +422,14 @@ func sameRepository(previous, current string) bool {
 
 func fileFingerprint(f domain.File) string {
 	return discovery.Fingerprint(f)
+}
+
+func clearTemporalFields(entities []domain.Entity) {
+	for i := range entities {
+		entities[i].LastAuthor = ""
+		entities[i].LastModified = ""
+		entities[i].ChangeCount = 0
+	}
 }
 
 func sortEntities(entities []domain.Entity) {

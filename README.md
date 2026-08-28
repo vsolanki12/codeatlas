@@ -195,6 +195,11 @@ Add to `~/.mcp.json`:
 
 Restart Claude Code. All 11 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
 
+Compound tools return bounded human-readable text by default so MCP clients do
+not pay for repeated full entity payloads. Use `detail=true` on
+`atlas_investigate`, `atlas_explain`, or `atlas_impact` when verbose text is
+needed. Structured responses remain bounded and retain relationship evidence.
+
 ---
 
 ## What You Can Ask
@@ -203,7 +208,7 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 |----------|------|-----------------|
 | "How does X work?" | `atlas_explain` | Reconciliation chain: what it reconciles, creates, calls, and what tests are linked by graph evidence |
 | "What breaks if I change X?" | `atlas_impact` | Bounded upstream callers, tests, resources, files, owners, and supporting relationship evidence |
-| "Tell me everything about X" | `atlas_investigate` | Full entity details, all relationships, callers, tests, siblings — one call |
+| "Tell me everything about X" | `atlas_investigate` | Bounded entity details, relationships, callers, tests, siblings — one call; request `detail=true` for verbose text |
 | "Where is X defined?" | `atlas_search` | Relevance-ranked matches across names, packages, imports, literals |
 | "What changed the most?" | `atlas_temporal` | Most-changed, stalest, or recently-modified entities by git history |
 | "Quick summary of X" | `atlas_view` | Pre-computed engineering view: manages, managed by, tests, files, owners |
@@ -219,9 +224,9 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 |------|---------|
 | `atlas_ask` | One-call query planner: entity + intent → view + deep analysis. Use this first |
 | `atlas_view` | Pre-computed engineering view for a controller or CRD. Zero graph traversal |
-| `atlas_investigate` | Everything about one entity in 1 call: details, relationships, callers, tests, siblings |
-| `atlas_explain` | Architectural narrative: reconciles → creates → calls → tested_by tree |
-| `atlas_impact` | Blast radius: upstream callers, controllers, tests, resources, owners, and supporting relationship evidence |
+| `atlas_investigate` | Bounded entity context: relationships, callers, tests, siblings; `detail=true` enables verbose text |
+| `atlas_explain` | Bounded architectural narrative: reconciles → creates → calls → tested_by; `detail=true` enables verbose text |
+| `atlas_impact` | Bounded blast radius: callers, controllers, tests, resources, owners, and evidence; `detail=true` enables verbose text |
 | `atlas_search` | Find entities by text or kind. Relevance-ranked across all fields |
 | `atlas_entity` | Full entity detail by ID, or batch fetch multiple IDs |
 | `atlas_where` | Find entities by file path |
@@ -233,7 +238,8 @@ Restart Claude Code. All 11 tools are now available. Works with any MCP-compatib
 
 ## CLI Commands
 
-The CLI mirrors MCP tools — same queries, same output, no server needed.
+The CLI mirrors MCP tools — same graph queries and evidence, with client-specific
+text/JSON formatting and no server needed.
 
 | Command | What it does |
 |---------|-------------|
@@ -289,6 +295,6 @@ arguments.
 
 ## Status
 
-**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Latest:** Phase 14 (PR Review)
+**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Current:** deterministic graph, bounded retrieval, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

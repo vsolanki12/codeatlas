@@ -54,6 +54,9 @@ and marks a graph `scanComplete: false` when a file cannot be parsed.
 Incremental reuse is allowed only for a previously complete graph whose file
 state still matches the repository; incomplete graphs trigger a full scan.
 Consumers must carry graph metadata and warnings into their own output.
+Compound MCP tools return bounded text by default; `detail=true` is an
+explicit request for verbose human-readable text. Their structured results
+remain bounded and preserve relationship evidence.
 
 Relationship targets are emitted only when the parser provides a supported
 signal and the builder can resolve the target without an ambiguous match.
@@ -173,7 +176,9 @@ atlas scan -repo /path/to/repository -output atlas.json -temporal
         │
         ▼
 5. Merge duplicate package/controller observations, deduplicate facts and
-   sites, sort entities and fact arrays, then optionally add git history.
+   sites, sort entities and fact arrays, then optionally add git history. When
+   temporal enrichment is not requested, reused entities do not retain history
+   from an earlier temporal scan.
         │
         ▼
 6. Build only supported relationships whose endpoints resolve. Each emitted

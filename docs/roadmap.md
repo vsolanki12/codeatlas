@@ -244,6 +244,9 @@ Development progresses in phases. Each builds on the previous.
 - Embed matching uses the actual `//go:embed` pattern relative to the declaration file and is marked `proven` only when a scanned resource path matches.
 - Relationship IDs must equal the deterministic `from--type--to` form; duplicate, orphan, unsupported, and evidence-less edges are rejected before persistence.
 - Repository scans use `repository-path-v1` entity identity. Incremental reuse and implementation-oriented consumers require a current, complete graph with verifiable file state.
+- The Go parser keeps controller observations separate by receiver, including when multiple controllers share one source file.
+- Temporal enrichment remains opt-in; a non-temporal incremental scan clears history reused from an earlier temporal graph.
+- Compound MCP text is bounded by default; `detail=true` is required for verbose investigation, explanation, or impact text while structured output remains bounded and evidence-bearing.
 
 **Result:** Validation catches graph identity, endpoint, deterministic-ID, evidence, and completeness violations at scan and storage boundaries. Review output separates deterministic facts, inferred links, and unsupported coverage claims.
 
