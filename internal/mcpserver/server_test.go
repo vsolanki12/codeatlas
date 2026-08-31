@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"testing"
 
@@ -26,6 +27,16 @@ func TestRegisterToolsExposesAllTools(t *testing.T) {
 				File:   "pkg/controller.go",
 				Line:   10,
 			},
+		}, {
+			ID:     "function:example/pkg.WidgetOne",
+			Name:   "WidgetOne",
+			Kind:   domain.KindFunction,
+			Source: domain.Source{Parser: "go", File: "pkg/widget_one.go", Line: 1},
+		}, {
+			ID:     "function:example/pkg.WidgetTwo",
+			Name:   "WidgetTwo",
+			Kind:   domain.KindFunction,
+			Source: domain.Source{Parser: "go", File: "pkg/widget_two.go", Line: 1},
 		}},
 	}); err != nil {
 		t.Fatalf("write graph: %v", err)
@@ -77,6 +88,28 @@ func TestRegisterToolsExposesAllTools(t *testing.T) {
 	}
 	if freshnessResult.IsError || len(freshnessResult.Content) == 0 || freshnessResult.StructuredContent == nil {
 		t.Fatalf("atlas_freshness result = %+v, want deterministic text and structured content", freshnessResult)
+	}
+
+	searchResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "atlas_search",
+		Arguments: map[string]any{"query": "Widget", "limit": 1},
+	})
+	if err != nil {
+		t.Fatalf("call atlas_search: %v", err)
+	}
+	var page struct {
+		Total      int  `json:"total"`
+		Offset     int  `json:"offset"`
+		Limit      int  `json:"limit"`
+		NextOffset int  `json:"nextOffset"`
+		Truncated  bool `json:"truncated"`
+	}
+	encoded, err := json.Marshal(searchResult.StructuredContent)
+	if err != nil || json.Unmarshal(encoded, &page) != nil {
+		t.Fatalf("decode atlas_search structured result: %s (%v)", encoded, err)
+	}
+	if page.Total != 2 || page.Offset != 0 || page.Limit != 1 || page.NextOffset != 1 || !page.Truncated {
+		t.Fatalf("search page = %+v, want total=2 offset=0 limit=1 nextOffset=1 truncated", page)
 	}
 
 	tools, err := clientSession.ListTools(ctx, nil)

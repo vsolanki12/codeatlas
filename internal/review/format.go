@@ -322,8 +322,8 @@ func FormatReview(r *ReviewResult) string {
 
 	// Unmapped files
 	if len(r.UnmappedFiles) > 0 {
-		b.WriteString("Unmapped Go Files\n")
-		b.WriteString("-----------------\n")
+		b.WriteString("Unmapped Changed Files\n")
+		b.WriteString("----------------------\n")
 		for _, f := range r.UnmappedFiles {
 			fmt.Fprintf(&b, "  %s (no Atlas entities — new or unscanned)\n", f)
 		}

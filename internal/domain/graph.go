@@ -10,6 +10,44 @@ import (
 // must be fully rescanned before incremental facts are reused.
 const CurrentEntityIdentity = "repository-path-v1"
 
+// CurrentSchemaVersion is the graph schema emitted by the current scanner.
+// New fields are optional so older graphs remain readable by newer consumers.
+const CurrentSchemaVersion = "1.5.0"
+
+// ScanFileStatus describes how the scanner accounted for a discovered file.
+// A status is deliberately more precise than a warning string: consumers can
+// distinguish parsed facts, reused facts, intentional omissions, and failures.
+type ScanFileStatus string
+
+const (
+	ScanFileParsed  ScanFileStatus = "parsed"
+	ScanFileReused  ScanFileStatus = "reused"
+	ScanFileIgnored ScanFileStatus = "ignored"
+	ScanFileFailed  ScanFileStatus = "failed"
+)
+
+// ScanFile records the deterministic disposition of one discovered file.
+// Files with no supported parser are retained as ignored instead of silently
+// disappearing from the graph's coverage accounting.
+type ScanFile struct {
+	Path        string         `json:"path"`
+	Status      ScanFileStatus `json:"status"`
+	Parser      string         `json:"parser,omitempty"`
+	EntityCount int            `json:"entityCount,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+}
+
+// ScanCoverage summarizes the file inventory represented by ScanFiles.
+// Parsed and reused both mean that the graph has facts for the file; reused
+// identifies facts carried forward by an incremental scan.
+type ScanCoverage struct {
+	Discovered int `json:"discovered"`
+	Parsed     int `json:"parsed"`
+	Reused     int `json:"reused"`
+	Ignored    int `json:"ignored"`
+	Failed     int `json:"failed"`
+}
+
 // Graph is the top-level container for an Atlas scan result.
 type Graph struct {
 	Schema           string            `json:"schema"`
@@ -22,6 +60,8 @@ type Graph struct {
 	ScanDuration     string            `json:"scanDuration"`
 	ScanComplete     bool              `json:"scanComplete"`
 	ScanWarnings     []string          `json:"scanWarnings,omitempty"`
+	ScanFiles        []ScanFile        `json:"scanFiles,omitempty"`
+	ScanCoverage     *ScanCoverage     `json:"scanCoverage,omitempty"`
 	Entities         []Entity          `json:"entities"`
 	Relationship     []Relationship    `json:"relationships"`
 	FileTimestamps   map[string]string `json:"fileTimestamps,omitempty"`
@@ -45,6 +85,8 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 		ScanDuration     string            `json:"scanDuration"`
 		ScanComplete     bool              `json:"scanComplete"`
 		ScanWarnings     []string          `json:"scanWarnings,omitempty"`
+		ScanFiles        []ScanFile        `json:"scanFiles,omitempty"`
+		ScanCoverage     *ScanCoverage     `json:"scanCoverage,omitempty"`
 		Entities         []Entity          `json:"entities"`
 		Relationships    []Relationship    `json:"relationships"`
 		FileTimestamps   map[string]string `json:"fileTimestamps,omitempty"`
@@ -56,6 +98,7 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 		Schema: g.Schema, SchemaVersion: g.SchemaVersion, EntityIdentity: g.EntityIdentity, GeneratedAt: g.GeneratedAt,
 		Repository: g.Repository, Commit: g.Commit, Branch: g.Branch,
 		ScanDuration: g.ScanDuration, ScanComplete: g.ScanComplete, ScanWarnings: g.ScanWarnings,
+		ScanFiles: g.ScanFiles, ScanCoverage: g.ScanCoverage,
 		Entities: g.Entities, Relationships: g.Relationship,
 		FileTimestamps: g.FileTimestamps, FileFingerprints: g.FileFingerprints,
 		Views: g.Views, Questions: g.Questions,
@@ -76,6 +119,8 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		ScanDuration     string            `json:"scanDuration"`
 		ScanComplete     bool              `json:"scanComplete"`
 		ScanWarnings     []string          `json:"scanWarnings"`
+		ScanFiles        []ScanFile        `json:"scanFiles"`
+		ScanCoverage     *ScanCoverage     `json:"scanCoverage"`
 		Entities         []Entity          `json:"entities"`
 		Relationships    []Relationship    `json:"relationships"`
 		LegacyRelations  []Relationship    `json:"relationship"`
@@ -99,6 +144,7 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		Schema: w.Schema, SchemaVersion: w.SchemaVersion, EntityIdentity: w.EntityIdentity, GeneratedAt: w.GeneratedAt,
 		Repository: w.Repository, Commit: w.Commit, Branch: w.Branch,
 		ScanDuration: w.ScanDuration, ScanComplete: w.ScanComplete, ScanWarnings: w.ScanWarnings,
+		ScanFiles: w.ScanFiles, ScanCoverage: w.ScanCoverage,
 		Entities: w.Entities, Relationship: relations,
 		FileTimestamps: w.FileTimestamps, FileFingerprints: w.FileFingerprints,
 		Views: w.Views, Questions: w.Questions,

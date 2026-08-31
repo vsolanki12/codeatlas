@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -19,6 +20,13 @@ type YAMLParser struct {
 	includeNamespace bool
 }
 
+var (
+	templateActionPattern = regexp.MustCompile(`{{[-+]?[^{}\n]*[-+]?}}`)
+	templateOnlyLine      = regexp.MustCompile(`^\s*{{[-+]?[^{}\n]*[-+]?}}\s*$`)
+)
+
+const templatePlaceholderPrefix = "__CODEATLAS_TEMPLATE_"
+
 func NewYAMLParser() *YAMLParser {
 	return &YAMLParser{}
 }
@@ -29,6 +37,18 @@ func NewYAMLParserForRepo(repoPath string) *YAMLParser {
 		abs = repoPath
 	}
 	return &YAMLParser{rootDir: filepath.Clean(abs), includeNamespace: true}
+}
+
+// IsTemplateFile reports whether a YAML file contains Go-template actions.
+// It is intentionally a lexical check used for scan diagnostics; it does not
+// attempt to execute or interpret the template.
+func IsTemplateFile(repoPath string, file domain.File) bool {
+	readPath := file.RelativePath
+	if repoPath != "" {
+		readPath = filepath.Join(repoPath, filepath.FromSlash(file.RelativePath))
+	}
+	data, err := os.ReadFile(readPath)
+	return err == nil && hasTemplateActions(string(data))
 }
 
 type k8sManifest struct {
@@ -65,7 +85,16 @@ func (p *YAMLParser) Parse(file domain.File) ([]domain.Entity, error) {
 
 	var entities []domain.Entity
 	for _, document := range splitYAMLDocuments(string(data)) {
-		parsed, err := p.parseDocument(file.RelativePath, []byte(document.Content), document.Line)
+		documentData := document.Content
+		parserName := "yaml"
+		if hasTemplateActions(documentData) {
+			// Go-template actions are not YAML syntax until a runtime value is
+			// supplied. Remove control-only lines and replace scalar actions with
+			// opaque placeholders so static kind/shape can still be extracted.
+			documentData = sanitizeTemplateYAML(documentData)
+			parserName = "yaml-template"
+		}
+		parsed, err := p.parseDocument(file.RelativePath, []byte(documentData), document.Line, parserName)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +103,7 @@ func (p *YAMLParser) Parse(file domain.File) ([]domain.Entity, error) {
 	return entities, nil
 }
 
-func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine int) ([]domain.Entity, error) {
+func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine int, parserName string) ([]domain.Entity, error) {
 
 	// Repositories commonly contain Ansible, CI, and configuration YAML next
 	// to Kubernetes manifests. Parse the document shape first so unsupported
@@ -104,16 +133,54 @@ func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine in
 		return nil, nil
 	}
 
-	var entities []domain.Entity
-
+	crdGroup := ""
+	crdKind := ""
 	if manifest.Kind == "CustomResourceDefinition" {
-		crdGroup := manifest.Spec.Group
-		crdKind := manifest.Spec.Names.Kind
-
+		crdGroup = manifest.Spec.Group
+		crdKind = manifest.Spec.Names.Kind
 		if crdKind == "" {
 			crdKind = manifest.Metadata.Name
 		}
+	}
 
+	identityUnresolved := parserName == "yaml-template" && (containsTemplatePlaceholder(manifest.Kind) ||
+		containsTemplatePlaceholder(manifest.Metadata.Name) || containsTemplatePlaceholder(manifest.Metadata.Namespace) ||
+		containsTemplatePlaceholder(crdGroup) || containsTemplatePlaceholder(crdKind))
+	if identityUnresolved {
+		// The runtime object name is unknown, so a resource ID would falsely
+		// claim a concrete object. Preserve the template as an entity with a
+		// deterministic file-based identity instead. The kind can also be
+		// templated, so use an opaque "unknown" marker rather than leaking a
+		// placeholder into a resource ID or name.
+		kindPlaceholder := containsTemplatePlaceholder(manifest.Kind)
+		templateKind := strings.ToLower(manifest.Kind)
+		if templateKind == "" || kindPlaceholder {
+			templateKind = "unknown"
+		}
+		templateName := "Kubernetes manifest template"
+		if templateKind != "unknown" {
+			templateName = manifest.Kind + " template"
+		}
+		templateNamespace := manifest.Metadata.Namespace
+		if containsTemplatePlaceholder(templateNamespace) {
+			templateNamespace = ""
+		}
+		return []domain.Entity{{
+			ID:          templateID(templateKind, filePath, documentLine),
+			Name:        templateName,
+			Kind:        domain.KindTemplate,
+			Description: "Kubernetes manifest template with unresolved runtime identity.",
+			Package:     templateNamespace,
+			Source: domain.Source{
+				Parser: parserName,
+				File:   filePath,
+				Line:   documentLine,
+			},
+		}}, nil
+	}
+
+	var entities []domain.Entity
+	if manifest.Kind == "CustomResourceDefinition" {
 		var description string
 		for _, v := range manifest.Spec.Versions {
 			if v.Schema.OpenAPIV3Schema.Description != "" {
@@ -130,7 +197,7 @@ func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine in
 			Package:     crdGroup,
 			Files:       []string{filePath},
 			Source: domain.Source{
-				Parser: "yaml",
+				Parser: parserName,
 				File:   filePath,
 				Line:   documentLine,
 			},
@@ -141,6 +208,9 @@ func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine in
 		if err := yaml.Unmarshal(data, &raw); err == nil {
 			flattenYAML("", raw, &props, 0)
 		}
+		if parserName == "yaml-template" {
+			props = removeTemplateProperties(props)
+		}
 
 		entities = append(entities, domain.Entity{
 			ID:         resourceID(manifest.Kind, manifest.Metadata.Namespace, manifest.Metadata.Name, filePath, p.includeNamespace),
@@ -149,13 +219,60 @@ func (p *YAMLParser) parseDocument(filePath string, data []byte, documentLine in
 			Package:    manifest.Metadata.Namespace,
 			Properties: props,
 			Source: domain.Source{
-				Parser: "yaml",
+				Parser: parserName,
 				File:   filePath,
 				Line:   documentLine,
 			},
 		})
 	}
 	return entities, nil
+}
+
+func hasTemplateActions(content string) bool {
+	return strings.Contains(content, "{{") && strings.Contains(content, "}}") && templateActionPattern.MatchString(content)
+}
+
+func sanitizeTemplateYAML(content string) string {
+	var result strings.Builder
+	result.Grow(len(content))
+	nextPlaceholder := 0
+	for _, line := range strings.SplitAfter(content, "\n") {
+		withoutNewline := strings.TrimSuffix(line, "\n")
+		if templateOnlyLine.MatchString(withoutNewline) {
+			if strings.HasSuffix(line, "\n") {
+				result.WriteByte('\n')
+			}
+			continue
+		}
+		replaced := templateActionPattern.ReplaceAllStringFunc(withoutNewline, func(string) string {
+			placeholder := fmt.Sprintf("%s%d__", templatePlaceholderPrefix, nextPlaceholder)
+			nextPlaceholder++
+			return placeholder
+		})
+		result.WriteString(replaced)
+		if strings.HasSuffix(line, "\n") {
+			result.WriteByte('\n')
+		}
+	}
+	return result.String()
+}
+
+func containsTemplatePlaceholder(value string) bool {
+	return strings.Contains(value, templatePlaceholderPrefix)
+}
+
+func removeTemplateProperties(properties []string) []string {
+	filtered := properties[:0]
+	for _, property := range properties {
+		if !containsTemplatePlaceholder(property) {
+			filtered = append(filtered, property)
+		}
+	}
+	return filtered
+}
+
+func templateID(kind, filePath string, line int) string {
+	return fmt.Sprintf("template:kubernetes.%s@%s#%d", strings.ToLower(kind), filepath.ToSlash(filePath), line)
 }
 
 type yamlDocument struct {

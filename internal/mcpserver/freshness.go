@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/freshness"
 	"github.com/vsolanki12/codeatlas/internal/query"
 )
@@ -17,23 +18,27 @@ type freshnessInput struct {
 }
 
 type compactFreshnessResult struct {
-	Available         bool     `json:"available"`
-	GraphRepository   string   `json:"graphRepository,omitempty"`
-	Repository        string   `json:"repository,omitempty"`
-	GraphCommit       string   `json:"graphCommit,omitempty"`
-	RepoHead          string   `json:"repoHead,omitempty"`
-	EntityIdentity    string   `json:"entityIdentity,omitempty"`
-	ScanComplete      bool     `json:"scanComplete"`
-	RepositoryMatch   bool     `json:"repositoryMatch"`
-	Verifiable        bool     `json:"verifiable"`
-	Stale             bool     `json:"stale"`
-	Dirty             bool     `json:"dirty"`
-	StateVerifiable   bool     `json:"stateVerifiable"`
-	FingerprintSource string   `json:"fingerprintSource,omitempty"`
-	ChangedFiles      []string `json:"changedFiles,omitempty"`
-	NewFiles          []string `json:"newFiles,omitempty"`
-	DeletedFiles      []string `json:"deletedFiles,omitempty"`
-	Truncated         bool     `json:"truncated,omitempty"`
+	Available         bool                 `json:"available"`
+	SchemaVersion     string               `json:"schemaVersion,omitempty"`
+	SchemaCurrent     bool                 `json:"schemaCurrent"`
+	GraphRepository   string               `json:"graphRepository,omitempty"`
+	Repository        string               `json:"repository,omitempty"`
+	GraphCommit       string               `json:"graphCommit,omitempty"`
+	RepoHead          string               `json:"repoHead,omitempty"`
+	EntityIdentity    string               `json:"entityIdentity,omitempty"`
+	ScanComplete      bool                 `json:"scanComplete"`
+	ScanWarnings      []string             `json:"scanWarnings,omitempty"`
+	ScanCoverage      *domain.ScanCoverage `json:"scanCoverage,omitempty"`
+	RepositoryMatch   bool                 `json:"repositoryMatch"`
+	Verifiable        bool                 `json:"verifiable"`
+	Stale             bool                 `json:"stale"`
+	Dirty             bool                 `json:"dirty"`
+	StateVerifiable   bool                 `json:"stateVerifiable"`
+	FingerprintSource string               `json:"fingerprintSource,omitempty"`
+	ChangedFiles      []string             `json:"changedFiles,omitempty"`
+	NewFiles          []string             `json:"newFiles,omitempty"`
+	DeletedFiles      []string             `json:"deletedFiles,omitempty"`
+	Truncated         bool                 `json:"truncated,omitempty"`
 }
 
 func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string) {
@@ -56,12 +61,16 @@ func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string) {
 func compactFreshness(result freshness.Result) compactFreshnessResult {
 	compact := compactFreshnessResult{
 		Available:         result.Available,
+		SchemaVersion:     result.SchemaVersion,
+		SchemaCurrent:     result.SchemaCurrent,
 		GraphRepository:   result.GraphRepository,
 		Repository:        result.Repository,
 		GraphCommit:       result.GraphCommit,
 		RepoHead:          result.RepoHead,
 		EntityIdentity:    result.EntityIdentity,
 		ScanComplete:      result.ScanComplete,
+		ScanWarnings:      append([]string(nil), result.ScanWarnings...),
+		ScanCoverage:      copyScanCoverage(result.ScanCoverage),
 		RepositoryMatch:   result.RepositoryMatch,
 		Verifiable:        result.Verifiable,
 		Stale:             result.Stale,
@@ -72,7 +81,19 @@ func compactFreshness(result freshness.Result) compactFreshnessResult {
 	compact.ChangedFiles, compact.Truncated = boundedFreshnessFiles(result.ChangedFiles, compact.Truncated)
 	compact.NewFiles, compact.Truncated = boundedFreshnessFiles(result.NewFiles, compact.Truncated)
 	compact.DeletedFiles, compact.Truncated = boundedFreshnessFiles(result.DeletedFiles, compact.Truncated)
+	if len(compact.ScanWarnings) > 20 {
+		compact.ScanWarnings = compact.ScanWarnings[:20]
+		compact.Truncated = true
+	}
 	return compact
+}
+
+func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {
+	if coverage == nil {
+		return nil
+	}
+	copy := *coverage
+	return &copy
 }
 
 func boundedFreshnessFiles(files []string, truncated bool) ([]string, bool) {
@@ -89,10 +110,19 @@ func formatFreshness(result compactFreshnessResult) string {
 	b.WriteString("========================\n")
 	fmt.Fprintf(&b, "Graph repository: %s\n", result.GraphRepository)
 	fmt.Fprintf(&b, "Repository checked: %s\n", result.Repository)
+	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", result.SchemaVersion, result.SchemaCurrent)
 	fmt.Fprintf(&b, "Graph commit: %s\n", result.GraphCommit)
 	fmt.Fprintf(&b, "Repository HEAD: %s\n", result.RepoHead)
 	fmt.Fprintf(&b, "Entity identity: %s\n", result.EntityIdentity)
 	fmt.Fprintf(&b, "Scan complete: %t\n", result.ScanComplete)
+	if result.ScanCoverage != nil {
+		fmt.Fprintf(&b, "Scan coverage: discovered=%d parsed=%d reused=%d ignored=%d failed=%d\n",
+			result.ScanCoverage.Discovered, result.ScanCoverage.Parsed, result.ScanCoverage.Reused,
+			result.ScanCoverage.Ignored, result.ScanCoverage.Failed)
+	}
+	for _, warning := range result.ScanWarnings {
+		fmt.Fprintf(&b, "Scan warning: %s\n", warning)
+	}
 	fmt.Fprintf(&b, "Repository match: %t\n", result.RepositoryMatch)
 	fmt.Fprintf(&b, "Commit verifiable: %t\n", result.Verifiable)
 	fmt.Fprintf(&b, "Stale: %t\n", result.Stale)

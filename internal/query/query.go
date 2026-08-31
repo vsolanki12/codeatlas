@@ -1,6 +1,7 @@
 package query
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -18,50 +19,198 @@ type Subgraph struct {
 // search/where/query consumers. Keeping graph metadata beside the entities
 // prevents callers from treating a stale or incomplete result as current.
 type EntityListResult struct {
-	Graph         GraphMetadata          `json:"graph"`
-	Entities      []*domain.Entity       `json:"entities"`
-	Relationships []*domain.Relationship `json:"relationships,omitempty"`
-	Truncated     bool                   `json:"truncated,omitempty"`
+	Graph                  GraphMetadata          `json:"graph"`
+	Entities               []*domain.Entity       `json:"entities"`
+	Relationships          []*domain.Relationship `json:"relationships,omitempty"`
+	Total                  int                    `json:"total"`
+	Offset                 int                    `json:"offset"`
+	Limit                  int                    `json:"limit"`
+	NextOffset             int                    `json:"nextOffset,omitempty"`
+	RelationshipTotal      int                    `json:"relationshipTotal,omitempty"`
+	RelationshipOffset     int                    `json:"relationshipOffset,omitempty"`
+	RelationshipLimit      int                    `json:"relationshipLimit,omitempty"`
+	NextRelationshipOffset int                    `json:"nextRelationshipOffset,omitempty"`
+	RelationshipsTruncated bool                   `json:"relationshipsTruncated,omitempty"`
+	Truncated              bool                   `json:"truncated,omitempty"`
 }
 
 func (idx *Index) EntityListResult(entities []*domain.Entity, includeRelationships bool, maxRelationships int) *EntityListResult {
-	result := &EntityListResult{
-		Graph:    idx.GraphMetadata(),
+	return idx.EntityListPageResult(EntityPage{
 		Entities: entities,
+		Total:    len(entities),
+		Limit:    len(entities),
+	}, includeRelationships, maxRelationships)
+}
+
+// EntityListPageResult builds the full entity-list envelope for a bounded
+// page. The page metadata makes a truncated result resumable instead of
+// forcing consumers to guess which entities were omitted.
+func (idx *Index) EntityListPageResult(page EntityPage, includeRelationships bool, maxRelationships int) *EntityListResult {
+	return idx.EntityListRelationshipPageResult(page, includeRelationships, 0, maxRelationships)
+}
+
+// EntityListRelationshipPageResult builds an entity page and an optional
+// relationship page over the same stable entity selection. The separate
+// offsets let a consumer continue relationship evidence without changing the
+// entity query that produced it.
+func (idx *Index) EntityListRelationshipPageResult(page EntityPage, includeRelationships bool, relationshipOffset, relationshipLimit int) *EntityListResult {
+	result := &EntityListResult{
+		Graph:      idx.GraphMetadata(),
+		Entities:   page.Entities,
+		Total:      page.Total,
+		Offset:     page.Offset,
+		Limit:      page.Limit,
+		NextOffset: page.NextOffset(),
+		Truncated:  page.HasMore,
 	}
 	if !includeRelationships {
 		return result
 	}
 
 	seen := make(map[string]bool)
-	for _, entity := range entities {
+	var allRelationships []*domain.Relationship
+	for _, entity := range page.Entities {
 		for _, relationship := range idx.GetRelationships(entity.ID, "both", "") {
 			if seen[relationship.ID] {
 				continue
 			}
 			seen[relationship.ID] = true
-			result.Relationships = append(result.Relationships, relationship)
+			allRelationships = append(allRelationships, relationship)
 		}
 	}
-	sort.Slice(result.Relationships, func(i, j int) bool {
-		return result.Relationships[i].ID < result.Relationships[j].ID
+	sort.Slice(allRelationships, func(i, j int) bool {
+		return allRelationships[i].ID < allRelationships[j].ID
 	})
-	if maxRelationships > 0 && len(result.Relationships) > maxRelationships {
-		result.Relationships = result.Relationships[:maxRelationships]
+	relationshipPage := paginateRelationships(allRelationships, relationshipOffset, relationshipLimit)
+	result.RelationshipTotal = relationshipPage.Total
+	result.RelationshipOffset = relationshipPage.Offset
+	result.RelationshipLimit = relationshipPage.Limit
+	result.Relationships = relationshipPage.Relationships
+	if relationshipPage.HasMore {
+		result.NextRelationshipOffset = relationshipPage.NextOffset()
+		result.RelationshipsTruncated = true
 		result.Truncated = true
 	}
 	return result
 }
 
+// EntityPage is a deterministic page of entity matches. Total is calculated
+// before bounding, while HasMore and NextOffset describe continuation.
+type EntityPage struct {
+	Entities []*domain.Entity
+	Offset   int
+	Limit    int
+	Total    int
+	HasMore  bool
+}
+
+func (p EntityPage) NextOffset() int {
+	if !p.HasMore {
+		return 0
+	}
+	return p.Offset + len(p.Entities)
+}
+
+// RelationshipPage is the deterministic, resumable page returned for the
+// relationship neighborhood of one entity. Relationship pagination is kept
+// separate from entity pagination because a single high-degree entity can
+// otherwise make an otherwise small entity response silently incomplete.
+type RelationshipPage struct {
+	Relationships []*domain.Relationship
+	Offset        int
+	Limit         int
+	Total         int
+	HasMore       bool
+}
+
+func (p RelationshipPage) NextOffset() int {
+	if !p.HasMore {
+		return 0
+	}
+	return p.Offset + len(p.Relationships)
+}
+
+// NormalizePage applies the shared consumer contract: offsets cannot be
+// negative, zero/negative limits use the safe default, and callers cannot
+// request an unbounded response through a CLI or MCP boundary.
+func NormalizePage(offset, limit int) (int, int, error) {
+	if offset < 0 {
+		return 0, 0, fmt.Errorf("offset must be non-negative")
+	}
+	if limit <= 0 {
+		limit = DefaultPageLimit
+	}
+	if limit > MaxPageLimit {
+		limit = MaxPageLimit
+	}
+	return offset, limit, nil
+}
+
+const (
+	DefaultPageLimit = 20
+	MaxPageLimit     = 100
+)
+
+func paginateEntities(entities []*domain.Entity, offset, limit int) EntityPage {
+	if offset < 0 {
+		offset = 0
+	}
+	total := len(entities)
+	if offset > total {
+		offset = total
+	}
+	if limit <= 0 {
+		limit = total - offset
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	page := EntityPage{
+		Entities: entities[offset:end],
+		Offset:   offset,
+		Limit:    limit,
+		Total:    total,
+	}
+	page.HasMore = end < total
+	return page
+}
+
+func paginateRelationships(relationships []*domain.Relationship, offset, limit int) RelationshipPage {
+	if offset < 0 {
+		offset = 0
+	}
+	total := len(relationships)
+	if offset > total {
+		offset = total
+	}
+	if limit <= 0 {
+		limit = total - offset
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	page := RelationshipPage{
+		Relationships: relationships[offset:end],
+		Offset:        offset,
+		Limit:         limit,
+		Total:         total,
+	}
+	page.HasMore = end < total
+	return page
+}
+
 type GraphStats struct {
-	SchemaVersion  string   `json:"schemaVersion"`
-	EntityIdentity string   `json:"entityIdentity,omitempty"`
-	Repository     string   `json:"repository"`
-	Commit         string   `json:"commit"`
-	Branch         string   `json:"branch"`
-	GeneratedAt    string   `json:"generatedAt"`
-	ScanComplete   bool     `json:"scanComplete"`
-	ScanWarnings   []string `json:"scanWarnings,omitempty"`
+	SchemaVersion  string               `json:"schemaVersion"`
+	EntityIdentity string               `json:"entityIdentity,omitempty"`
+	Repository     string               `json:"repository"`
+	Commit         string               `json:"commit"`
+	Branch         string               `json:"branch"`
+	GeneratedAt    string               `json:"generatedAt"`
+	ScanComplete   bool                 `json:"scanComplete"`
+	ScanWarnings   []string             `json:"scanWarnings,omitempty"`
+	ScanCoverage   *domain.ScanCoverage `json:"scanCoverage,omitempty"`
 
 	TotalEntities int            `json:"totalEntities"`
 	TotalRels     int            `json:"totalRelationships"`
@@ -147,7 +296,13 @@ func (idx *Index) Lookup(kind string, name string, maxResults int) []*domain.Ent
 }
 
 func (idx *Index) LookupWithStatus(kind string, name string, maxResults int) ([]*domain.Entity, bool) {
-	return boundEntities(idx.Lookup(kind, name, 0), maxResults)
+	page := idx.LookupPage(kind, name, 0, maxResults)
+	return page.Entities, page.HasMore
+}
+
+// LookupPage returns a deterministic, resumable page of kind/name matches.
+func (idx *Index) LookupPage(kind string, name string, offset, limit int) EntityPage {
+	return paginateEntities(idx.Lookup(kind, name, 0), offset, limit)
 }
 
 func (idx *Index) GetRelationships(entityID string, direction string, relType string) []*domain.Relationship {
@@ -178,6 +333,13 @@ func (idx *Index) GetRelationships(entityID string, direction string, relType st
 	})
 
 	return results
+}
+
+// RelationshipPage returns a deterministic page of an entity's relationships.
+// Callers must treat HasMore/NextOffset as part of the evidence contract;
+// omitted relationships are not evidence that no further relationship exists.
+func (idx *Index) RelationshipPage(entityID string, direction string, relType string, offset, limit int) RelationshipPage {
+	return paginateRelationships(idx.GetRelationships(entityID, direction, relType), offset, limit)
 }
 
 func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
@@ -318,7 +480,13 @@ func (idx *Index) Search(query string, maxResults int) []*domain.Entity {
 // tell an LLM whether the result is complete. The legacy Search API remains
 // available for callers that only need the slice.
 func (idx *Index) SearchWithStatus(query string, maxResults int) ([]*domain.Entity, bool) {
-	return boundEntities(idx.Search(query, 0), maxResults)
+	page := idx.SearchPage(query, 0, maxResults)
+	return page.Entities, page.HasMore
+}
+
+// SearchPage returns a deterministic, resumable page of full-text matches.
+func (idx *Index) SearchPage(query string, offset, limit int) EntityPage {
+	return paginateEntities(idx.Search(query, 0), offset, limit)
 }
 
 func scoreEntity(e *domain.Entity, terms []string) int {
@@ -398,7 +566,13 @@ func (idx *Index) Where(path string, maxResults int) []*domain.Entity {
 }
 
 func (idx *Index) WhereWithStatus(path string, maxResults int) ([]*domain.Entity, bool) {
-	return boundEntities(idx.Where(path, 0), maxResults)
+	page := idx.WherePage(path, 0, maxResults)
+	return page.Entities, page.HasMore
+}
+
+// WherePage returns a deterministic, resumable page of file/path matches.
+func (idx *Index) WherePage(path string, offset, limit int) EntityPage {
+	return paginateEntities(idx.Where(path, 0), offset, limit)
 }
 
 func (idx *Index) Stats() *GraphStats {
@@ -411,6 +585,7 @@ func (idx *Index) Stats() *GraphStats {
 		GeneratedAt:    idx.graph.GeneratedAt,
 		ScanComplete:   idx.graph.ScanComplete,
 		ScanWarnings:   append([]string(nil), idx.graph.ScanWarnings...),
+		ScanCoverage:   copyScanCoverage(idx.graph.ScanCoverage),
 		TotalEntities:  len(idx.graph.Entities),
 		TotalRels:      len(idx.graph.Relationship),
 		EntityCounts:   make(map[string]int),
@@ -524,7 +699,14 @@ func (idx *Index) Temporal(kind string, name string, since string, author string
 }
 
 func (idx *Index) TemporalWithStatus(kind string, name string, since string, author string, stale bool, limit int) ([]*domain.Entity, bool) {
-	return boundEntities(idx.Temporal(kind, name, since, author, stale, 0), limit)
+	page := idx.TemporalPage(kind, name, since, author, stale, 0, limit)
+	return page.Entities, page.HasMore
+}
+
+// TemporalPage returns a deterministic, resumable page of git-history
+// matches. The sort order is the same as Temporal.
+func (idx *Index) TemporalPage(kind string, name string, since string, author string, stale bool, offset, limit int) EntityPage {
+	return paginateEntities(idx.Temporal(kind, name, since, author, stale, 0), offset, limit)
 }
 
 func boundEntities(entities []*domain.Entity, maxResults int) ([]*domain.Entity, bool) {

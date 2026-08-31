@@ -115,6 +115,27 @@ func FormatEntityList(entities []*domain.Entity) string {
 	return b.String()
 }
 
+// FormatEntityPage reports deterministic pagination state in human-readable
+// output. The next offset is explicit so a consumer can continue retrieval
+// without treating a bounded result as proof that no other match exists.
+func FormatEntityPage(page EntityPage) string {
+	if page.HasMore {
+		return fmt.Sprintf("[PAGE: offset=%d limit=%d total=%d nextOffset=%d; request the next page with offset=%d.]\n",
+			page.Offset, page.Limit, page.Total, page.NextOffset(), page.NextOffset())
+	}
+	return fmt.Sprintf("[PAGE: offset=%d limit=%d total=%d complete.]\n", page.Offset, page.Limit, page.Total)
+}
+
+// FormatRelationshipPage reports the continuation state for relationship
+// evidence without implying that a bounded page is exhaustive.
+func FormatRelationshipPage(page RelationshipPage) string {
+	if page.HasMore {
+		return fmt.Sprintf("[RELATIONSHIP PAGE: offset=%d limit=%d total=%d nextOffset=%d; request the next relationship page with offset=%d.]\n",
+			page.Offset, page.Limit, page.Total, page.NextOffset(), page.NextOffset())
+	}
+	return fmt.Sprintf("[RELATIONSHIP PAGE: offset=%d limit=%d total=%d complete.]\n", page.Offset, page.Limit, page.Total)
+}
+
 func FormatRelationshipList(rels []*domain.Relationship) string {
 	if len(rels) == 0 {
 		return "No relationships.\n"
@@ -191,6 +212,11 @@ func FormatStats(s *GraphStats) string {
 	}
 	for _, warning := range s.ScanWarnings {
 		fmt.Fprintf(&b, "scan warning: %s\n", warning)
+	}
+	if s.ScanCoverage != nil {
+		fmt.Fprintf(&b, "scan coverage: discovered=%d parsed=%d reused=%d ignored=%d failed=%d\n",
+			s.ScanCoverage.Discovered, s.ScanCoverage.Parsed, s.ScanCoverage.Reused,
+			s.ScanCoverage.Ignored, s.ScanCoverage.Failed)
 	}
 	fmt.Fprintf(&b, "entities: %d\n", s.TotalEntities)
 

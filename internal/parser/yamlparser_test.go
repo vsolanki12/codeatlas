@@ -144,3 +144,94 @@ func TestYAMLParser_Parse_CRD(t *testing.T) {
 		t.Errorf("CRD description mismatch.\nExpected: %q\nGot: %q", expectedDesc, ent.Description)
 	}
 }
+
+func TestYAMLParser_TemplatePreservesShapeWithoutInventingName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deployment.yaml")
+	content := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Name }}
+spec:
+  replicas: {{ .Replicas }}
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities, err := NewYAMLParserForRepo(dir).Parse(domain.File{RelativePath: "deployment.yaml"})
+	if err != nil {
+		t.Fatalf("templated Kubernetes YAML should parse statically, got error: %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("got %d entities, want one template entity", len(entities))
+	}
+	entity := entities[0]
+	if entity.Kind != domain.KindTemplate {
+		t.Fatalf("kind = %s, want template", entity.Kind)
+	}
+	if entity.ID != "template:kubernetes.deployment@deployment.yaml#1" {
+		t.Fatalf("template ID = %q, want deterministic file-based ID", entity.ID)
+	}
+	if entity.Name != "Deployment template" || entity.Source.Parser != "yaml-template" {
+		t.Fatalf("template entity = %+v", entity)
+	}
+	if entity.Source.File != "deployment.yaml" || entity.Source.Line != 1 {
+		t.Fatalf("template source = %+v", entity.Source)
+	}
+}
+
+func TestYAMLParser_TemplateControlLinesAreNotParseFailures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "service.yaml")
+	content := []byte(`{{- if .Enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: service
+{{- end }}
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities, err := NewYAMLParserForRepo(dir).Parse(domain.File{RelativePath: "service.yaml"})
+	if err != nil {
+		t.Fatalf("template control lines should be removed before static parsing, got error: %v", err)
+	}
+	if len(entities) != 1 || entities[0].Kind != domain.KindResource || entities[0].Name != "service" {
+		t.Fatalf("entities = %+v, want one concrete resource with static name", entities)
+	}
+	if entities[0].Source.Parser != "yaml-template" {
+		t.Fatalf("parser = %q, want yaml-template", entities[0].Source.Parser)
+	}
+}
+
+func TestYAMLParser_TemplateKindDoesNotBecomeResourceIdentity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "object.yaml")
+	content := []byte(`apiVersion: apps/v1
+kind: {{ .Kind }}
+metadata:
+  name: stable-name
+  namespace: {{ .Namespace }}
+`)
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	entities, err := NewYAMLParserForRepo(dir).Parse(domain.File{RelativePath: "object.yaml"})
+	if err != nil {
+		t.Fatalf("templated kind should parse as an opaque template, got error: %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("got %d entities, want one template entity", len(entities))
+	}
+	entity := entities[0]
+	if entity.Kind != domain.KindTemplate || entity.ID != "template:kubernetes.unknown@object.yaml#1" {
+		t.Fatalf("template entity = %+v", entity)
+	}
+	if entity.Name != "Kubernetes manifest template" || entity.Package != "" {
+		t.Fatalf("template identity leaked unresolved values: %+v", entity)
+	}
+}

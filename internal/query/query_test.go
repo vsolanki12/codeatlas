@@ -170,6 +170,24 @@ func TestGetRelationships_TypeFilter(t *testing.T) {
 	}
 }
 
+func TestRelationshipPageIsDeterministicAndResumable(t *testing.T) {
+	idx := newIndex(testGraph())
+	page := idx.RelationshipPage("controller:pkg.MyController", "from", "", 1, 1)
+	if page.Total != 3 || page.Offset != 1 || page.Limit != 1 || len(page.Relationships) != 1 {
+		t.Fatalf("relationship page = %+v, want total=3 offset=1 limit=1 with one relationship", page)
+	}
+	if !page.HasMore || page.NextOffset() != 2 {
+		t.Fatalf("relationship page continuation = hasMore=%v next=%d, want true,2", page.HasMore, page.NextOffset())
+	}
+	compact := idx.CompactEntityRelationshipPageResult(idx.GetEntity("controller:pkg.MyController"), page)
+	if compact.RelationshipTotal != 3 || compact.RelationshipOffset != 1 || compact.RelationshipLimit != 1 || compact.NextRelationshipOffset != 2 || !compact.RelationshipsTruncated {
+		t.Fatalf("compact relationship page metadata = %+v", compact)
+	}
+	if len(compact.Relationships) != 1 || compact.Relationships[0].Evidence.File == "" {
+		t.Fatalf("compact relationship page lost evidence: %+v", compact.Relationships)
+	}
+}
+
 func TestNeighbors_Depth0(t *testing.T) {
 	idx := newIndex(testGraph())
 
@@ -262,6 +280,42 @@ func TestSearchWithStatusReportsTruncation(t *testing.T) {
 	results, truncated = idx.SearchWithStatus("reconcile", 20)
 	if len(results) != len(allResults) || truncated {
 		t.Fatalf("untruncated search = %d results, truncated=%v; want %d,false", len(results), truncated, len(allResults))
+	}
+}
+
+func TestSearchPageIsResumableAndDeterministic(t *testing.T) {
+	idx := newIndex(testGraph())
+	all := idx.Search("reconcile", 0)
+	if len(all) < 3 {
+		t.Fatalf("fixture search returned %d results, want at least 3", len(all))
+	}
+	first := idx.SearchPage("reconcile", 0, 2)
+	second := idx.SearchPage("reconcile", first.NextOffset(), 2)
+	if first.Total != len(all) || !first.HasMore || first.NextOffset() != 2 {
+		t.Fatalf("first page = %+v, want total=%d and continuation", first, len(all))
+	}
+	if len(second.Entities) == 0 || second.Offset != 2 {
+		t.Fatalf("second page = %+v, want results at offset 2", second)
+	}
+	if second.Entities[0].ID != all[2].ID {
+		t.Fatalf("second page started at %s, want %s", second.Entities[0].ID, all[2].ID)
+	}
+	if got := idx.SearchPage("reconcile", 999, 2); got.Offset != got.Total || len(got.Entities) != 0 || got.HasMore {
+		t.Fatalf("out-of-range page = %+v, want an empty completed page", got)
+	}
+}
+
+func TestNormalizePageBoundsConsumerRequests(t *testing.T) {
+	if _, _, err := NormalizePage(-1, 20); err == nil {
+		t.Fatal("negative offsets must be rejected")
+	}
+	offset, limit, err := NormalizePage(4, 1000)
+	if err != nil || offset != 4 || limit != MaxPageLimit {
+		t.Fatalf("NormalizePage = %d,%d,%v, want 4,%d,nil", offset, limit, err, MaxPageLimit)
+	}
+	_, limit, err = NormalizePage(0, 0)
+	if err != nil || limit != DefaultPageLimit {
+		t.Fatalf("default limit = %d,%v, want %d,nil", limit, err, DefaultPageLimit)
 	}
 }
 

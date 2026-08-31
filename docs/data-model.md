@@ -5,6 +5,10 @@ This document is the contract between the scanner and everything that consumes t
 The graph is an evidence-bearing snapshot, not a claim that every repository
 fact was discovered. `scanComplete: false` and `scanWarnings` mean the graph is
 usable for the facts it contains but cannot support completeness claims.
+`scanCoverage` and `scanFiles` make the supported-parser boundary explicit:
+parsed files have parser-backed facts, ignored files have no registered parser,
+and failed files must be treated as missing evidence. Coverage does not claim
+that runtime behavior or every language/tooling file is modeled.
 Consumers must preserve that distinction. Relationships that cannot be
 resolved from a supported parser signal are omitted; relationships resolved by
 convention or name matching are retained only as `confidence: inferred`.
@@ -69,6 +73,7 @@ emits a graph edge.
 | `test` | A top-level `Test*` function in a test file | Go AST function declarations in `_test.go` |
 | `document` | A Markdown document | Markdown files discovered by the scanner |
 | `resource` | A named Kubernetes object in YAML | YAML with `kind` and `metadata.name` |
+| `template` | A Kubernetes manifest template whose runtime identity is unresolved | YAML/template syntax with a static `kind` but templated identity |
 | `operator` | Reserved entity kind | Not emitted by the current parsers |
 
 The current scanner does not emit separate component, interface, or operator
@@ -94,6 +99,9 @@ target.
   schema.
 - A resource stores its namespace in `package` and its Kubernetes kind in the
   `properties` observation `kind=<Kind>`.
+- A templated Kubernetes manifest is represented as a `template` entity when
+  `metadata.name` cannot be known statically. Its file and line are evidence;
+  the scanner does not invent a runtime object name or resource relationship.
 - In repository scans, package, function, and test IDs use the Go module import
   path so equal short package names in different directories cannot collide.
   Fixture-only parser constructors may retain legacy short IDs.
@@ -202,11 +210,18 @@ When a user clicks a relationship and asks "why does CodeAtlas think HostedClust
 | Level | Meaning | Example |
 |---|---|---|
 | `proven` | Directly observed with an exact supported semantic match | A `SetupWithManager.For(...)` registration, an exact package import, or an embed pattern matching a resource file |
-| `inferred` | The source operation is observed, but target resolution relies on a convention or name match | A test name matching a function, a call resolved within the caller package, or a create type matched to a unique manifest kind |
+| `inferred` | The source operation is observed, but target resolution relies on a convention or name match | A test name matching a function, an AST call name matched within the caller package, or a create type matched to a unique manifest kind |
 
 Two levels only. No percentages. An unresolved or ambiguous observation is
 kept on the entity (when supported) and is not emitted as an edge. A
 relationship target resolved by convention or name is explicitly `inferred`.
+
+The scanner may upgrade a call edge to `proven` when the standard Go type
+checker resolves its static target to an existing function entity. These edges
+use `parser: go-types` and exact source evidence. Type checking does not prove
+runtime dispatch, execution, or behavior; unresolved, external, ambiguous, or
+dynamic targets are not guessed, while the original AST observation remains
+`inferred` when it can be represented safely.
 
 ### Relationship Types
 
@@ -344,6 +359,7 @@ guidance.
 | `test` | `test:{module/package}.TestName` | `test:example.com/project/controllers.TestSync` |
 | `document` | `document:{repository-relative-path}` | `document:docs/hostedcluster.md` |
 | `resource` | `resource:{lowerkind}.{namespace-or-_cluster}/{name}@{repository-relative-file}` | `resource:deployment.openshift-config/api@config/deployment.yaml` |
+| `template` | `template:kubernetes.{lowerkind}@{repository-relative-file}#{document-line}` | `template:kubernetes.deployment@config/deployment.yaml#1` |
 
 The `kind:` prefix prevents ID collisions between different entity types that might share names.
 
@@ -356,7 +372,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "codeatlas",
-  "schemaVersion": "1.4.0",
+  "schemaVersion": "1.5.0",
   "entityIdentity": "repository-path-v1",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "/work/project",
@@ -370,6 +386,8 @@ The top-level output of `atlas scan`. One JSON file containing everything.
   "fileFingerprints": {},
   "scanComplete": true,
   "scanWarnings": [],
+  "scanCoverage": {"discovered": 0, "parsed": 0, "reused": 0, "ignored": 0, "failed": 0},
+  "scanFiles": [],
   "views": {},
   "questions": {}
 }
@@ -386,8 +404,10 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `relationships` — flat array of all relationships.
 - `fileTimestamps` — per-file RFC3339 modification times used as incremental state when fingerprints are unavailable.
 - `fileFingerprints` — content fingerprints for supported files. Used to detect changes that preserve a timestamp.
-- `scanComplete` — true only when all discovered files were parsed without warnings. False means the graph is partial.
+- `scanComplete` — true when all files with registered parsers were processed without warnings. An ignored file is outside the parser set and remains explicitly listed in `scanCoverage`/`scanFiles`; false means a supported parser failed or another scan warning exists.
 - `scanWarnings` — deterministic parser or discovery warnings that explain why completeness is unavailable.
+- `scanCoverage` — counts of discovered files by disposition. `parsed` and `reused` are graph-file statuses accepted by the schema; current scans persist parsed facts while incremental reuse is reported by the scan result so identical repository snapshots remain deterministic.
+- `scanFiles` — deterministic per-file disposition, parser name, entity count, and reason for ignored/failed files. Unsupported extensions are explicit `ignored` entries rather than silent omissions.
 - `views` — pre-computed engineering views for controllers and CRDs, generated during scan. Each keyed by entity ID, containing ownership, resources, tests, files, and temporal data.
 - `questions` — deterministic Q&A pairs derived from views (for example, `"reconciles:Widget"` → `"Widget"`). Entity/relationship counts are computed by `atlas stats`; they are not stored as a top-level graph field.
 - Temporal fields are opt-in. A scan without `--temporal` leaves
@@ -405,6 +425,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 5. **Imports preserve observations.** The package entity records every parsed import path. An `imports` relationship is emitted only for an exact match to one scanned package in the same graph.
 6. **Store forward, compute inverse.** `calls` is stored; `called_by` is computed. `imports` is stored; `imported_by` is computed. One direction is truth.
 7. **One entity per thing.** HostedClusterReconciler is one entity with `kind: controller`. Not a Component and a Controller.
+8. **Template identities stay unresolved.** A templated manifest may be represented as `kind: template`, but the scanner must not turn a runtime placeholder into a concrete resource name.
 
 ---
 

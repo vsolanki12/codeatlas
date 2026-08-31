@@ -49,10 +49,19 @@ type CompactRelationship struct {
 }
 
 type CompactEntityListResult struct {
-	Graph         GraphMetadata          `json:"graph"`
-	Entities      []*CompactEntity       `json:"entities"`
-	Relationships []*CompactRelationship `json:"relationships,omitempty"`
-	Truncated     bool                   `json:"truncated,omitempty"`
+	Graph                  GraphMetadata          `json:"graph"`
+	Entities               []*CompactEntity       `json:"entities"`
+	Relationships          []*CompactRelationship `json:"relationships,omitempty"`
+	Total                  int                    `json:"total"`
+	Offset                 int                    `json:"offset"`
+	Limit                  int                    `json:"limit"`
+	NextOffset             int                    `json:"nextOffset,omitempty"`
+	RelationshipTotal      int                    `json:"relationshipTotal,omitempty"`
+	RelationshipOffset     int                    `json:"relationshipOffset,omitempty"`
+	RelationshipLimit      int                    `json:"relationshipLimit,omitempty"`
+	NextRelationshipOffset int                    `json:"nextRelationshipOffset,omitempty"`
+	RelationshipsTruncated bool                   `json:"relationshipsTruncated,omitempty"`
+	Truncated              bool                   `json:"truncated,omitempty"`
 }
 
 type CompactResolvedRel struct {
@@ -163,9 +172,32 @@ func CompactEntitySummary(entity *domain.Entity) *CompactEntity {
 }
 
 func (idx *Index) CompactEntityListResult(entities []*domain.Entity, includeRelationships bool, maxRelationships int) *CompactEntityListResult {
+	return idx.CompactEntityListPageResult(EntityPage{
+		Entities: entities,
+		Total:    len(entities),
+		Limit:    len(entities),
+	}, includeRelationships, maxRelationships)
+}
+
+// CompactEntityListPageResult is the machine-oriented equivalent of
+// EntityListPageResult. It retains page metadata so an assistant can request
+// the next deterministic slice without broadening the original query.
+func (idx *Index) CompactEntityListPageResult(page EntityPage, includeRelationships bool, maxRelationships int) *CompactEntityListResult {
+	return idx.CompactEntityListRelationshipPageResult(page, includeRelationships, 0, maxRelationships)
+}
+
+// CompactEntityListRelationshipPageResult is the machine-oriented equivalent
+// of EntityListRelationshipPageResult. It makes relationship truncation
+// resumable while preserving the compact token budget.
+func (idx *Index) CompactEntityListRelationshipPageResult(page EntityPage, includeRelationships bool, relationshipOffset, relationshipLimit int) *CompactEntityListResult {
 	result := &CompactEntityListResult{
-		Graph:    idx.GraphMetadata(),
-		Entities: CompactEntities(entities),
+		Graph:      idx.GraphMetadata(),
+		Entities:   CompactEntities(page.Entities),
+		Total:      page.Total,
+		Offset:     page.Offset,
+		Limit:      page.Limit,
+		NextOffset: page.NextOffset(),
+		Truncated:  page.HasMore,
 	}
 	for _, entity := range result.Entities {
 		if entity.Truncated {
@@ -177,21 +209,64 @@ func (idx *Index) CompactEntityListResult(entities []*domain.Entity, includeRela
 	}
 
 	seen := make(map[string]bool)
-	for _, entity := range entities {
+	var allRelationships []*domain.Relationship
+	for _, entity := range page.Entities {
 		for _, relationship := range idx.GetRelationships(entity.ID, "both", "") {
 			if seen[relationship.ID] {
 				continue
 			}
 			seen[relationship.ID] = true
-			result.Relationships = append(result.Relationships, compactRelationship(relationship))
+			allRelationships = append(allRelationships, relationship)
 		}
 	}
-	sort.Slice(result.Relationships, func(i, j int) bool {
-		return result.Relationships[i].ID < result.Relationships[j].ID
+	sort.Slice(allRelationships, func(i, j int) bool {
+		return allRelationships[i].ID < allRelationships[j].ID
 	})
-	if maxRelationships > 0 && len(result.Relationships) > maxRelationships {
-		result.Relationships = result.Relationships[:maxRelationships]
+	relationshipPage := paginateRelationships(allRelationships, relationshipOffset, relationshipLimit)
+	result.RelationshipTotal = relationshipPage.Total
+	result.RelationshipOffset = relationshipPage.Offset
+	result.RelationshipLimit = relationshipPage.Limit
+	result.Relationships = make([]*CompactRelationship, 0, len(relationshipPage.Relationships))
+	for _, relationship := range relationshipPage.Relationships {
+		result.Relationships = append(result.Relationships, compactRelationship(relationship))
+	}
+	if relationshipPage.HasMore {
+		result.NextRelationshipOffset = relationshipPage.NextOffset()
+		result.RelationshipsTruncated = true
 		result.Truncated = true
+	}
+	return result
+}
+
+// CompactEntityRelationshipPageResult creates a bounded entity response for
+// an explicit relationship page. It is used when a caller needs to continue a
+// high-degree entity query without repeating the entity payload.
+func (idx *Index) CompactEntityRelationshipPageResult(entity *domain.Entity, page RelationshipPage) *CompactEntityListResult {
+	result := &CompactEntityListResult{
+		Graph:                  idx.GraphMetadata(),
+		Entities:               CompactEntities([]*domain.Entity{entity}),
+		Relationships:          make([]*CompactRelationship, 0, len(page.Relationships)),
+		Total:                  1,
+		Limit:                  1,
+		RelationshipTotal:      page.Total,
+		RelationshipOffset:     page.Offset,
+		RelationshipLimit:      page.Limit,
+		NextRelationshipOffset: page.NextOffset(),
+		RelationshipsTruncated: page.HasMore,
+		Truncated:              page.HasMore,
+	}
+	for _, relationship := range page.Relationships {
+		result.Relationships = append(result.Relationships, compactRelationship(relationship))
+	}
+	return result
+}
+
+// CompactRelationships preserves relationship IDs and evidence for callers
+// that already have a separately paginated relationship slice.
+func CompactRelationships(relationships []*domain.Relationship) []*CompactRelationship {
+	result := make([]*CompactRelationship, 0, len(relationships))
+	for _, relationship := range relationships {
+		result = append(result, compactRelationship(relationship))
 	}
 	return result
 }

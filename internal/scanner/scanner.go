@@ -66,6 +66,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	var incremental bool
 	var changedCount, reusedCount, deletedCount int
 	var oldEntities []domain.Entity
+	reusedPaths := make(map[string]bool)
 
 	if opts.PreviousGraph != "" {
 		prev, err := storage.ReadGraph(opts.PreviousGraph)
@@ -90,6 +91,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 				unchangedSet := make(map[string]bool, len(unchanged))
 				for _, f := range unchanged {
 					unchangedSet[f.RelativePath] = true
+					reusedPaths[f.RelativePath] = true
 				}
 				oldEntities = entitiesFromFiles(prev.Entities, unchangedSet)
 			}
@@ -98,6 +100,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 
 	// Step 2: Classify files by extension
 	groups := parser.Classify(files)
+	// ScanFiles describes the deterministic facts represented by the graph.
+	// Whether a supported file was parsed during this invocation or reused from
+	// a previous graph is operational metadata already reported by Result; it
+	// must not change the persisted graph bytes for an identical repository.
+	scanFiles := initializeScanFiles(allFiles, reusedPaths)
 
 	// Step 3: Parse each file group. Parsers resolve relative paths against the
 	// repository root, so scanning does not mutate the process working directory.
@@ -113,9 +120,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		ents, err := goParser.Parse(f)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("go: %s: %v", f.RelativePath, err))
+			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "go", 0, err.Error())
 			continue
 		}
 		entities = append(entities, ents...)
+		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "go", len(ents), "")
 	}
 
 	// Test files
@@ -127,9 +136,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		ents, err := testParser.Parse(f)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("test: %s: %v", f.RelativePath, err))
+			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "test", 0, err.Error())
 			continue
 		}
 		entities = append(entities, ents...)
+		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "test", len(ents), "")
 	}
 
 	// YAML files (.yaml and .yml)
@@ -139,9 +150,19 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 			ents, err := yamlParser.Parse(f)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("yaml: %s: %v", f.RelativePath, err))
+				parserName := "yaml"
+				if parser.IsTemplateFile(repoPath, f) {
+					parserName = "yaml-template"
+				}
+				markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, parserName, 0, err.Error())
 				continue
 			}
 			entities = append(entities, ents...)
+			parserName := "yaml"
+			if parser.IsTemplateFile(repoPath, f) {
+				parserName = "yaml-template"
+			}
+			markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, parserName, len(ents), "")
 		}
 	}
 
@@ -151,9 +172,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		ents, err := mdParser.Parse(f)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("md: %s: %v", f.RelativePath, err))
+			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "markdown", 0, err.Error())
 			continue
 		}
 		entities = append(entities, ents...)
+		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "markdown", len(ents), "")
 	}
 
 	// Step 3b: Merge old entities from unchanged files
@@ -213,6 +236,12 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	// Step 6: Build relationships
 	builder := graph.NewRelationshipBuilder(repoPath)
 	relationships := builder.Build(entities)
+	// Upgrade only relationships whose call targets are resolved by Go's type
+	// checker. The AST builder remains the fallback for repositories that do
+	// not type-check cleanly; typed analysis never invents a target outside the
+	// graph.
+	typedRelationships := graph.BuildTypedCallRelationships(repoPath, allFiles, entities)
+	relationships = graph.MergeRelationships(relationships, typedRelationships)
 
 	// Step 7: Assemble graph with metadata
 	duration := time.Since(start)
@@ -229,7 +258,14 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		fingerprints[f.RelativePath] = fileFingerprint(f)
 	}
 	g.FileFingerprints = fingerprints
-	g.ScanComplete = len(warnings) == 0
+	for i := range scanFiles {
+		scanFiles[i].EntityCount = countEntitiesForFile(entities, scanFiles[i].Path)
+	}
+	sort.Slice(scanFiles, func(i, j int) bool { return scanFiles[i].Path < scanFiles[j].Path })
+	g.ScanFiles = scanFiles
+	coverage := summarizeScanFiles(scanFiles)
+	g.ScanCoverage = &coverage
+	g.ScanComplete = coverage.Failed == 0 && len(warnings) == 0
 	g.ScanWarnings = append([]string(nil), warnings...)
 
 	// Step 8: Validate
@@ -258,6 +294,95 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		ReusedFiles:  reusedCount,
 		DeletedFiles: deletedCount,
 	}, nil
+}
+
+func initializeScanFiles(files []domain.File, reused map[string]bool) []domain.ScanFile {
+	result := make([]domain.ScanFile, 0, len(files))
+	for _, file := range files {
+		parserName, supported := parserForFile(file.RelativePath)
+		if supported && reused[file.RelativePath] {
+			result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileParsed, Parser: parserName})
+			continue
+		}
+		if supported {
+			result = append(result, domain.ScanFile{
+				Path: file.RelativePath, Status: domain.ScanFileFailed, Parser: parserName,
+				Reason: "parser did not complete",
+			})
+			continue
+		}
+		reason := "no parser registered for file type"
+		if ext := filepath.Ext(file.RelativePath); ext != "" {
+			reason = "no parser registered for extension " + ext
+		}
+		result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileIgnored, Reason: reason})
+	}
+	return result
+}
+
+func parserForFile(path string) (string, bool) {
+	switch filepath.Ext(path) {
+	case ".go":
+		if strings.HasSuffix(path, "_test.go") {
+			return "test", true
+		}
+		return "go", true
+	case ".yaml", ".yml":
+		return "yaml", true
+	case ".md":
+		return "markdown", true
+	default:
+		return "", false
+	}
+}
+
+func markScanFile(files []domain.ScanFile, path string, status domain.ScanFileStatus, parserName string, entityCount int, reason string) {
+	for i := range files {
+		if files[i].Path != path {
+			continue
+		}
+		files[i].Status = status
+		files[i].Parser = parserName
+		files[i].EntityCount = entityCount
+		files[i].Reason = reason
+		return
+	}
+}
+
+func countEntitiesForFile(entities []domain.Entity, path string) int {
+	count := 0
+	for _, entity := range entities {
+		if entity.Source.File == path || containsPath(entity.Files, path) {
+			count++
+		}
+	}
+	return count
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
+}
+
+func summarizeScanFiles(files []domain.ScanFile) domain.ScanCoverage {
+	coverage := domain.ScanCoverage{Discovered: len(files)}
+	for _, file := range files {
+		switch file.Status {
+		case domain.ScanFileParsed:
+			coverage.Parsed++
+		case domain.ScanFileReused:
+			coverage.Reused++
+		case domain.ScanFileIgnored:
+			coverage.Ignored++
+		case domain.ScanFileFailed:
+			coverage.Failed++
+		}
+	}
+	return coverage
 }
 
 func changedFiles(files []domain.File, oldTimestamps map[string]string) (changed, unchanged []domain.File, deleted []string) {

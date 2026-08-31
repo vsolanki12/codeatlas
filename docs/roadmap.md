@@ -1,6 +1,6 @@
 # Roadmap
 
-CodeAtlas is a **deterministic reasoning engine for software architecture**. It derives higher-level engineering knowledge from code — without AI — so that AI assistants become presentation layers, not reasoning layers.
+CodeAtlas is a **deterministic engineering knowledge and query layer**. It derives higher-level engineering knowledge from code — without AI — so that AI assistants become replaceable consumers, not repository-analysis engines.
 
 Development progresses in phases. Each builds on the previous.
 
@@ -248,7 +248,51 @@ Development progresses in phases. Each builds on the previous.
 - Temporal enrichment remains opt-in; a non-temporal incremental scan clears history reused from an earlier temporal graph.
 - Compound MCP text is bounded by default; `detail=true` is required for verbose investigation, explanation, or impact text while structured output remains bounded and evidence-bearing.
 
-**Result:** Validation catches graph identity, endpoint, deterministic-ID, evidence, and completeness violations at scan and storage boundaries. Review output separates deterministic facts, inferred links, and unsupported coverage claims.
+### Phase 20: Coverage and Resumable Retrieval
+
+**Delivered:** Made parser boundaries and bounded list retrieval explicit for
+all repositories.
+
+- Scan graphs record a deterministic disposition for every discovered file:
+  parsed, ignored, or failed, with parser/reason metadata and aggregate
+  coverage exposed through stats and freshness.
+- Go-templated Kubernetes manifests retain static shape without inventing a
+  runtime name; unresolved manifests use a `template` entity identity.
+- Search, query, where, and temporal retrieval expose total, offset, limit,
+  and next offset through the query layer, CLI, and MCP.
+- Incremental reuse remains a scan-operation metric, not a persisted graph
+  fact, so identical repository snapshots keep deterministic graph bytes.
+
+**Result:** Consumers can distinguish incomplete evidence from unsupported file
+types and can continue a bounded query without treating truncation as absence.
+
+Validation also catches graph identity, endpoint, deterministic-ID, evidence,
+and completeness violations at scan and storage boundaries. Review output
+separates deterministic facts, inferred links, and unsupported coverage claims.
+
+### Phase 21: Verification, Relationship Continuation, and Type-Aware Calls
+
+**Delivered:** Hardened the graph contract at the boundaries where consumers
+need to know whether evidence is safe to use.
+
+- `atlas verify` provides a CI-friendly non-zero exit contract for current
+  schema, repository identity, commit/file-state verification, and complete
+  scans; ignored files are reported and can be made fatal explicitly.
+- Entity retrieval now paginates relationship evidence as well as entity
+  lists, preserving stable ordering and explicit continuation metadata in CLI,
+  query, compact, and MCP responses.
+- A best-effort standard-library `go/types` pass upgrades only statically
+  resolved call targets that already exist as graph entities. The edges carry
+  exact source evidence and `confidence: proven`; unresolved or dynamic calls
+  are never invented.
+- Assistant validation follows paginated CodeAtlas results and rejects graphs
+  whose schema is missing or not current before implementation or review
+  guidance.
+
+**Result:** Consumers can distinguish a verified graph from a merely readable
+graph, retrieve high-degree entities without silently losing relationships,
+and use stronger call evidence without moving probabilistic reasoning into the
+scanner.
 
 ---
 
@@ -276,7 +320,7 @@ context, but remains a replaceable downstream consumer and presentation layer.
 
 ## Next: Reducing Consumer Work Without Moving Probabilistic Reasoning into Atlas
 
-Phases 1–17 optimize retrieval and deterministic review preparation. Remaining
+Phases 1–21 optimize retrieval and deterministic review preparation. Remaining
 work should reduce repeated context and add evidence-backed analysis; it must
 not move probabilistic repository reasoning into the CodeAtlas core.
 
@@ -291,6 +335,8 @@ not move probabilistic repository reasoning into the CodeAtlas core.
 | 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Done |
 | 18. LLM Integration | Optional downstream AI layer for natural language summary and recommendations | Implemented in `codeatlas-assistant` |
 | 19. MCP Consumer Parity | Expose deterministic freshness and PR review through bounded MCP tools | Done |
+| 20. Coverage and Resumable Retrieval | Expose scan disposition and continuation metadata for bounded queries | Done |
+| 21. Verification and Type-Aware Evidence | Verify graph usability, page relationship evidence, and upgrade statically resolved calls | Done |
 
 Target: ~92–95% total reduction (from current ~70–80%).
 

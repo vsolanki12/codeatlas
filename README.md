@@ -145,6 +145,9 @@ atlas view -graph atlas-graph.json HostedClusterReconciler
 # Verify that the graph still describes the checkout before implementation work
 atlas freshness -graph atlas-graph.json -repo /path/to/your/project
 
+# Enforce current schema, verifiable checkout state, and complete scanning
+atlas verify -graph atlas-graph.json -repo /path/to/your/project
+
 # Compact JSON for assistants and other token-sensitive consumers
 atlas ask -graph atlas-graph.json HostedClusterReconciler -intent debug --json --compact
 ```
@@ -273,11 +276,11 @@ review; it intentionally omits changed source text.
 | `atlas_investigate` | Bounded entity context: relationships, callers, tests, siblings; `detail=true` enables verbose text |
 | `atlas_explain` | Bounded architectural narrative: reconciles → creates → calls → tested_by; `detail=true` enables verbose text |
 | `atlas_impact` | Bounded blast radius: callers, controllers, tests, resources, owners, and evidence; `detail=true` enables verbose text |
-| `atlas_search` | Find entities by text or kind. Relevance-ranked across all fields |
-| `atlas_entity` | Full entity detail by ID, or batch fetch multiple IDs |
-| `atlas_where` | Find entities by file path |
+| `atlas_search` | Find entities by text or kind. Relevance-ranked across all fields; returns total/nextOffset for bounded pagination |
+| `atlas_entity` | Full entity detail by ID, or batch fetch multiple IDs; relationship evidence is bounded and resumable with `relationship_offset` |
+| `atlas_where` | Find entities by file path with bounded, resumable pagination |
 | `atlas_context` | BFS subgraph around an entity |
-| `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities |
+| `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities with bounded, resumable pagination |
 | `atlas_stats` | Graph statistics |
 | `atlas_freshness` | Verify graph provenance and stored file state against a checkout |
 | `atlas_review` | Deterministic PR/diff review; supports `pr`, raw `diff`, and verified local `base`/`head` modes |
@@ -302,10 +305,11 @@ text/JSON formatting and no server needed.
 | `atlas where <path>` | Find entities by file path |
 | `atlas stats` | Graph statistics |
 | `atlas freshness` | Compare graph commit and stored file state with a checkout |
+| `atlas verify` | Fail when graph schema, identity, freshness, file state, or scan completeness cannot be verified |
 | `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius, pattern observations, and structural test links |
 | `atlas review --pr <owner/repo/number>` | Fetch GitHub PR metadata and diff, then run the same deterministic graph review |
 | `atlas serve` | Start the MCP server |
-| `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.) |
+| `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.); use relationship offset/limit for resumable evidence |
 
 All commands accept `--graph path` (defaults to `atlas.json`). JSON-capable
 queries also accept `--compact`, which keeps graph metadata, entity identity,
@@ -344,6 +348,6 @@ arguments.
 
 ## Status
 
-**Schema:** 1.4.0 · **MCP Tools:** 13 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Current:** deterministic graph, bounded retrieval, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
+**Schema:** 1.5.0 · **MCP Tools:** 13 · **CLI Commands:** 15 · **Parsers:** Go AST, template-aware YAML, Markdown, Test · **Current:** deterministic graph, explicit scan coverage, resumable bounded retrieval, type-aware call evidence, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

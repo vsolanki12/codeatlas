@@ -68,6 +68,13 @@ omitted. Query and MCP JSON responses are bounded and expose truncation and
 graph-status metadata so an LLM cannot mistake a partial response for a full
 repository inventory.
 
+Go call relationships are upgraded by a best-effort `go/types` pass when the
+static target resolves to an entity in the graph. Those edges carry
+`confidence: proven` and `parser: go-types`; unresolved, external, ambiguous,
+or dynamically dispatched calls are not guessed. Existing AST observations
+remain available as `inferred` evidence where applicable, and the type pass
+does not claim runtime execution or behavioral coverage.
+
 The review consumer may fetch PR metadata and a unified diff through GitHub's
 API, but it never parses the repository. Pattern analysis compares changed
 entities with graph-observed peers and cites those entities as evidence.
@@ -89,7 +96,7 @@ internal/domain               The vocabulary of CodeAtlas
     ▲ (every package imports domain)
     │
 cmd/atlas                     CLI entry point (scan, search, explain, impact, investigate,
-                                ask, view, context, where, stats, freshness, serve, query, review)
+                                ask, view, context, where, stats, freshness, verify, serve, query, review)
     │
     ├──► internal/scanner      Orchestrator — coordinates the full scan pipeline
     │       │
@@ -97,11 +104,11 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
     │       │
     │       ├──► internal/parser       Parses files into []domain.Entity
     │       │       ├── goparser.go    Go AST (controllers, functions, packages, imports, literals, embeds)
-    │       │       ├── yamlparser.go  YAML parser (CRDs, resources, property flattening)
+    │       │       ├── yamlparser.go  YAML parser (CRDs, resources, templates, property flattening)
     │       │       ├── mdparser.go    Markdown parser (documents and bounded excerpts)
     │       │       └── testparser.go  Test parser (test functions and calls)
     │       │
-    │       ├──► internal/graph        Builds []domain.Relationship between entities
+    │       ├──► internal/graph        Builds []domain.Relationship between entities and upgrades statically resolved calls
     │       │
     │       ├──► internal/temporal     Git history enrichment (LastAuthor, LastModified, ChangeCount)
     │       │
@@ -119,11 +126,11 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | Package | Responsibility | Depends On |
 |---|---|---|
 | `internal/domain` | Defines the vocabulary: Entity, Relationship, Evidence, Graph, Source | Nothing |
-| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review`, `freshness` |
-| `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup | `domain`, `discovery`, `parser`, `graph`, `storage`, `temporal`, `views` |
+| `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, verify, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review`, `freshness` |
+| `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup and type-aware call enrichment | `domain`, `discovery`, `parser`, `graph`, `storage`, `temporal`, `views` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
 | `internal/parser` | Parses individual files into entities; extracts imports (including alias normalization), literals, embeds, properties | `domain` |
-| `internal/graph` | Connects entities with typed, evidenced relationships | `domain` |
+| `internal/graph` | Connects entities with typed, evidenced relationships; `go/types` upgrades only statically resolved call targets already present in the graph | `domain` |
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
@@ -211,7 +218,7 @@ atlas scan -repo /path/to/repository -output atlas.json -temporal
 | Incremental eligibility and merge | `internal/scanner` | `Scan()` |
 | File parsing | `internal/parser` | `Parser.Parse()` |
 | Temporal enrichment | `internal/temporal` | `Enrich()` |
-| Relationship building | `internal/graph` | `(*RelationshipBuilder).Build()` |
+| Relationship building | `internal/graph` | `(*RelationshipBuilder).Build()`, `BuildTypedCallRelationships()` |
 | Structural validation | `internal/domain` | `Graph.Validate()` |
 | View compilation | `internal/views` | `Compile()`, `CompileQuestions()` |
 | Graph persistence | `internal/storage` | `WriteGraph()` |
@@ -248,7 +255,7 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 16 | Pattern Analysis (observed naming, error, logging, controller patterns) | Implemented |
 | 17 | Test Analysis (structural links and conservative evidence status) | Implemented |
 
-Current state: 13 MCP tools, 14 CLI commands, schema 1.4.0, deterministic PR review phases 14–17, and MCP consumer parity for freshness/review. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 13 MCP tools, 15 CLI commands, schema 1.5.0, explicit scan coverage, resumable bounded entity and relationship queries, type-aware call evidence, deterministic PR review phases 14–17, and MCP consumer parity for freshness/review. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 

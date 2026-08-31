@@ -3,7 +3,6 @@ package review
 import (
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/query"
@@ -26,9 +25,7 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 
 	for _, d := range diffs {
 		if d.Status == FileDeleted {
-			if strings.HasSuffix(d.Path, ".go") {
-				unmapped = append(unmapped, d.Path+" (deleted — no head-side mapping)")
-			}
+			unmapped = append(unmapped, d.Path+" (deleted — no head-side mapping)")
 			continue
 		}
 
@@ -39,9 +36,7 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 
 		entities := entitiesInFile(idx, path)
 		if len(entities) == 0 {
-			if strings.HasSuffix(d.Path, ".go") {
-				unmapped = append(unmapped, d.Path)
-			}
+			unmapped = append(unmapped, d.Path)
 			continue
 		}
 

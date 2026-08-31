@@ -17,6 +17,7 @@ func TestEntityKindString(t *testing.T) {
 		{KindTest, "test"},
 		{KindDocument, "document"},
 		{KindResource, "resource"},
+		{KindTemplate, "template"},
 		{KindUnknown, "unknown"},
 	}
 

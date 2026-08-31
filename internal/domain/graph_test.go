@@ -68,6 +68,31 @@ func TestGraphRelationshipWireKey(t *testing.T) {
 	}
 }
 
+func TestGraphScanCoverageRoundTrip(t *testing.T) {
+	g := Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: CurrentSchemaVersion,
+		ScanFiles: []ScanFile{{Path: "main.go", Status: ScanFileParsed, Parser: "go", EntityCount: 2}, {
+			Path: "README.rst", Status: ScanFileIgnored, Reason: "no parser registered for extension .rst",
+		}},
+		ScanCoverage: &ScanCoverage{Discovered: 2, Parsed: 1, Ignored: 1},
+	}
+	data, err := json.Marshal(g)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	var decoded Graph
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if decoded.ScanCoverage == nil || *decoded.ScanCoverage != *g.ScanCoverage {
+		t.Fatalf("scan coverage = %+v, want %+v", decoded.ScanCoverage, g.ScanCoverage)
+	}
+	if len(decoded.ScanFiles) != 2 || decoded.ScanFiles[1].Status != ScanFileIgnored {
+		t.Fatalf("scan files = %+v, want parsed and ignored entries", decoded.ScanFiles)
+	}
+}
+
 func containsJSONKey(data, key string) bool {
 	return len(data) >= len(key) && strings.Contains(data, key+":")
 }

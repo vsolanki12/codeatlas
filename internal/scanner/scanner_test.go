@@ -89,8 +89,8 @@ func TestScan_EndToEnd(t *testing.T) {
 	if g.Schema != "codeatlas" {
 		t.Errorf("schema = %q, want %q", g.Schema, "codeatlas")
 	}
-	if g.SchemaVersion != "1.4.0" {
-		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, "1.4.0")
+	if g.SchemaVersion != domain.CurrentSchemaVersion {
+		t.Errorf("schemaVersion = %q, want %q", g.SchemaVersion, domain.CurrentSchemaVersion)
 	}
 	if len(g.Entities) == 0 {
 		t.Error("graph has no entities")
@@ -106,6 +106,67 @@ func TestScan_EndToEnd(t *testing.T) {
 	}
 	if g.EntityIdentity != domain.CurrentEntityIdentity {
 		t.Errorf("entity identity = %q, want %q", g.EntityIdentity, domain.CurrentEntityIdentity)
+	}
+	if g.ScanCoverage == nil || g.ScanCoverage.Discovered != len(g.ScanFiles) || g.ScanCoverage.Failed != 0 {
+		t.Fatalf("unexpected scan coverage: %+v (files=%d)", g.ScanCoverage, len(g.ScanFiles))
+	}
+}
+
+func TestScan_RecordsCoverageForTemplatesAndIgnoredFiles(t *testing.T) {
+	repoDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifestDir := filepath.Join(repoDir, "config")
+	if err := os.MkdirAll(manifestDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "deployment.yaml"), []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Name }}
+spec:
+  replicas: {{ .Replicas }}
+`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "notes.txt"), []byte("not parsed by the current scanner\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	outPath := filepath.Join(t.TempDir(), "atlas.json")
+	result, err := Scan(repoDir, outPath, ScanOptions{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if result.Graph.ScanCoverage == nil {
+		t.Fatal("scan coverage is missing")
+	}
+	coverage := *result.Graph.ScanCoverage
+	if coverage.Discovered != 3 || coverage.Parsed != 2 || coverage.Ignored != 1 || coverage.Reused != 0 || coverage.Failed != 0 {
+		t.Fatalf("coverage = %+v, want discovered=3 parsed=2 ignored=1", coverage)
+	}
+	if !result.Graph.ScanComplete {
+		t.Fatalf("ignored files should not be reported as parser failures: %v", result.Graph.ScanWarnings)
+	}
+	statuses := make(map[string]domain.ScanFileStatus)
+	for _, file := range result.Graph.ScanFiles {
+		statuses[file.Path] = file.Status
+	}
+	if statuses["main.go"] != domain.ScanFileParsed || statuses["config/deployment.yaml"] != domain.ScanFileParsed || statuses["notes.txt"] != domain.ScanFileIgnored {
+		t.Fatalf("scan file statuses = %+v", statuses)
+	}
+	foundTemplate := false
+	for _, entity := range result.Graph.Entities {
+		if entity.Kind == domain.KindTemplate {
+			foundTemplate = true
+			if entity.Source.Parser != "yaml-template" || entity.Name != "Deployment template" {
+				t.Fatalf("template entity = %+v", entity)
+			}
+		}
+	}
+	if !foundTemplate {
+		t.Fatal("expected a template entity for the unresolved deployment name")
 	}
 }
 
@@ -217,6 +278,9 @@ func TestScan_IncompleteGraphForcesFullRescan(t *testing.T) {
 	}
 	if first.Graph.ScanComplete || len(first.Graph.ScanWarnings) == 0 {
 		t.Fatalf("expected incomplete initial graph, got complete=%v warnings=%v", first.Graph.ScanComplete, first.Graph.ScanWarnings)
+	}
+	if first.Graph.ScanCoverage == nil || first.Graph.ScanCoverage.Failed != 1 {
+		t.Fatalf("expected one failed scan file, got coverage=%+v", first.Graph.ScanCoverage)
 	}
 
 	second, err := Scan(repoDir, outPath, ScanOptions{PreviousGraph: outPath})

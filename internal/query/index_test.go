@@ -123,6 +123,9 @@ func TestEntityListResult_DeduplicatesAndCapsRelationships(t *testing.T) {
 	if !result.Truncated {
 		t.Fatal("expected relationship cap to be marked truncated")
 	}
+	if result.RelationshipTotal != 3 || result.RelationshipOffset != 0 || result.RelationshipLimit != 2 || result.NextRelationshipOffset != 2 || !result.RelationshipsTruncated {
+		t.Fatalf("relationship pagination metadata = %+v", result)
+	}
 	if result.Relationships[0].ID == result.Relationships[1].ID {
 		t.Fatal("relationships were not deduplicated")
 	}

@@ -68,14 +68,15 @@ func containsString(values []string, want string) bool {
 // GraphMetadata returns the small immutable portion of the graph that
 // consumers need to report freshness and scan completeness.
 type GraphMetadata struct {
-	SchemaVersion  string   `json:"schemaVersion"`
-	EntityIdentity string   `json:"entityIdentity,omitempty"`
-	Repository     string   `json:"repository"`
-	Commit         string   `json:"commit"`
-	Branch         string   `json:"branch"`
-	GeneratedAt    string   `json:"generatedAt"`
-	ScanComplete   bool     `json:"scanComplete"`
-	ScanWarnings   []string `json:"scanWarnings,omitempty"`
+	SchemaVersion  string               `json:"schemaVersion"`
+	EntityIdentity string               `json:"entityIdentity,omitempty"`
+	Repository     string               `json:"repository"`
+	Commit         string               `json:"commit"`
+	Branch         string               `json:"branch"`
+	GeneratedAt    string               `json:"generatedAt"`
+	ScanComplete   bool                 `json:"scanComplete"`
+	ScanWarnings   []string             `json:"scanWarnings,omitempty"`
+	ScanCoverage   *domain.ScanCoverage `json:"scanCoverage,omitempty"`
 }
 
 func (idx *Index) GraphMetadata() GraphMetadata {
@@ -88,7 +89,16 @@ func (idx *Index) GraphMetadata() GraphMetadata {
 		GeneratedAt:    idx.graph.GeneratedAt,
 		ScanComplete:   idx.graph.ScanComplete,
 		ScanWarnings:   append([]string(nil), idx.graph.ScanWarnings...),
+		ScanCoverage:   copyScanCoverage(idx.graph.ScanCoverage),
 	}
+}
+
+func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {
+	if coverage == nil {
+		return nil
+	}
+	copy := *coverage
+	return &copy
 }
 
 func newIndex(g domain.Graph) *Index {
@@ -199,6 +209,8 @@ func ParseKind(s string) (domain.EntityKind, bool) {
 		return domain.KindDocument, true
 	case "resource":
 		return domain.KindResource, true
+	case "template":
+		return domain.KindTemplate, true
 	default:
 		return domain.KindUnknown, false
 	}

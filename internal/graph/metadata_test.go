@@ -20,8 +20,8 @@ func TestBuildGraph_Metadata(t *testing.T) {
 	if g.Schema != "codeatlas" {
 		t.Errorf("Schema = %q, want %q", g.Schema, "codeatlas")
 	}
-	if g.SchemaVersion != "1.4.0" {
-		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, "1.4.0")
+	if g.SchemaVersion != domain.CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %q, want %q", g.SchemaVersion, domain.CurrentSchemaVersion)
 	}
 	if g.GeneratedAt != "" {
 		t.Errorf("GeneratedAt = %q, want empty for repository without git metadata", g.GeneratedAt)

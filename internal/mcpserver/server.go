@@ -41,15 +41,17 @@ func registerTools(s *mcp.Server, idx *query.Index, graphPath string) {
 }
 
 type entityInput struct {
-	ID    string   `json:"id,omitempty" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
-	IDs   []string `json:"ids,omitempty" jsonschema:"list of entity IDs to fetch"`
-	Brief bool     `json:"brief,omitempty" jsonschema:"if true, return only ID, file, line, description (saves tokens)"`
+	ID                 string   `json:"id,omitempty" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
+	IDs                []string `json:"ids,omitempty" jsonschema:"list of entity IDs to fetch"`
+	Brief              bool     `json:"brief,omitempty" jsonschema:"if true, return only ID, file, line, description (saves tokens)"`
+	RelationshipOffset int      `json:"relationship_offset,omitempty" jsonschema:"zero-based offset for this entity's relationships"`
+	RelationshipLimit  int      `json:"relationship_limit,omitempty" jsonschema:"maximum relationships to return (default 40, maximum 100)"`
 }
 
 func registerEntity(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_entity",
-		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, and calls. Use brief=true for compact output (ID, file, line only).",
+		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, calls, and a bounded evidence-bearing relationship page. Use brief=true for compact output; use relationship_offset to continue high-degree relationship results.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entityInput) (*mcp.CallToolResult, any, error) {
 		if len(input.IDs) > 0 {
 			const maxBatch = 50
@@ -94,20 +96,22 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 			}, nil, nil
 		}
 		text := query.FormatEntityFull(e)
-		rels := idx.GetRelationships(input.ID, "both", "")
-		truncated := false
-		if len(rels) > 40 {
-			rels = rels[:40]
-			truncated = true
+		relationshipLimit := input.RelationshipLimit
+		if relationshipLimit <= 0 {
+			relationshipLimit = 40
 		}
-		if len(rels) > 0 {
-			text += "Relationships:\n" + query.FormatRelationshipList(rels)
+		relationshipOffset, relationshipLimit, err := query.NormalizePage(input.RelationshipOffset, relationshipLimit)
+		if err != nil {
+			return nil, nil, err
 		}
-		if truncated {
-			text += "[TRUNCATED: relationship context capped; omitted relationships are not evidence of absence.]\n"
+		relationships := idx.RelationshipPage(input.ID, "both", "", relationshipOffset, relationshipLimit)
+		if len(relationships.Relationships) > 0 {
+			text += "Relationships:\n" + query.FormatRelationshipList(relationships.Relationships)
 		}
-		result := idx.CompactEntityListResult(idx.EntitiesByID([]string{e.ID}), true, 40)
-		result.Truncated = result.Truncated || truncated
+		if relationships.HasMore {
+			text += fmt.Sprintf("[TRUNCATED: relationship context capped; request relationship_offset=%d for the next page; omitted relationships are not evidence of absence.]\n", relationships.NextOffset())
+		}
+		result := idx.CompactEntityRelationshipPageResult(e, relationships)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: result,
@@ -139,25 +143,29 @@ func registerContext(s *mcp.Server, idx *query.Index) {
 }
 
 type searchInput struct {
-	Query string `json:"query,omitempty" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
-	Kind  string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource"`
+	Query  string `json:"query,omitempty" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
+	Kind   string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource, template"`
+	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
 func registerSearch(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
-		Description: "Find entities in the codebase by kind and/or name. Returns bounded entity summaries with file locations; use atlas_entity for full details.",
+		Description: "Find entities in the codebase by text and/or kind. Returns bounded entity summaries with file locations and total/nextOffset pagination metadata; use offset to continue a result set and atlas_entity for full details.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
-		results, truncated := idx.SearchWithStatus(input.Query, 20)
+		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		var page query.EntityPage
 		if input.Kind != "" {
-			results, truncated = idx.LookupWithStatus(input.Kind, input.Query, 20)
+			page = idx.LookupPage(input.Kind, input.Query, offset, limit)
+		} else {
+			page = idx.SearchPage(input.Query, offset, limit)
 		}
-		text := query.FormatEntityList(results)
-		if truncated {
-			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
-		}
-		result := idx.CompactEntityListResult(results, false, 0)
-		result.Truncated = result.Truncated || truncated
+		text := query.FormatEntityList(page.Entities) + query.FormatEntityPage(page)
+		result := idx.CompactEntityListPageResult(page, false, 0)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: result,
@@ -168,28 +176,31 @@ func registerSearch(s *mcp.Server, idx *query.Index) {
 type whereInput struct {
 	Path   string `json:"path" jsonschema:"file path substring to search for"`
 	Detail bool   `json:"detail,omitempty" jsonschema:"if true, return full entity details (name, calls, watches, description) instead of brief ID|file:line. Use for deep-diving a single file."`
+	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
 func registerWhere(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_where",
-		Description: "Find entities by file path. Returns entities defined in files matching the path substring. Use detail=true to get full entity info (replaces multiple atlas_entity calls for single-file investigation).",
+		Description: "Find entities by file path. Returns entities defined in files matching the path substring with total/nextOffset pagination metadata. Use offset to continue and detail=true for full entity info.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input whereInput) (*mcp.CallToolResult, any, error) {
-		results, truncated := idx.WhereWithStatus(input.Path, 30)
+		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		page := idx.WherePage(input.Path, offset, limit)
 		var text string
 		if input.Detail {
-			text = query.FormatEntityDetailList(results)
+			text = query.FormatEntityDetailList(page.Entities)
 		} else {
-			text = query.FormatEntityList(results)
+			text = query.FormatEntityList(page.Entities)
 		}
-		if truncated {
-			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
-		}
+		text += query.FormatEntityPage(page)
 		// Detail expands only the human-readable text. Keep MCP structured
 		// content bounded so a large file/package cannot bypass the token
 		// contract.
-		result := idx.CompactEntityListResult(results, input.Detail, 40)
-		result.Truncated = result.Truncated || truncated
+		result := idx.CompactEntityListPageResult(page, input.Detail, 40)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: result,
@@ -203,30 +214,34 @@ type temporalInput struct {
 	Since  string `json:"since,omitempty" jsonschema:"ISO date cutoff, e.g. 2026-05-01"`
 	Author string `json:"author,omitempty" jsonschema:"author email/name substring"`
 	Stale  bool   `json:"stale,omitempty" jsonschema:"if true, sort by oldest modification instead of most changes"`
+	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
 func registerTemporal(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_temporal",
-		Description: "Search entities by git history: who changed what and when. Requires --temporal scan.",
+		Description: "Search entities by git history: who changed what and when. Requires --temporal scan and returns total/nextOffset pagination metadata.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input temporalInput) (*mcp.CallToolResult, any, error) {
-		results, truncated := idx.TemporalWithStatus(input.Kind, input.Name, input.Since, input.Author, input.Stale, 20)
-		if len(results) == 0 {
+		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		page := idx.TemporalPage(input.Kind, input.Name, input.Since, input.Author, input.Stale, offset, limit)
+		if len(page.Entities) == 0 && page.Total == 0 {
+			result := idx.CompactEntityListPageResult(page, false, 0)
 			return &mcp.CallToolResult{
-				Content: []mcp.Content{&mcp.TextContent{Text: "No temporal data. Re-scan with --temporal flag."}},
+				Content:           []mcp.Content{&mcp.TextContent{Text: "No temporal data. Re-scan with --temporal flag.\n" + query.FormatEntityPage(page)}},
+				StructuredContent: result,
 			}, nil, nil
 		}
 		var lines []string
-		for _, e := range results {
+		for _, e := range page.Entities {
 			lines = append(lines, fmt.Sprintf("%s | %s:%d | changes=%d last=%s by=%s",
 				e.ID, e.Source.File, e.Source.Line, e.ChangeCount, e.LastModified, e.LastAuthor))
 		}
-		text := joinLines(lines)
-		if truncated {
-			text += "[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]\n"
-		}
-		result := idx.CompactEntityListResult(results, false, 0)
-		result.Truncated = result.Truncated || truncated
+		text := joinLines(lines) + query.FormatEntityPage(page)
+		result := idx.CompactEntityListPageResult(page, false, 0)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: result,

@@ -26,7 +26,8 @@ For product, code, and pipeline architecture, see [docs/architecture.md](docs/ar
 go build -o atlas ./cmd/atlas                          # Build
 go test ./...                                          # Run all tests
 atlas scan -repo /path/to/repo -output atlas-graph.json  # Scan a repo
-atlas serve -graph atlas-graph.json                     # Start MCP server
+  atlas serve -graph atlas-graph.json                     # Start MCP server
+  atlas verify -graph atlas-graph.json -repo /path/to/repo # Verify graph contract
 ```
 
 There is no `Makefile`, CI, or Docker configuration — the project builds with standard Go tooling.
@@ -43,11 +44,11 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 | Package | Responsibility |
 |---------|----------------|
 | `internal/domain` | Core types: `Entity`, `Relationship`, `Evidence`, `Graph`, `Source` |
-| `cmd/atlas` | CLI entry point: scan, search, explain, impact, investigate, ask, view, context, where, stats, serve, query, review |
+| `cmd/atlas` | CLI entry point: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, verify, serve, query, review |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup |
 | `internal/discovery` | Walks the repository, returns files with metadata |
 | `internal/parser` | Go AST, YAML, Markdown, Test parsers — produces entities |
-| `internal/graph` | Builds typed, evidenced relationships between entities |
+| `internal/graph` | Builds typed, evidenced relationships between entities; upgrades statically resolved calls with `go/types` evidence |
 | `internal/origin` | Import path classifier (stdlib vs known repos vs external) |
 | `internal/temporal` | Optional git history enrichment (LastAuthor, LastModified, ChangeCount) |
 | `internal/views` | Pre-computed controller/CRD knowledge views and question index |
@@ -59,13 +60,14 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 
 ## Graph Schema Invariants
 
-The Atlas Graph JSON (schema 1.4.0) is the product. All consumers read the same file. Key rules:
+The Atlas Graph JSON (schema 1.5.0) is the product. All consumers read the same file. Key rules:
 
 1. **No entity without a source.** If the scanner can't point to a file and line, the entity is not created.
 2. **No relationship without evidence.** Every edge carries `evidence` (parser, file, line, snippet, reason).
 3. **No manual entries.** If a fact must be added by hand, that's a missing parser — not a data entry task.
 4. **IDs are deterministic.** Same commit produces the same graph. No UUIDs, no timestamps in IDs.
 5. **Store forward, compute inverse.** Supported forward edges such as `calls`, `imports`, `owns`, and `tested_by` are stored once; query direction computes the reverse traversal instead of persisting a second copy.
+6. **Verify before implementation.** `atlas verify` is the machine-readable/non-zero-exit contract for current schema, repository identity, freshness, file state, and complete scan coverage.
 
 See [docs/data-model.md](docs/data-model.md) for the full schema specification.
 

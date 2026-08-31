@@ -95,6 +95,75 @@ func (g Graph) Validate() error {
 		}
 	}
 
+	if len(g.ScanFiles) > 0 && g.ScanCoverage == nil {
+		problems = append(problems, "scan files require scan coverage")
+	}
+	if g.ScanCoverage != nil {
+		coverage := g.ScanCoverage
+		if coverage.Discovered < 0 || coverage.Parsed < 0 || coverage.Reused < 0 || coverage.Ignored < 0 || coverage.Failed < 0 {
+			problems = append(problems, "scan coverage contains a negative count")
+		}
+		if coverage.Discovered != len(g.ScanFiles) {
+			problems = append(problems, fmt.Sprintf("scan coverage discovered=%d but scan files=%d", coverage.Discovered, len(g.ScanFiles)))
+		}
+		if coverage.Discovered != coverage.Parsed+coverage.Reused+coverage.Ignored+coverage.Failed {
+			problems = append(problems, "scan coverage counts do not add up to discovered files")
+		}
+		if g.ScanComplete && coverage.Failed > 0 {
+			problems = append(problems, "complete graph contains failed scan files")
+		}
+	}
+	scanFiles := make(map[string]bool, len(g.ScanFiles))
+	scanStatuses := make(map[string]ScanFileStatus, len(g.ScanFiles))
+	scanCounts := make(map[ScanFileStatus]int)
+	for _, file := range g.ScanFiles {
+		if file.EntityCount < 0 {
+			problems = append(problems, fmt.Sprintf("scan file %s has a negative entity count", file.Path))
+		}
+		if strings.TrimSpace(file.Path) == "" {
+			problems = append(problems, "scan file has empty path")
+		} else if err := validateRelativePath(file.Path, "scan file"); err != nil {
+			problems = append(problems, err.Error())
+		}
+		if scanFiles[file.Path] {
+			problems = append(problems, fmt.Sprintf("duplicate scan file: %s", file.Path))
+		}
+		scanFiles[file.Path] = true
+		scanStatuses[file.Path] = file.Status
+		scanCounts[file.Status]++
+		switch file.Status {
+		case ScanFileParsed, ScanFileReused:
+			if strings.TrimSpace(file.Parser) == "" {
+				problems = append(problems, fmt.Sprintf("scan file %s has no parser", file.Path))
+			}
+		case ScanFileIgnored, ScanFileFailed:
+			if strings.TrimSpace(file.Reason) == "" {
+				problems = append(problems, fmt.Sprintf("scan file %s has no reason", file.Path))
+			}
+		default:
+			problems = append(problems, fmt.Sprintf("scan file %s has invalid status: %q", file.Path, file.Status))
+		}
+	}
+	if g.ScanCoverage != nil {
+		coverage := g.ScanCoverage
+		for _, status := range []ScanFileStatus{ScanFileParsed, ScanFileReused, ScanFileIgnored, ScanFileFailed} {
+			var expected int
+			switch status {
+			case ScanFileParsed:
+				expected = coverage.Parsed
+			case ScanFileReused:
+				expected = coverage.Reused
+			case ScanFileIgnored:
+				expected = coverage.Ignored
+			case ScanFileFailed:
+				expected = coverage.Failed
+			}
+			if scanCounts[status] != expected {
+				problems = append(problems, fmt.Sprintf("scan coverage %s=%d but scan files=%d", status, expected, scanCounts[status]))
+			}
+		}
+	}
+
 	relationIDs := make(map[string]bool, len(g.Relationship))
 	relationshipsByID := make(map[string]Relationship, len(g.Relationship))
 	for _, r := range g.Relationship {
@@ -130,6 +199,14 @@ func (g Graph) Validate() error {
 		}
 		if strings.TrimSpace(r.Evidence.Reason) == "" {
 			problems = append(problems, fmt.Sprintf("relationship %s has no evidence reason", r.ID))
+		}
+		if len(g.ScanFiles) > 0 {
+			status, ok := scanStatuses[r.Evidence.File]
+			if !ok {
+				problems = append(problems, fmt.Sprintf("relationship %s evidence file is not in scan inventory: %s", r.ID, r.Evidence.File))
+			} else if status != ScanFileParsed && status != ScanFileReused {
+				problems = append(problems, fmt.Sprintf("relationship %s evidence file is not parsed: %s (%s)", r.ID, r.Evidence.File, status))
+			}
 		}
 	}
 

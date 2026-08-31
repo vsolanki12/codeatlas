@@ -46,6 +46,30 @@ func TestMapToEntities_MapsAdditionalImplementationFileApproximately(t *testing.
 	}
 }
 
+func TestMapToEntitiesReportsUnmappedNonGoFiles(t *testing.T) {
+	graph := domain.Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: "1.4.0",
+		Entities: []domain.Entity{{
+			ID:   "function:example.com/controllers.Reconcile",
+			Name: "Reconcile",
+			Kind: domain.KindFunction,
+			Source: domain.Source{
+				Parser: "go",
+				File:   "controllers/reconcile.go",
+				Line:   10,
+			},
+		}},
+	}
+	_, unmapped := MapToEntities([]FileDiff{{
+		Path:   "config/policy.json",
+		Status: FileModified,
+	}}, queryTestIndex(t, graph))
+	if len(unmapped) != 1 || unmapped[0] != "config/policy.json" {
+		t.Fatalf("unmapped files = %v, want the unsupported changed file", unmapped)
+	}
+}
+
 func TestAnalyzeAggregatesMergedEntityChangesAcrossFiles(t *testing.T) {
 	graph := domain.Graph{
 		Schema:        "codeatlas",

@@ -47,11 +47,13 @@ Source Repository
 | Metric | Value |
 |--------|-------|
 | MCP tools | 13 |
+| CLI commands | 15 |
 | Go packages | 11 |
-| Schema version | 1.4.0 |
+| Schema version | 1.5.0 |
 
 Run `atlas serve` then `atlas_stats` for current entity/relationship counts, or
-`atlas_freshness` to verify a graph against a checkout before implementation or
+`atlas_freshness` reports graph provenance; use `atlas verify` to enforce the
+current schema, checkout state, and scan completeness before implementation or
 review guidance.
 When graph metadata is available, the result also includes the scanned commit,
 branch, and generation timestamp for freshness checks.
@@ -63,7 +65,7 @@ branch, and generation timestamp for freshness checks.
 | **Stable** | Entity, Relationship, Graph schema, domain package | Safe to build on. Breaking changes require migration. |
 | **Stable** | Scanner pipeline, parsers, storage | Core infrastructure. Changes are additive. |
 | **Growing** | Query engine, MCP tools, compound queries | Actively adding capabilities. API may expand. |
-| **Experimental** | Intent guidance (Phase 8) | Design validated, implementation pending. May evolve. |
+| **Growing** | Intent guidance (`atlas_ask`) | Deterministic query planning is implemented and may evolve as views expand. |
 
 ## Non-Goals
 

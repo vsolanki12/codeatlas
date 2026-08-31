@@ -24,6 +24,7 @@ const (
 	KindTest
 	KindDocument
 	KindResource
+	KindTemplate
 	KindUnknown
 )
 
@@ -77,6 +78,7 @@ func (k EntityKind) String() string {
 		"test",
 		"document",
 		"resource",
+		"template",
 		"unknown",
 	}
 	if int(k) < len(name) {
@@ -110,6 +112,8 @@ func (k *EntityKind) UnmarshalJSON(data []byte) error {
 		*k = KindDocument
 	case "resource":
 		*k = KindResource
+	case "template":
+		*k = KindTemplate
 	default:
 		*k = KindUnknown
 	}

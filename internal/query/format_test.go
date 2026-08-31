@@ -195,6 +195,7 @@ func TestFormatStats(t *testing.T) {
 		Commit:        "abc1234",
 		Branch:        "feature/review",
 		GeneratedAt:   "2026-08-21T06:53:25Z",
+		ScanCoverage:  &domain.ScanCoverage{Discovered: 12, Parsed: 10, Ignored: 2},
 		TotalEntities: 100,
 		TotalRels:     50,
 		EntityCounts:  map[string]int{"controller": 10, "crd": 20},
@@ -219,6 +220,9 @@ func TestFormatStats(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing graph metadata %q in: %q", want, got)
 		}
+	}
+	if !strings.Contains(got, "scan coverage: discovered=12 parsed=10 reused=0 ignored=2 failed=0") {
+		t.Fatalf("missing scan coverage in: %q", got)
 	}
 }
 

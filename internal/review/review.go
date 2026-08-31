@@ -401,6 +401,9 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 	if !meta.ScanComplete {
 		limitations = append(limitations, "Graph scan is incomplete; parser warnings mean some repository facts may be absent.")
 	}
+	if meta.ScanCoverage != nil && meta.ScanCoverage.Ignored > 0 {
+		limitations = append(limitations, fmt.Sprintf("Graph discovery recorded %d ignored file(s) without a registered parser; changes to those files cannot be mapped to graph entities.", meta.ScanCoverage.Ignored))
+	}
 	if meta.Commit == "" {
 		limitations = append(limitations, "Graph commit metadata is unavailable; freshness could not be verified.")
 	}

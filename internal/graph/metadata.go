@@ -46,7 +46,7 @@ func BuildGraph(repoPath string, entities []domain.Entity, relationships []domai
 
 	return domain.Graph{
 		Schema:         "codeatlas",
-		SchemaVersion:  "1.4.0",
+		SchemaVersion:  domain.CurrentSchemaVersion,
 		EntityIdentity: domain.CurrentEntityIdentity,
 		// A scan timestamp and wall-clock duration make identical source
 		// snapshots produce different graph bytes. The commit timestamp is a

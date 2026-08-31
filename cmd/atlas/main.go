@@ -23,7 +23,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: atlas <command> [flags]")
 		fmt.Fprintln(os.Stderr, "commands: scan, search, explain, impact, investigate, ask, view,")
-		fmt.Fprintln(os.Stderr, "          context, where, stats, freshness, serve, query, review")
+		fmt.Fprintln(os.Stderr, "          context, where, stats, freshness, verify, serve, query, review")
 		os.Exit(1)
 	}
 
@@ -52,6 +52,8 @@ func main() {
 		runStats(os.Args[2:])
 	case "freshness":
 		runFreshness(os.Args[2:])
+	case "verify":
+		runVerify(os.Args[2:])
 	case "review":
 		runReview(os.Args[2:])
 	case "serve":
@@ -124,6 +126,8 @@ func runSearch(args []string) {
 	fs := flag.NewFlagSet("search", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	kind := fs.String("kind", "", "filter by entity kind (controller, function, crd, etc.)")
+	offset := fs.Int("offset", 0, "zero-based result offset")
+	limit := fs.Int("limit", query.DefaultPageLimit, "maximum results to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
@@ -133,6 +137,11 @@ func runSearch(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: atlas search <query> [--kind kind] [--graph path]")
 		os.Exit(1)
 	}
+	offsetValue, limitValue, err := query.NormalizePage(*offset, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid pagination: %v\n", err)
+		os.Exit(1)
+	}
 
 	idx, err := query.LoadGraph(*graphPath)
 	if err != nil {
@@ -140,35 +149,28 @@ func runSearch(args []string) {
 		os.Exit(1)
 	}
 
-	var results []*domain.Entity
-	var truncated bool
+	var page query.EntityPage
 	if q != "" {
 		if *kind != "" {
-			results, truncated = idx.LookupWithStatus(*kind, q, 20)
+			page = idx.LookupPage(*kind, q, offsetValue, limitValue)
 		} else {
-			results, truncated = idx.SearchWithStatus(q, 20)
+			page = idx.SearchPage(q, offsetValue, limitValue)
 		}
 	} else {
-		results, truncated = idx.LookupWithStatus(*kind, "", 20)
+		page = idx.LookupPage(*kind, "", offsetValue, limitValue)
 	}
 
 	if *jsonOutput {
 		if *compact {
-			result := idx.CompactEntityListResult(results, false, 0)
-			result.Truncated = result.Truncated || truncated
-			printJSON(result)
+			printJSON(idx.CompactEntityListPageResult(page, false, 0))
 			return
 		}
-		result := idx.EntityListResult(results, false, 0)
-		result.Truncated = result.Truncated || truncated
-		printJSON(result)
+		printJSON(idx.EntityListPageResult(page, false, 0))
 		return
 	}
 
-	fmt.Print(query.FormatEntityList(results))
-	if truncated {
-		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
-	}
+	fmt.Print(query.FormatEntityList(page.Entities))
+	fmt.Print(query.FormatEntityPage(page))
 }
 
 func runExplain(args []string) {
@@ -371,6 +373,10 @@ func runView(args []string) {
 func runQuery(args []string) {
 	fs := flag.NewFlagSet("query", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	offset := fs.Int("offset", 0, "zero-based result offset")
+	limit := fs.Int("limit", query.DefaultPageLimit, "maximum results to return (maximum 100)")
+	relationshipOffset := fs.Int("relationship-offset", 0, "zero-based relationship evidence offset")
+	relationshipLimit := fs.Int("relationship-limit", 40, "maximum relationship evidence to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
@@ -386,9 +392,19 @@ func runQuery(args []string) {
 
 	if kind == "" && name == "" {
 		fmt.Fprintln(os.Stderr, "usage: atlas query <kind> [name] [--graph path]")
-		fmt.Fprintln(os.Stderr, "  kind: controller, function, crd, test, package, document, resource")
+		fmt.Fprintln(os.Stderr, "  kind: controller, function, crd, test, package, document, resource, template")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "tip: use 'atlas search', 'atlas explain', 'atlas impact' for richer queries")
+		os.Exit(1)
+	}
+	offsetValue, limitValue, err := query.NormalizePage(*offset, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid pagination: %v\n", err)
+		os.Exit(1)
+	}
+	relationshipOffsetValue, relationshipLimitValue, err := query.NormalizePage(*relationshipOffset, *relationshipLimit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid relationship pagination: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -398,40 +414,40 @@ func runQuery(args []string) {
 		os.Exit(1)
 	}
 
-	results, resultTruncated := idx.LookupWithStatus(kind, name, 20)
-	if len(results) == 0 {
+	page := idx.LookupPage(kind, name, offsetValue, limitValue)
+	if len(page.Entities) == 0 {
 		fmt.Fprintf(os.Stderr, "no entities of kind %q", kind)
 		if name != "" {
 			fmt.Fprintf(os.Stderr, " matching %q", name)
 		}
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "valid kinds: controller, function, crd, test, package, document, resource")
+		fmt.Fprintln(os.Stderr, "valid kinds: controller, function, crd, test, package, document, resource, template")
 		fmt.Fprintln(os.Stderr, "tip: use 'atlas search' for text search across all entity types")
 		os.Exit(1)
 	}
 	if *jsonOutput {
 		if *compact {
-			result := idx.CompactEntityListResult(results, true, 40)
-			result.Truncated = result.Truncated || resultTruncated
-			printJSON(result)
+			printJSON(idx.CompactEntityListRelationshipPageResult(page, true, relationshipOffsetValue, relationshipLimitValue))
 			return
 		}
-		result := idx.EntityListResult(results, true, 40)
-		result.Truncated = result.Truncated || resultTruncated
-		printJSON(result)
+		printJSON(idx.EntityListRelationshipPageResult(page, true, relationshipOffsetValue, relationshipLimitValue))
 		return
 	}
-	fmt.Print(query.FormatEntityList(results))
-	entityResult := idx.EntityListResult(results, true, 40)
+	fmt.Print(query.FormatEntityList(page.Entities))
+	entityResult := idx.EntityListRelationshipPageResult(page, true, relationshipOffsetValue, relationshipLimitValue)
 	if len(entityResult.Relationships) > 0 {
 		fmt.Print(query.FormatRelationshipList(entityResult.Relationships))
 	}
-	if entityResult.Truncated {
-		fmt.Println("[TRUNCATED: relationship context capped; omitted relationships are not evidence of absence.]")
+	if entityResult.RelationshipsTruncated {
+		fmt.Print(query.FormatRelationshipPage(query.RelationshipPage{
+			Relationships: entityResult.Relationships,
+			Offset:        entityResult.RelationshipOffset,
+			Limit:         entityResult.RelationshipLimit,
+			Total:         entityResult.RelationshipTotal,
+			HasMore:       true,
+		}))
 	}
-	if resultTruncated {
-		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
-	}
+	fmt.Print(query.FormatEntityPage(page))
 }
 
 func runContext(args []string) {
@@ -469,6 +485,8 @@ func runContext(args []string) {
 func runWhere(args []string) {
 	fs := flag.NewFlagSet("where", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	offset := fs.Int("offset", 0, "zero-based result offset")
+	limit := fs.Int("limit", query.DefaultPageLimit, "maximum results to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
 	fs.Parse(reorderArgs(args))
@@ -478,6 +496,11 @@ func runWhere(args []string) {
 		fmt.Fprintln(os.Stderr, "usage: atlas where <symbol-or-path> [--graph path]")
 		os.Exit(1)
 	}
+	offsetValue, limitValue, err := query.NormalizePage(*offset, *limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid pagination: %v\n", err)
+		os.Exit(1)
+	}
 
 	idx, err := query.LoadGraph(*graphPath)
 	if err != nil {
@@ -485,23 +508,17 @@ func runWhere(args []string) {
 		os.Exit(1)
 	}
 
-	results, resultTruncated := idx.WhereWithStatus(symbol, 30)
+	page := idx.WherePage(symbol, offsetValue, limitValue)
 	if *jsonOutput {
 		if *compact {
-			result := idx.CompactEntityListResult(results, false, 0)
-			result.Truncated = result.Truncated || resultTruncated
-			printJSON(result)
+			printJSON(idx.CompactEntityListPageResult(page, false, 0))
 			return
 		}
-		result := idx.EntityListResult(results, false, 0)
-		result.Truncated = result.Truncated || resultTruncated
-		printJSON(result)
+		printJSON(idx.EntityListPageResult(page, false, 0))
 		return
 	}
-	fmt.Print(query.FormatEntityList(results))
-	if resultTruncated {
-		fmt.Println("[TRUNCATED: result limit reached; omitted entities are not evidence of absence.]")
-	}
+	fmt.Print(query.FormatEntityList(page.Entities))
+	fmt.Print(query.FormatEntityPage(page))
 }
 
 func runStats(args []string) {
@@ -545,8 +562,18 @@ func runFreshness(args []string) {
 	fmt.Fprintf(os.Stdout, "graph repository: %s\n", result.GraphRepository)
 	fmt.Fprintf(os.Stdout, "graph commit: %s\n", result.GraphCommit)
 	fmt.Fprintf(os.Stdout, "repo HEAD: %s\n", result.RepoHead)
+	fmt.Fprintf(os.Stdout, "schema: %s\n", result.SchemaVersion)
+	fmt.Fprintf(os.Stdout, "schema current: %t\n", result.SchemaCurrent)
 	fmt.Fprintf(os.Stdout, "entity identity: %s\n", result.EntityIdentity)
 	fmt.Fprintf(os.Stdout, "scan: %s\n", freshnessStatus(result.ScanComplete))
+	if result.ScanCoverage != nil {
+		fmt.Fprintf(os.Stdout, "scan coverage: discovered=%d parsed=%d reused=%d ignored=%d failed=%d\n",
+			result.ScanCoverage.Discovered, result.ScanCoverage.Parsed, result.ScanCoverage.Reused,
+			result.ScanCoverage.Ignored, result.ScanCoverage.Failed)
+	}
+	for _, warning := range result.ScanWarnings {
+		fmt.Fprintf(os.Stdout, "scan warning: %s\n", warning)
+	}
 	fmt.Fprintf(os.Stdout, "repository match: %t\n", result.RepositoryMatch)
 	fmt.Fprintf(os.Stdout, "state verification: %t\n", result.StateVerifiable)
 	fmt.Fprintf(os.Stdout, "dirty: %t\n", result.Dirty)
@@ -559,6 +586,59 @@ func runFreshness(args []string) {
 	for _, path := range result.DeletedFiles {
 		fmt.Fprintf(os.Stdout, "deleted file: %s\n", path)
 	}
+}
+
+func runVerify(args []string) {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	repo := fs.String("repo", "", "path to the repository checkout")
+	requireComplete := fs.Bool("require-complete", true, "require a complete scan with no parser failures")
+	failOnIgnored := fs.Bool("fail-on-ignored", false, "also fail when discovered files have no registered parser")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
+	fs.Parse(reorderArgs(args))
+
+	graph, err := storage.ReadGraph(*graphPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load graph: %v\n", err)
+		os.Exit(1)
+	}
+	result := freshness.Verify(*repo, graph, *graphPath, freshness.VerifyOptions{
+		RequireCurrentSchema: true,
+		RequireComplete:      *requireComplete,
+		FailOnIgnored:        *failOnIgnored,
+	})
+	if *jsonOutput {
+		printJSON(result)
+	} else {
+		fmt.Print(formatVerification(result))
+	}
+	if !result.Valid {
+		os.Exit(1)
+	}
+}
+
+func formatVerification(result freshness.Verification) string {
+	var b strings.Builder
+	b.WriteString("CODEATLAS GRAPH VERIFICATION\n")
+	b.WriteString("===========================\n")
+	f := result.Freshness
+	fmt.Fprintf(&b, "Graph repository: %s\n", f.GraphRepository)
+	fmt.Fprintf(&b, "Repository checked: %s\n", f.Repository)
+	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", f.SchemaVersion, f.SchemaCurrent)
+	fmt.Fprintf(&b, "Graph commit: %s\n", f.GraphCommit)
+	fmt.Fprintf(&b, "Repository HEAD: %s\n", f.RepoHead)
+	fmt.Fprintf(&b, "Scan complete: %t\n", f.ScanComplete)
+	fmt.Fprintf(&b, "Repository match: %t\n", f.RepositoryMatch)
+	fmt.Fprintf(&b, "Commit verifiable: %t\n", f.Verifiable)
+	fmt.Fprintf(&b, "File state verifiable: %t\n", f.StateVerifiable)
+	fmt.Fprintf(&b, "Valid: %t\n", result.Valid)
+	if len(result.Issues) > 0 {
+		b.WriteString("Issues:\n")
+		for _, issue := range result.Issues {
+			fmt.Fprintf(&b, "- %s\n", issue)
+		}
+	}
+	return b.String()
 }
 
 func freshnessStatus(complete bool) string {

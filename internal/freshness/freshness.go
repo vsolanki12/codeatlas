@@ -3,6 +3,7 @@
 package freshness
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,22 +15,103 @@ import (
 )
 
 type Result struct {
-	Available         bool     `json:"available"`
-	GraphRepository   string   `json:"graphRepository,omitempty"`
-	Repository        string   `json:"repository,omitempty"`
-	GraphCommit       string   `json:"graphCommit,omitempty"`
-	RepoHead          string   `json:"repoHead,omitempty"`
-	EntityIdentity    string   `json:"entityIdentity,omitempty"`
-	ScanComplete      bool     `json:"scanComplete"`
-	RepositoryMatch   bool     `json:"repositoryMatch"`
-	Verifiable        bool     `json:"verifiable"`
-	Stale             bool     `json:"stale"`
-	Dirty             bool     `json:"dirty"`
-	StateVerifiable   bool     `json:"stateVerifiable"`
-	FingerprintSource string   `json:"fingerprintSource,omitempty"`
-	ChangedFiles      []string `json:"changedFiles,omitempty"`
-	NewFiles          []string `json:"newFiles,omitempty"`
-	DeletedFiles      []string `json:"deletedFiles,omitempty"`
+	Available         bool                 `json:"available"`
+	SchemaVersion     string               `json:"schemaVersion,omitempty"`
+	SchemaCurrent     bool                 `json:"schemaCurrent"`
+	GraphRepository   string               `json:"graphRepository,omitempty"`
+	Repository        string               `json:"repository,omitempty"`
+	GraphCommit       string               `json:"graphCommit,omitempty"`
+	RepoHead          string               `json:"repoHead,omitempty"`
+	EntityIdentity    string               `json:"entityIdentity,omitempty"`
+	ScanComplete      bool                 `json:"scanComplete"`
+	ScanWarnings      []string             `json:"scanWarnings,omitempty"`
+	ScanCoverage      *domain.ScanCoverage `json:"scanCoverage,omitempty"`
+	RepositoryMatch   bool                 `json:"repositoryMatch"`
+	Verifiable        bool                 `json:"verifiable"`
+	Stale             bool                 `json:"stale"`
+	Dirty             bool                 `json:"dirty"`
+	StateVerifiable   bool                 `json:"stateVerifiable"`
+	FingerprintSource string               `json:"fingerprintSource,omitempty"`
+	ChangedFiles      []string             `json:"changedFiles,omitempty"`
+	NewFiles          []string             `json:"newFiles,omitempty"`
+	DeletedFiles      []string             `json:"deletedFiles,omitempty"`
+}
+
+// VerifyOptions controls the repository-integrity contract required by a
+// consumer. Ignored files are reported by default but do not invalidate a
+// graph unless FailOnIgnored is explicitly requested: an unsupported asset
+// should only block work that depends on that asset's evidence.
+type VerifyOptions struct {
+	RequireCurrentSchema bool
+	RequireComplete      bool
+	FailOnIgnored        bool
+}
+
+// Verification is the CI-friendly form of a freshness check. It keeps the
+// complete structured freshness result beside a deterministic list of issues
+// so scripts and AI clients do not need to parse human-readable text.
+type Verification struct {
+	Freshness Result   `json:"freshness"`
+	Valid     bool     `json:"valid"`
+	Issues    []string `json:"issues,omitempty"`
+}
+
+// Verify checks the graph against the requested repository and applies the
+// explicit consumer contract. The order of issues is stable for reproducible
+// CI output and prompt context.
+func Verify(repoPath string, graph domain.Graph, graphPath string, opts VerifyOptions) Verification {
+	result := Verification{Freshness: CheckWithGraphPath(repoPath, graph, graphPath)}
+	result.Issues = verificationIssues(result.Freshness, opts)
+	result.Valid = len(result.Issues) == 0
+	return result
+}
+
+func verificationIssues(result Result, opts VerifyOptions) []string {
+	var issues []string
+	if !result.Available {
+		return []string{"graph metadata is unavailable"}
+	}
+	if opts.RequireCurrentSchema {
+		switch {
+		case result.SchemaVersion == "":
+			issues = append(issues, "graph schema version is missing")
+		case !result.SchemaCurrent:
+			issues = append(issues, fmt.Sprintf("graph schema %s is not current (%s required)", result.SchemaVersion, domain.CurrentSchemaVersion))
+		}
+	}
+	if result.EntityIdentity != domain.CurrentEntityIdentity {
+		if result.EntityIdentity == "" {
+			issues = append(issues, "graph entity identity is missing")
+		} else {
+			issues = append(issues, fmt.Sprintf("graph entity identity %q is not current (%s required)", result.EntityIdentity, domain.CurrentEntityIdentity))
+		}
+	}
+	if !result.RepositoryMatch {
+		issues = append(issues, "graph repository does not match the requested checkout")
+	}
+	if !result.Verifiable {
+		issues = append(issues, "graph commit could not be verified against the repository")
+	}
+	if result.Stale {
+		issues = append(issues, "graph commit is stale compared with repository HEAD")
+	}
+	if !result.StateVerifiable {
+		issues = append(issues, "graph file state could not be verified")
+	}
+	if result.Dirty {
+		issues = append(issues, "repository files differ from the graph")
+	}
+	if opts.RequireComplete && !result.ScanComplete {
+		if result.ScanCoverage != nil && result.ScanCoverage.Failed > 0 {
+			issues = append(issues, fmt.Sprintf("graph scan is incomplete: %d file(s) failed to parse", result.ScanCoverage.Failed))
+		} else {
+			issues = append(issues, "graph scan is incomplete")
+		}
+	}
+	if opts.FailOnIgnored && result.ScanCoverage != nil && result.ScanCoverage.Ignored > 0 {
+		issues = append(issues, fmt.Sprintf("graph has %d ignored file(s) without a registered parser", result.ScanCoverage.Ignored))
+	}
+	return issues
 }
 
 // Check compares graph provenance and discovered file state with repoPath.
@@ -49,11 +131,15 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 	}
 	result := Result{
 		Available:       true,
+		SchemaVersion:   graph.SchemaVersion,
+		SchemaCurrent:   graph.SchemaVersion == domain.CurrentSchemaVersion,
 		GraphRepository: graph.Repository,
 		Repository:      repoPath,
 		GraphCommit:     graph.Commit,
 		EntityIdentity:  graph.EntityIdentity,
 		ScanComplete:    graph.ScanComplete,
+		ScanWarnings:    append([]string(nil), graph.ScanWarnings...),
+		ScanCoverage:    copyScanCoverage(graph.ScanCoverage),
 		RepositoryMatch: samePath(graph.Repository, repoPath),
 	}
 	if repoPath == "" {
@@ -120,6 +206,14 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 	sort.Strings(result.DeletedFiles)
 	result.Dirty = len(result.ChangedFiles) > 0 || len(result.NewFiles) > 0 || len(result.DeletedFiles) > 0
 	return result
+}
+
+func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {
+	if coverage == nil {
+		return nil
+	}
+	copy := *coverage
+	return &copy
 }
 
 func relativeFile(repoPath, filePath string) (string, bool) {
