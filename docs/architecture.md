@@ -36,7 +36,7 @@ Four-layer model:
 | Layer | What | Purpose |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
-| **Retrieval** | 11 MCP tools (primitives + compounds + views) | Answer questions about the graph |
+| **Retrieval** | 13 MCP tools (primitives + compounds + views + review/freshness) | Answer questions about the graph and prepare deterministic review evidence |
 | **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
@@ -113,7 +113,7 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
     │
     ├──► internal/review       PR review — diff parsing, entity mapping, enrichment, formatting
     │
-    └──► internal/mcpserver    MCP server — 11 tools served via stdio transport
+    └──► internal/mcpserver    MCP server — 13 tools served via stdio transport
 ```
 
 | Package | Responsibility | Depends On |
@@ -129,14 +129,14 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
 | `internal/review` | PR review: GitHub metadata, bounded diff evidence, diff parsing, entity-to-hunk mapping, graph enrichment, evidence-backed pattern observations, conservative test analysis, human-readable formatting | `domain`, `query` |
-| `internal/mcpserver` | MCP server: 11 tools via go-sdk stdio transport | `query` |
+| `internal/mcpserver` | MCP server: 13 tools via go-sdk stdio transport; query, freshness, and review adapters | `query`, `freshness`, `review` |
 
 Key constraints:
 - **Graph-producing packages use `domain` as the shared vocabulary.** `docs/data-model.md` describes the same contract. Thin consumers such as `mcpserver` depend on `query` and do not need to import `domain` directly.
 - **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, and `temporal` are independent. Only `scanner` composes them.
 - **`domain` depends on nothing.** Zero imports from other CodeAtlas packages. If `domain` ever imports another CodeAtlas package, the architecture is broken.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
-- **`mcpserver` depends only on `query`.** It's a thin MCP wrapper over the query engine.
+- **`mcpserver` remains a thin consumer adapter.** Query tools use `query`; `atlas_freshness` reuses the read-only freshness verifier and `atlas_review` reuses deterministic review services. It does not invoke parsers or write graphs.
 
 **Status:** Implemented. Run `atlas stats` for current counts.
 
@@ -248,7 +248,7 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 16 | Pattern Analysis (observed naming, error, logging, controller patterns) | Implemented |
 | 17 | Test Analysis (structural links and conservative evidence status) | Implemented |
 
-Current state: 11 MCP tools, 14 CLI commands, schema 1.4.0, and deterministic PR review phases 14–17. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 13 MCP tools, 14 CLI commands, schema 1.4.0, deterministic PR review phases 14–17, and MCP consumer parity for freshness/review. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 

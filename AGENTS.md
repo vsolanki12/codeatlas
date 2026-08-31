@@ -2,7 +2,7 @@
 
 This file provides guidance to AI coding agents when working with code in this repository. `CLAUDE.md` is a symlink to this file so that Claude Code auto-loads it; the `AGENTS.md` name is canonical.
 
-CodeAtlas is a deterministic engineering knowledge layer for large Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to CLI users, AI assistants, and review tooling via 11 MCP tools.
+CodeAtlas is a deterministic engineering knowledge layer for large Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to CLI users, AI assistants, and review tooling via 13 MCP tools.
 
 This file is intentionally minimal — detailed guidance lives in the referenced files below and should be updated there, not here.
 
@@ -38,7 +38,7 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 - **`internal/domain` depends on nothing.** It defines the shared vocabulary (`Entity`, `Relationship`, `Evidence`, `Graph`, `Source`). Every other package imports it. If `domain` ever imports another CodeAtlas package, the architecture is broken.
 - **Graph-producing packages use `domain`; `scanner` composes them.** `discovery`, `parser`, `graph`, `storage`, `temporal`, and `views` do not parse or query through another producer. `freshness` is a read-only verifier for stored graph provenance and file state.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
-- **`mcpserver` depends only on `query`.** It is a thin MCP wrapper over the query engine.
+- **`mcpserver` is a thin consumer adapter.** Graph-query tools use `query`; freshness and review tools reuse the read-only `freshness` verifier and deterministic `review` service. It never invokes parsers or writes the graph.
 
 | Package | Responsibility |
 |---------|----------------|
@@ -55,7 +55,7 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 | `internal/query` | In-memory index, search, explain, impact, investigate, ask |
 | `internal/freshness` | Read-only graph/check-out provenance and file-state verification |
 | `internal/review` | PR diff parsing, entity-to-hunk mapping, blast radius, test coverage |
-| `internal/mcpserver` | 11 MCP tools served via stdio transport |
+| `internal/mcpserver` | 13 MCP tools served via stdio transport: graph queries, freshness, and deterministic review |
 
 ## Graph Schema Invariants
 

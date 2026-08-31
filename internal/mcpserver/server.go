@@ -16,26 +16,28 @@ func Run(ctx context.Context, graphPath string) error {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "codeatlas",
-		Version: "0.2.0",
+		Version: "0.3.0",
 	}, nil)
 
-	registerTools(server, idx)
+	registerTools(server, idx, graphPath)
 
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
-func registerTools(s *mcp.Server, idx *query.Index) {
+func registerTools(s *mcp.Server, idx *query.Index, graphPath string) {
 	registerSearch(s, idx)
 	registerEntity(s, idx)
 	registerContext(s, idx)
 	registerWhere(s, idx)
 	registerStats(s, idx)
+	registerFreshness(s, idx, graphPath)
 	registerTemporal(s, idx)
 	registerInvestigate(s, idx)
 	registerExplain(s, idx)
 	registerImpact(s, idx)
 	registerView(s, idx)
 	registerAsk(s, idx)
+	registerReview(s, idx, graphPath)
 }
 
 type entityInput struct {

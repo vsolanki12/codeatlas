@@ -137,6 +137,20 @@ func RunFromDiffInRepo(diffSource, graphPath, base, head, repo string) (*ReviewR
 	return runFromDiff(diffSource, graphPath, base, head, repo)
 }
 
+// RunFromDiffText reviews an already-loaded unified diff without requiring a
+// temporary file. It is the transport-neutral entry point used by MCP clients
+// that send diff content directly in a tool request.
+func RunFromDiffText(diffOutput, graphPath, base, head string) (*ReviewResult, error) {
+	return runFromDiffText(diffOutput, graphPath, base, head, "")
+}
+
+// RunFromDiffTextInRepo is the verified text variant. The graph commit and
+// stored file state must match the supplied repository checkout before the
+// review is returned.
+func RunFromDiffTextInRepo(diffOutput, graphPath, base, head, repo string) (*ReviewResult, error) {
+	return runFromDiffText(diffOutput, graphPath, base, head, repo)
+}
+
 // RunFromPR fetches deterministic pull-request metadata and the GitHub diff
 // through the gh CLI. It does not clone or fetch a repository. The graph is
 // considered head-matched only when its recorded commit equals the PR head;
@@ -174,11 +188,6 @@ func runFromPRWithRunner(prInput, graphPath string, run githubRunner) (*ReviewRe
 }
 
 func runFromDiff(diffSource, graphPath, base, head, repo string) (*ReviewResult, error) {
-	idx, err := query.LoadGraph(graphPath)
-	if err != nil {
-		return nil, fmt.Errorf("load graph: %w", err)
-	}
-
 	var diffOutput string
 	if diffSource == "-" {
 		data, err := io.ReadAll(os.Stdin)
@@ -192,6 +201,18 @@ func runFromDiff(diffSource, graphPath, base, head, repo string) (*ReviewResult,
 			return nil, fmt.Errorf("read diff file: %w", err)
 		}
 		diffOutput = string(data)
+	}
+
+	return runFromDiffText(diffOutput, graphPath, base, head, repo)
+}
+
+func runFromDiffText(diffOutput, graphPath, base, head, repo string) (*ReviewResult, error) {
+	idx, err := query.LoadGraph(graphPath)
+	if err != nil {
+		return nil, fmt.Errorf("load graph: %w", err)
+	}
+	if identity := idx.GraphMetadata().EntityIdentity; identity != domain.CurrentEntityIdentity {
+		return nil, fmt.Errorf("review refused: graph uses legacy or unsupported entity identity %q; rescan before reviewing", identity)
 	}
 
 	diffs := ParseDiff(diffOutput)

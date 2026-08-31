@@ -187,7 +187,7 @@ Development progresses in phases. Each builds on the previous.
 - Default (no intent): returns view only (cheapest path)
 - Tool description guides Claude to use `atlas_ask` first
 
-**Result:** Claude asks one question, gets complete answer. 11 MCP tools total.
+**Result:** A consumer asks one question, gets a bounded evidence packet. 11 graph-query MCP tools total at this stage.
 
 ---
 
@@ -290,6 +290,7 @@ not move probabilistic repository reasoning into the CodeAtlas core.
 | 16. Pattern Analysis | Compare PR against repo conventions: naming, error handling, logging | Done |
 | 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Done |
 | 18. LLM Integration | Optional downstream AI layer for natural language summary and recommendations | Implemented in `codeatlas-assistant` |
+| 19. MCP Consumer Parity | Expose deterministic freshness and PR review through bounded MCP tools | Done |
 
 Target: ~92–95% total reduction (from current ~70–80%).
 
@@ -358,6 +359,21 @@ Optional AI layer — last in the pipeline, never first.
   implementation context is refused or reported.
 
 **Principle:** LLM adds clarity, not knowledge. All facts come from Atlas. If Atlas can't prove it, LLM can't claim it.
+
+---
+
+### Phase 19: MCP Consumer Parity (Delivered)
+
+The MCP server now exposes the deterministic capabilities that were previously
+CLI-only:
+
+- `atlas_freshness` verifies graph provenance and checkout state without writing
+  files.
+- `atlas_review` supports GitHub PRs, supplied unified diffs, and verified local
+  git refs through the existing `internal/review` service.
+- MCP review responses use bounded entity summaries, preserve relationship
+  evidence, and mark truncation explicitly to reduce downstream context.
+- Scanning remains CLI-only; MCP consumers cannot replace the graph they query.
 
 ---
 

@@ -27,7 +27,7 @@ Source Repository
    Query Engine        Loads Atlas Graph and answers graph queries
         │
         ▼
-    MCP Server         11 tools via Model Context Protocol
+    MCP Server         13 tools via Model Context Protocol
         │
         ▼
     Consumers          Claude Code, VS Code, Cursor, any MCP client
@@ -38,7 +38,7 @@ Source Repository
 | Layer | What | Changes |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Every scan |
-| **Retrieval** | 11 MCP tools | Quarterly |
+| **Retrieval** | 13 MCP tools | Quarterly |
 | **Guidance** | Intent-aware query planning (`atlas_ask`) | As capabilities evolve |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Consumer-driven |
 
@@ -46,11 +46,13 @@ Source Repository
 
 | Metric | Value |
 |--------|-------|
-| MCP tools | 11 |
+| MCP tools | 13 |
 | Go packages | 11 |
 | Schema version | 1.4.0 |
 
-Run `atlas serve` then `atlas_stats` for current entity/relationship counts.
+Run `atlas serve` then `atlas_stats` for current entity/relationship counts, or
+`atlas_freshness` to verify a graph against a checkout before implementation or
+review guidance.
 When graph metadata is available, the result also includes the scanned commit,
 branch, and generation timestamp for freshness checks.
 

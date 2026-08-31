@@ -1,6 +1,6 @@
 # CodeAtlas
 
-**A deterministic engineering knowledge layer for large Go repositories.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of entities and evidenced relationships — then serves bounded graph context to CLI users, AI assistants, and review tooling through 11 [MCP](https://modelcontextprotocol.io/) tools.
+**A deterministic engineering knowledge layer for large Go repositories.** CodeAtlas parses source code, Kubernetes manifests, docs, and tests to build a structured graph of entities and evidenced relationships — then serves bounded graph context to CLI users, AI assistants, and review tooling through 13 [MCP](https://modelcontextprotocol.io/) tools.
 
 Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Repeated questions reuse the same deterministic facts, reducing context size and cost while keeping evidence tied to the source repository.
 
@@ -201,12 +201,48 @@ Add to `~/.mcp.json`:
 }
 ```
 
-Restart Claude Code. All 11 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev).
+Restart Claude Code. All 13 tools are now available. Works with any MCP-compatible client (VS Code, Cursor, Continue.dev, and Codex).
 
 Compound tools return bounded human-readable text by default so MCP clients do
 not pay for repeated full entity payloads. Use `detail=true` on
 `atlas_investigate`, `atlas_explain`, or `atlas_impact` when verbose text is
 needed. Structured responses remain bounded and retain relationship evidence.
+
+### Connect to Codex
+
+Codex uses `~/.codex/config.toml` for local MCP servers. Add CodeAtlas with the
+Codex CLI, using absolute paths so the server does not depend on the current
+working directory:
+
+```bash
+codex mcp add codeatlas -- \
+  /absolute/path/to/atlas serve \
+  --graph /absolute/path/to/atlas-graph.json
+codex mcp list
+```
+
+Restart the local Codex app or CLI, then use `/mcp` in the Codex TUI to confirm
+the server. The server loads one graph at startup; configure one server per
+repository graph when working across repositories. Prefer `atlas_ask`,
+`atlas_freshness`, and compact responses before requesting verbose details.
+
+The graph-query tools are read-only. `atlas_review` is deterministic, but `pr`
+mode may call the authenticated `gh` CLI to retrieve GitHub metadata and a diff.
+Scanning remains a CLI operation so an MCP client cannot silently replace the
+graph it is using.
+
+MCP review examples:
+
+```json
+{"pr":"openshift/hypershift/8968"}
+{"diff":"diff --git ...", "base":"upstream/main", "head":"HEAD", "repo":"/path/to/repo"}
+{"base":"upstream/main", "head":"HEAD", "repo":"/path/to/repo", "omit_diff":true}
+```
+
+The first form uses `gh` and reports whether the graph commit matches the PR
+head. The second form is verified only when `repo` is supplied and the graph
+matches that checkout. The third form is useful for a low-token structural
+review; it intentionally omits changed source text.
 
 ---
 
@@ -221,12 +257,14 @@ needed. Structured responses remain bounded and retain relationship evidence.
 | "What changed the most?" | `atlas_temporal` | Most-changed, stalest, or recently-modified entities by git history |
 | "Quick summary of X" | `atlas_view` | Pre-computed engineering view: manages, managed by, tests, files, owners |
 | "How does X work?" (one call) | `atlas_ask` | Bounded view + explain/impact/investigate context in one JSON-capable call |
+| "Is this graph current?" | `atlas_freshness` | Read-only checkout/provenance verification with bounded file differences |
+| "What does this PR change?" | `atlas_review` | Deterministic diff-to-graph review with evidence, blast radius, tests, patterns, and limitations |
 
 ---
 
 ## All MCP Tools
 
-11 tools served via `atlas serve`:
+13 tools served via `atlas serve`:
 
 | Tool | Purpose |
 |------|---------|
@@ -241,6 +279,8 @@ needed. Structured responses remain bounded and retain relationship evidence.
 | `atlas_context` | BFS subgraph around an entity |
 | `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities |
 | `atlas_stats` | Graph statistics |
+| `atlas_freshness` | Verify graph provenance and stored file state against a checkout |
+| `atlas_review` | Deterministic PR/diff review; supports `pr`, raw `diff`, and verified local `base`/`head` modes |
 
 ---
 
@@ -304,6 +344,6 @@ arguments.
 
 ## Status
 
-**Schema:** 1.4.0 · **MCP Tools:** 11 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Current:** deterministic graph, bounded retrieval, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
+**Schema:** 1.4.0 · **MCP Tools:** 13 · **CLI Commands:** 14 · **Parsers:** Go AST, YAML, Markdown, Test · **Current:** deterministic graph, bounded retrieval, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.
