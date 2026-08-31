@@ -276,7 +276,7 @@ context, but remains a replaceable downstream consumer and presentation layer.
 
 ## Next: Reducing Consumer Work Without Moving Probabilistic Reasoning into Atlas
 
-Phases 1–14 optimize retrieval and deterministic review preparation. Remaining
+Phases 1–17 optimize retrieval and deterministic review preparation. Remaining
 work should reduce repeated context and add evidence-backed analysis; it must
 not move probabilistic repository reasoning into the CodeAtlas core.
 
@@ -286,16 +286,16 @@ not move probabilistic repository reasoning into the CodeAtlas core.
 | 12. Query Planner | Atlas internally orchestrates graph traversals and returns one result | Done |
 | 13. Knowledge Cache + Question Index | Cache precomputed answers to common engineering questions | Done |
 | 14. PR Review | Deterministic PR review: diff → entities → blast radius → test coverage | Done |
-| 15. PR Metadata | Fetch PR title, description, labels from GitHub API (`--pr` flag) | Planned |
-| 16. Pattern Analysis | Compare PR against repo conventions: naming, error handling, logging | Planned |
-| 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Planned |
+| 15. PR Metadata | Fetch PR title, description, labels from GitHub API (`--pr` flag) | Done |
+| 16. Pattern Analysis | Compare PR against repo conventions: naming, error handling, logging | Done |
+| 17. Test Analysis | Evaluate test sufficiency: is changed behavior actually covered? | Done |
 | 18. LLM Integration | Optional downstream AI layer for natural language summary and recommendations | Implemented in `codeatlas-assistant` |
 
 Target: ~92–95% total reduction (from current ~70–80%).
 
 ---
 
-### Phase 15: PR Metadata (Planned)
+### Phase 15: PR Metadata (Delivered)
 
 Fetch PR title, description, and labels from GitHub API via `--pr` flag.
 
@@ -304,12 +304,14 @@ Fetch PR title, description, and labels from GitHub API via `--pr` flag.
 - Adds "What This PR Does" section to review output using PR description
 - Diff fetched via GitHub API (standard unified diff format)
 - No git clone or fetch required
+- Bounds and labels PR body/file metadata, and reports graph-to-PR-head freshness
+  without claiming checkout verification
 
 **Principle:** Still deterministic. PR description is user-provided context, not AI-generated.
 
 ---
 
-### Phase 16: Pattern Analysis (Planned)
+### Phase 16: Pattern Analysis (Delivered)
 
 Compare PR changes against existing repo patterns extracted from the graph.
 
@@ -317,19 +319,26 @@ Compare PR changes against existing repo patterns extracted from the graph.
 - Error handling: does the code follow the repo's error wrapping style?
 - Logging patterns: are log calls consistent with the file/package?
 - Controller patterns: does a new reconciler follow existing reconciler structure?
+- Compares only against deterministic same-package or same-package-controller
+  peer observations, with source evidence and bounded output
+- Reports `MATCHES_OBSERVED`, `DIFFERS_OBSERVED`, or
+  `INSUFFICIENT_EVIDENCE`; a difference is never presented as a defect
 
 **Principle:** Patterns derived from the graph, not from rules. "This repo does X, this PR does Y" — facts, not opinions.
 
 ---
 
-### Phase 17: Test Analysis (Planned)
+### Phase 17: Test Analysis (Delivered)
 
 Evaluate test sufficiency for changed code.
 
 - Does a changed function have tests? (graph `tested_by` edges)
 - Are new functions tested? (new entities without test links)
 - Do tests cover the changed behavior or just the function signature?
-- Test gap report: "These functions changed but have no test coverage in the graph"
+- Separates stored test links from naming or same-file inferred links
+- Reports `INSUFFICIENT_EVIDENCE` whenever changed behavior or runtime coverage
+  cannot be proven; absence of an edge is not called a missing test
+- Keeps branch/runtime execution claims outside the deterministic review
 
 **Principle:** Conservative. "INSUFFICIENT_EVIDENCE" when Atlas can't prove coverage. Never "Missing test" — Atlas doesn't know what you chose not to test.
 

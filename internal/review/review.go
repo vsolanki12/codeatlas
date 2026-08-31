@@ -16,6 +16,7 @@ import (
 
 type EntityReview struct {
 	Entity                 *domain.Entity         `json:"entity"`
+	Added                  bool                   `json:"added,omitempty"`
 	Approximate            bool                   `json:"approximate"`
 	ChangedFiles           []string               `json:"changedFiles,omitempty"`
 	Hunks                  []Hunk                 `json:"hunks,omitempty"`
@@ -27,6 +28,51 @@ type EntityReview struct {
 	Tests                  []*domain.Entity       `json:"tests,omitempty"`
 	Resources              []*domain.Entity       `json:"resources,omitempty"`
 	View                   *domain.View           `json:"view,omitempty"`
+	Patterns               []PatternFinding       `json:"patterns,omitempty"`
+	addedLines             []AddedLine
+	addedLinesTruncated    bool
+	deletedLines           []DeletedLine
+	deletedLinesTruncated  bool
+}
+
+// PatternFinding is a deterministic comparison with observations already
+// present in the graph. A difference is not a defect; consumers must treat it
+// as a review lead and inspect the cited evidence.
+type PatternFinding struct {
+	Area              string            `json:"area"`
+	Status            string            `json:"status"`
+	Summary           string            `json:"summary"`
+	Evidence          []PatternEvidence `json:"evidence,omitempty"`
+	EvidenceTruncated bool              `json:"evidenceTruncated,omitempty"`
+}
+
+type PatternEvidence struct {
+	EntityID string `json:"entityID,omitempty"`
+	File     string `json:"file,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Detail   string `json:"detail"`
+}
+
+// TestAssessment reports only structural graph evidence. It deliberately
+// never claims that a test executed or that a changed branch is covered.
+type TestAssessment struct {
+	EntityID               string          `json:"entityID"`
+	EntityName             string          `json:"entityName"`
+	Added                  bool            `json:"added,omitempty"`
+	Status                 string          `json:"status"`
+	LinkedTests            []TestReference `json:"linkedTests,omitempty"`
+	InferredTests          []TestReference `json:"inferredTests,omitempty"`
+	LinkedTestsTruncated   bool            `json:"linkedTestsTruncated,omitempty"`
+	InferredTestsTruncated bool            `json:"inferredTestsTruncated,omitempty"`
+	Coverage               string          `json:"coverage"`
+	Reason                 string          `json:"reason"`
+}
+
+type TestReference struct {
+	Test         *domain.Entity       `json:"test"`
+	Relationship *domain.Relationship `json:"relationship,omitempty"`
+	Confidence   domain.Confidence    `json:"confidence,omitempty"`
+	Reason       string               `json:"reason"`
 }
 
 type TestLink struct {
@@ -41,11 +87,13 @@ type TestLink struct {
 type ReviewResult struct {
 	Base              string              `json:"base"`
 	Head              string              `json:"head"`
+	PR                *PRMetadata         `json:"pr,omitempty"`
 	Graph             query.GraphMetadata `json:"graph"`
 	GraphFreshness    string              `json:"graphFreshness"`
 	ChangedFiles      []FileDiff          `json:"changedFiles"`
 	Functions         []EntityReview      `json:"functions,omitempty"`
 	Tests             []TestLink          `json:"tests,omitempty"`
+	TestAssessments   []TestAssessment    `json:"testAssessments,omitempty"`
 	UnmappedFiles     []string            `json:"unmappedFiles,omitempty"`
 	Limitations       []string            `json:"limitations"`
 	Heuristics        []string            `json:"heuristics"`
@@ -87,6 +135,42 @@ func RunFromDiff(diffSource, graphPath, base, head string) (*ReviewResult, error
 // explicitly reports that graph freshness could not be checked.
 func RunFromDiffInRepo(diffSource, graphPath, base, head, repo string) (*ReviewResult, error) {
 	return runFromDiff(diffSource, graphPath, base, head, repo)
+}
+
+// RunFromPR fetches deterministic pull-request metadata and the GitHub diff
+// through the gh CLI. It does not clone or fetch a repository. The graph is
+// considered head-matched only when its recorded commit equals the PR head;
+// without a checkout, file fingerprints cannot be independently verified.
+func RunFromPR(prInput, graphPath string) (*ReviewResult, error) {
+	return runFromPR(prInput, graphPath, runGitHub)
+}
+
+func runFromPR(prInput, graphPath string, run githubRunner) (*ReviewResult, error) {
+	idx, err := query.LoadGraph(graphPath)
+	if err != nil {
+		return nil, fmt.Errorf("load graph: %w", err)
+	}
+	if identity := idx.GraphMetadata().EntityIdentity; identity != domain.CurrentEntityIdentity {
+		return nil, fmt.Errorf("review refused: graph uses legacy or unsupported entity identity %q; rescan before reviewing", identity)
+	}
+	ref, err := parsePRRef(prInput)
+	if err != nil {
+		return nil, err
+	}
+	metadata, diffOutput, err := fetchPR(ref, run)
+	if err != nil {
+		return nil, err
+	}
+
+	result := Analyze(ParseDiff(diffOutput), idx, metadata.BaseSHA, metadata.HeadSHA)
+	result.PR = &metadata
+	attachDiffExcerpt(result, diffOutput)
+	markPRGraphStatus(result)
+	return result, nil
+}
+
+func runFromPRWithRunner(prInput, graphPath string, run githubRunner) (*ReviewResult, error) {
+	return runFromPR(prInput, graphPath, run)
 }
 
 func runFromDiff(diffSource, graphPath, base, head, repo string) (*ReviewResult, error) {
@@ -173,9 +257,14 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		}
 		if index, seen := entityIndexes[ce.Entity.ID]; seen {
 			if index >= 0 {
+				functions[index].Added = functions[index].Added || isAddedEntity(ce)
 				functions[index].Approximate = functions[index].Approximate || ce.Approximate
 				functions[index].ChangedFiles = appendUniqueReviewFile(functions[index].ChangedFiles, ce.Path)
 				functions[index].Hunks = append(functions[index].Hunks, ce.Hunks...)
+				functions[index].addedLines = append(functions[index].addedLines, ce.AddedLines...)
+				functions[index].addedLinesTruncated = functions[index].addedLinesTruncated || ce.AddedLinesTruncated
+				functions[index].deletedLines = append(functions[index].deletedLines, ce.DeletedLines...)
+				functions[index].deletedLinesTruncated = functions[index].deletedLinesTruncated || ce.DeletedLinesTruncated
 				if len(functions[index].Hunks) > 20 {
 					functions[index].Hunks = functions[index].Hunks[:20]
 					functions[index].RelationshipsTruncated = true
@@ -187,12 +276,17 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 
 		relationships := idx.GetRelationships(ce.Entity.ID, "both", "")
 		er := EntityReview{
-			Entity:        ce.Entity,
-			Approximate:   ce.Approximate,
-			ChangedFiles:  appendUniqueReviewFile(nil, ce.Path),
-			Hunks:         append([]Hunk(nil), ce.Hunks...),
-			Callees:       ce.Entity.Calls,
-			Relationships: relationships,
+			Entity:                ce.Entity,
+			Added:                 isAddedEntity(ce),
+			Approximate:           ce.Approximate,
+			ChangedFiles:          appendUniqueReviewFile(nil, ce.Path),
+			Hunks:                 append([]Hunk(nil), ce.Hunks...),
+			Callees:               ce.Entity.Calls,
+			Relationships:         relationships,
+			addedLines:            append([]AddedLine(nil), ce.AddedLines...),
+			addedLinesTruncated:   ce.AddedLinesTruncated,
+			deletedLines:          append([]DeletedLine(nil), ce.DeletedLines...),
+			deletedLinesTruncated: ce.DeletedLinesTruncated,
 		}
 		entityIndexes[ce.Entity.ID] = len(functions)
 		if len(er.Callees) > 40 {
@@ -264,6 +358,10 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		tl.Targets, tl.Relationships, tl.Reason, tl.Confidence = inferTestTargets(te.Entity, functions, idx)
 		tests = append(tests, tl)
 	}
+	for i := range functions {
+		functions[i].Patterns = analyzePatterns(functions[i], idx)
+	}
+	testAssessments := analyzeTests(functions, tests, idx)
 
 	meta := idx.GraphMetadata()
 	limitations := []string{
@@ -294,6 +392,7 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		ChangedFiles:      diffs,
 		Functions:         functions,
 		Tests:             tests,
+		TestAssessments:   testAssessments,
 		UnmappedFiles:     unmapped,
 		Limitations:       limitations,
 		Heuristics:        []string{"When no tested_by edge exists, test-to-function mapping uses test naming and same-file conventions."},
@@ -383,13 +482,63 @@ func markGraphVerified(result *ReviewResult) {
 	result.Limitations = filtered
 }
 
+func markPRGraphStatus(result *ReviewResult) {
+	if result.PR == nil {
+		return
+	}
+	if result.Graph.Commit == "" {
+		result.Limitations = append(result.Limitations, "PR metadata was fetched, but the graph has no commit metadata to compare with the PR head.")
+		return
+	}
+	if result.PR.HeadSHA == "" {
+		result.Limitations = append(result.Limitations, "PR metadata did not include a head commit; graph freshness could not be compared.")
+		return
+	}
+	if result.Graph.Commit != result.PR.HeadSHA {
+		result.Limitations = append(result.Limitations, fmt.Sprintf("Graph commit %s does not match PR head %s; changed-entity mapping may be stale.", result.Graph.Commit, result.PR.HeadSHA))
+		return
+	}
+	result.GraphFreshness = "head-matched"
+	if !result.Graph.ScanComplete {
+		result.GraphFreshness = "head-matched-incomplete"
+		return
+	}
+	result.Limitations = append(result.Limitations, "Graph commit matches the PR head, but no checkout was supplied to verify repository file state.")
+}
+
 func isAddedEntity(ce ChangedEntity) bool {
+	if ce.Entity != nil && ce.Entity.Source.File != "" && ce.Entity.Source.File != ce.Path {
+		return false
+	}
+	if ce.Entity != nil && ce.Entity.Kind == domain.KindFunction && ce.Entity.Source.File == ce.Path {
+		for _, line := range ce.AddedLines {
+			if line.Line != ce.Entity.Source.Line || !isFunctionDeclaration(line.Text, ce.Entity.Name) {
+				continue
+			}
+			oldDeclaration := false
+			for _, deleted := range ce.DeletedLines {
+				if isFunctionDeclaration(deleted.Text, ce.Entity.Name) {
+					oldDeclaration = true
+					break
+				}
+			}
+			if !oldDeclaration {
+				return true
+			}
+		}
+	}
 	for _, h := range ce.Hunks {
 		if h.OldCount > 0 {
 			return false
 		}
 	}
 	return true
+}
+
+func isFunctionDeclaration(text, name string) bool {
+	text = strings.TrimSpace(text)
+	return name != "" && strings.HasPrefix(text, "func ") &&
+		(strings.Contains(text, name+"(") || strings.Contains(text, name+" "))
 }
 
 func inferTestTargets(test *domain.Entity, functions []EntityReview, idx *query.Index) ([]*domain.Entity, []*domain.Relationship, string, domain.Confidence) {

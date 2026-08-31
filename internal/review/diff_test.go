@@ -49,6 +49,18 @@ index abc1234..def5678 100644
 	if f.DeletedLines != 1 {
 		t.Errorf("deleted = %d, want 1", f.DeletedLines)
 	}
+	if len(f.AddedContent) != 2 {
+		t.Fatalf("added content = %d lines, want 2", len(f.AddedContent))
+	}
+	if f.AddedContent[0].File != "pkg/controller.go" || f.AddedContent[0].Line != 11 || f.AddedContent[0].Text != "new line" {
+		t.Errorf("first added line = %+v, want pkg/controller.go:11 new line", f.AddedContent[0])
+	}
+	if f.AddedContent[1].Line != 12 || f.AddedContent[1].Text != "added line" {
+		t.Errorf("second added line = %+v, want line 12 added line", f.AddedContent[1])
+	}
+	if len(f.DeletedContent) != 1 || f.DeletedContent[0].Line != 11 || f.DeletedContent[0].Text != "old line" {
+		t.Errorf("deleted content = %+v, want pkg/controller.go:11 old line", f.DeletedContent)
+	}
 }
 
 func TestParseDiff_NewFile(t *testing.T) {

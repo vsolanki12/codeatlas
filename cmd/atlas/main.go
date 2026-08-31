@@ -586,13 +586,20 @@ func runReview(args []string) {
 	head := fs.String("head", "HEAD", "head git ref")
 	repo := fs.String("repo", "", "path to the git repository (required for verified diff review)")
 	diffSource := fs.String("diff", "", "read diff from file or stdin (-)")
+	pr := fs.String("pr", "", "fetch a GitHub pull request (owner/repository/number)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	fs.Parse(reorderArgs(args))
 
 	var result *review.ReviewResult
 	var err error
 
-	if *diffSource != "" {
+	if *pr != "" {
+		if *diffSource != "" || *base != "" || *repo != "" || *head != "HEAD" {
+			fmt.Fprintln(os.Stderr, "usage error: --pr cannot be combined with --base, --head, --repo, or --diff")
+			os.Exit(1)
+		}
+		result, err = review.RunFromPR(*pr, *graphPath)
+	} else if *diffSource != "" {
 		if *repo != "" {
 			result, err = review.RunFromDiffInRepo(*diffSource, *graphPath, *base, *head, *repo)
 		} else {
@@ -602,9 +609,11 @@ func runReview(args []string) {
 		if *base == "" {
 			fmt.Fprintln(os.Stderr, "usage: atlas review --base <ref> [--head <ref>] [--graph path] [--repo path]")
 			fmt.Fprintln(os.Stderr, "       atlas review --diff <file|-> [--graph path]")
+			fmt.Fprintln(os.Stderr, "       atlas review --pr owner/repository/number --graph path")
 			fmt.Fprintln(os.Stderr, "")
 			fmt.Fprintln(os.Stderr, "  --base: base git ref to compare against")
 			fmt.Fprintln(os.Stderr, "  --diff: read diff from file or stdin (- for pipe)")
+			fmt.Fprintln(os.Stderr, "  --pr: fetch GitHub metadata and diff (owner/repository/number)")
 			os.Exit(1)
 		}
 		if *repo == "" {

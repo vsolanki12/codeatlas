@@ -22,18 +22,44 @@ type Hunk struct {
 	Header   string `json:"header,omitempty"`
 }
 
-type FileDiff struct {
-	Path         string     `json:"path"`
-	OldPath      string     `json:"oldPath,omitempty"`
-	Status       FileStatus `json:"status"`
-	Hunks        []Hunk     `json:"hunks"`
-	AddedLines   int        `json:"addedLines"`
-	DeletedLines int        `json:"deletedLines"`
+// AddedLine retains bounded head-side text for deterministic pattern checks.
+// It is an internal review aid and is intentionally omitted from serialized
+// FileDiff output; the bounded diff excerpt is the public changed-text field.
+type AddedLine struct {
+	File string
+	Line int
+	Text string
 }
+
+// DeletedLine retains bounded base-side text for conservative new-entity
+// detection. It is an internal review aid and is omitted from JSON output.
+type DeletedLine struct {
+	File string
+	Line int
+	Text string
+}
+
+type FileDiff struct {
+	Path                    string        `json:"path"`
+	OldPath                 string        `json:"oldPath,omitempty"`
+	Status                  FileStatus    `json:"status"`
+	Hunks                   []Hunk        `json:"hunks"`
+	AddedLines              int           `json:"addedLines"`
+	DeletedLines            int           `json:"deletedLines"`
+	AddedContent            []AddedLine   `json:"-"`
+	AddedContentTruncated   bool          `json:"-"`
+	DeletedContent          []DeletedLine `json:"-"`
+	DeletedContentTruncated bool          `json:"-"`
+}
+
+const maxPatternAddedLinesPerFile = 400
 
 func ParseDiff(output string) []FileDiff {
 	var files []FileDiff
 	var current *FileDiff
+	currentOldLine := 0
+	currentNewLine := 0
+	inHunk := false
 	lines := strings.Split(output, "\n")
 
 	for _, line := range lines {
@@ -42,6 +68,9 @@ func ParseDiff(output string) []FileDiff {
 				files = append(files, *current)
 			}
 			current = &FileDiff{Status: FileModified}
+			currentOldLine = 0
+			currentNewLine = 0
+			inHunk = false
 			parts := strings.SplitN(line, " b/", 2)
 			if len(parts) == 2 {
 				current.Path = parts[1]
@@ -75,10 +104,32 @@ func ParseDiff(output string) []FileDiff {
 		case strings.HasPrefix(line, "@@ "):
 			hunk := parseHunkHeader(line)
 			current.Hunks = append(current.Hunks, hunk)
+			currentOldLine = hunk.OldStart
+			currentNewLine = hunk.NewStart
+			inHunk = true
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
 			current.AddedLines++
+			if inHunk {
+				if len(current.AddedContent) < maxPatternAddedLinesPerFile {
+					current.AddedContent = append(current.AddedContent, AddedLine{File: current.Path, Line: currentNewLine, Text: strings.TrimPrefix(line, "+")})
+				} else {
+					current.AddedContentTruncated = true
+				}
+				currentNewLine++
+			}
 		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
 			current.DeletedLines++
+			if inHunk {
+				if len(current.DeletedContent) < maxPatternAddedLinesPerFile {
+					current.DeletedContent = append(current.DeletedContent, DeletedLine{File: current.OldPath, Line: currentOldLine, Text: strings.TrimPrefix(line, "-")})
+				} else {
+					current.DeletedContentTruncated = true
+				}
+				currentOldLine++
+			}
+		case inHunk && strings.HasPrefix(line, " "):
+			currentOldLine++
+			currentNewLine++
 		}
 	}
 

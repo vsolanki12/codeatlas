@@ -37,6 +37,53 @@ func FormatReview(r *ReviewResult) string {
 	}
 	b.WriteByte('\n')
 
+	if r.PR != nil {
+		b.WriteString("Pull request metadata (GitHub)\n")
+		b.WriteString("------------------------------\n")
+		fmt.Fprintf(&b, "Repository: %s | Number: #%d\n", r.PR.Repository, r.PR.Number)
+		if r.PR.Title != "" {
+			fmt.Fprintf(&b, "Title: %s\n", r.PR.Title)
+		}
+		if r.PR.Author != "" {
+			fmt.Fprintf(&b, "Author: %s\n", r.PR.Author)
+		}
+		if r.PR.URL != "" {
+			fmt.Fprintf(&b, "URL: %s\n", r.PR.URL)
+		}
+		if r.PR.BaseRef != "" || r.PR.HeadRef != "" {
+			fmt.Fprintf(&b, "Refs: %s (%s) -> %s (%s)\n", r.PR.BaseRef, shortSHA(r.PR.BaseSHA), r.PR.HeadRef, shortSHA(r.PR.HeadSHA))
+		}
+		if len(r.PR.Labels) > 0 {
+			fmt.Fprintf(&b, "Labels: %s\n", strings.Join(r.PR.Labels, ", "))
+		}
+		if r.PR.ChangedFileCount > 0 || r.PR.Additions > 0 || r.PR.Deletions > 0 {
+			fmt.Fprintf(&b, "GitHub totals: %d files, +%d/-%d\n", r.PR.ChangedFileCount, r.PR.Additions, r.PR.Deletions)
+		}
+		if len(r.PR.Files) > 0 {
+			b.WriteString("GitHub files:\n")
+			for _, file := range r.PR.Files {
+				status := file.Status
+				if status == "" {
+					status = "changed"
+				}
+				fmt.Fprintf(&b, "  - %s [%s] (+%d/-%d)\n", file.Path, status, file.Additions, file.Deletions)
+			}
+			if r.PR.FilesTruncated {
+				b.WriteString("  - [TRUNCATED: GitHub file list is incomplete]\n")
+			}
+		}
+		if r.PR.Body != "" {
+			b.WriteString("What This PR Does (user-provided, untrusted):\n")
+			for _, line := range strings.Split(r.PR.Body, "\n") {
+				fmt.Fprintf(&b, "  %s\n", line)
+			}
+			if r.PR.BodyTruncated {
+				b.WriteString("  [TRUNCATED: PR description is incomplete]\n")
+			}
+		}
+		b.WriteByte('\n')
+	}
+
 	// Summary
 	b.WriteString("Summary\n")
 	b.WriteString("-------\n")
@@ -188,6 +235,27 @@ func FormatReview(r *ReviewResult) string {
 				}
 				b.WriteByte('\n')
 			}
+
+			if len(er.Patterns) > 0 {
+				b.WriteString("  Pattern observations (evidence-backed review leads):\n")
+				for _, finding := range er.Patterns {
+					fmt.Fprintf(&b, "    - [%s] %s: %s\n", finding.Status, finding.Area, finding.Summary)
+					for _, evidence := range finding.Evidence {
+						location := evidence.EntityID
+						if evidence.File != "" {
+							location = fmt.Sprintf("%s:%d", filepath.Base(evidence.File), evidence.Line)
+							if evidence.EntityID != "" {
+								location += " (" + evidence.EntityID + ")"
+							}
+						}
+						fmt.Fprintf(&b, "      evidence: %s — %s\n", location, evidence.Detail)
+					}
+					if finding.EvidenceTruncated {
+						b.WriteString("      evidence: [TRUNCATED: pattern evidence is bounded]\n")
+					}
+				}
+				b.WriteByte('\n')
+			}
 		}
 	} else {
 		b.WriteString("No Atlas entities mapped to changed lines.\n\n")
@@ -220,6 +288,34 @@ func FormatReview(r *ReviewResult) string {
 				b.WriteString("  Targets: unknown\n")
 			}
 			b.WriteString("  Changed behavior covered: INSUFFICIENT_EVIDENCE\n")
+		}
+		b.WriteByte('\n')
+	}
+
+	if len(r.TestAssessments) > 0 {
+		b.WriteString("Test analysis\n")
+		b.WriteString("-------------\n")
+		for _, assessment := range r.TestAssessments {
+			fmt.Fprintf(&b, "  %s | behavior coverage: %s\n", formatTestAssessmentSummary(assessment), assessment.Coverage)
+			fmt.Fprintf(&b, "    Reason: %s\n", assessment.Reason)
+			if len(assessment.LinkedTests) > 0 {
+				b.WriteString("    Stored test links:\n")
+				for _, reference := range assessment.LinkedTests {
+					fmt.Fprintf(&b, "      - %s\n", formatTestReference(reference))
+				}
+				if assessment.LinkedTestsTruncated {
+					b.WriteString("      - [TRUNCATED: stored test links are bounded]\n")
+				}
+			}
+			if len(assessment.InferredTests) > 0 {
+				b.WriteString("    Inferred test links (not proof):\n")
+				for _, reference := range assessment.InferredTests {
+					fmt.Fprintf(&b, "      - %s\n", formatTestReference(reference))
+				}
+				if assessment.InferredTestsTruncated {
+					b.WriteString("      - [TRUNCATED: inferred test links are bounded]\n")
+				}
+			}
 		}
 		b.WriteByte('\n')
 	}
@@ -273,6 +369,25 @@ func scanStatus(complete bool) string {
 		return "complete"
 	}
 	return "incomplete"
+}
+
+func shortSHA(value string) string {
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
+}
+
+func formatTestReference(reference TestReference) string {
+	if reference.Test == nil {
+		return "<unknown test>"
+	}
+	location := fmt.Sprintf("%s:%d", filepath.Base(reference.Test.Source.File), reference.Test.Source.Line)
+	confidence := strings.ToUpper(string(reference.Confidence))
+	if confidence == "" {
+		confidence = "UNKNOWN"
+	}
+	return fmt.Sprintf("%s (%s) [%s] — %s", reference.Test.Name, location, confidence, reference.Reason)
 }
 
 func significantCallees(calls []string) []string {

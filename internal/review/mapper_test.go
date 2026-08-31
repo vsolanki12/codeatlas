@@ -141,6 +141,76 @@ func TestMapToEntitiesIgnoresForeignFileEntriesWhenFindingNextSpan(t *testing.T)
 	}
 }
 
+func TestMapToEntitiesScopesAddedLinesToMappedEntity(t *testing.T) {
+	first := domain.Entity{
+		ID:   "function:example.com/controllers.First",
+		Name: "First",
+		Kind: domain.KindFunction,
+		Source: domain.Source{
+			Parser:  "go",
+			File:    "controllers/reconcile.go",
+			Line:    10,
+			EndLine: 20,
+		},
+	}
+	second := domain.Entity{
+		ID:   "function:example.com/controllers.Second",
+		Name: "Second",
+		Kind: domain.KindFunction,
+		Source: domain.Source{
+			Parser:  "go",
+			File:    "controllers/reconcile.go",
+			Line:    30,
+			EndLine: 40,
+		},
+	}
+	changed, _ := MapToEntities([]FileDiff{{
+		Path:   "controllers/reconcile.go",
+		Status: FileModified,
+		Hunks:  []Hunk{{NewStart: 10, NewCount: 31}},
+		AddedContent: []AddedLine{
+			{File: "controllers/reconcile.go", Line: 12, Text: "fmt.Errorf(\"first\")"},
+			{File: "controllers/reconcile.go", Line: 32, Text: "fmt.Errorf(\"second\")"},
+		},
+	}}, queryTestIndex(t, domain.Graph{
+		Schema:        "codeatlas",
+		SchemaVersion: "1.4.0",
+		Entities:      []domain.Entity{first, second},
+	}))
+	if len(changed) != 2 {
+		t.Fatalf("changed entities = %d, want 2: %+v", len(changed), changed)
+	}
+	if len(changed[0].AddedLines) != 1 || changed[0].AddedLines[0].Line != 12 {
+		t.Fatalf("first entity added lines = %+v", changed[0].AddedLines)
+	}
+	if len(changed[1].AddedLines) != 1 || changed[1].AddedLines[0].Line != 32 {
+		t.Fatalf("second entity added lines = %+v", changed[1].AddedLines)
+	}
+}
+
+func TestIsAddedEntityRecognizesNewFunctionDeclaration(t *testing.T) {
+	entity := reviewTestEntity("function:example.com/pkg.NewFunction", "NewFunction", domain.KindFunction, "pkg/file.go", 10)
+	if !isAddedEntity(ChangedEntity{
+		Entity:     entity,
+		Path:       "pkg/file.go",
+		Hunks:      []Hunk{{OldStart: 7, OldCount: 3, NewStart: 7, NewCount: 4}},
+		AddedLines: []AddedLine{{File: "pkg/file.go", Line: 10, Text: "func NewFunction() {}"}},
+	}) {
+		t.Fatal("new function declaration should be marked added")
+	}
+
+	existing := reviewTestEntity("function:example.com/pkg.Reconcile", "Reconcile", domain.KindFunction, "pkg/file.go", 10)
+	if isAddedEntity(ChangedEntity{
+		Entity:       existing,
+		Path:         "pkg/file.go",
+		Hunks:        []Hunk{{OldStart: 10, OldCount: 1, NewStart: 10, NewCount: 1}},
+		AddedLines:   []AddedLine{{File: "pkg/file.go", Line: 10, Text: "func Reconcile() {}"}},
+		DeletedLines: []DeletedLine{{File: "pkg/file.go", Line: 10, Text: "func Reconcile() {"}},
+	}) {
+		t.Fatal("existing function signature should not be marked added")
+	}
+}
+
 func queryTestIndex(t *testing.T, graph domain.Graph) *query.Index {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "graph.json")

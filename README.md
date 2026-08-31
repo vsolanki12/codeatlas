@@ -170,13 +170,21 @@ gh api repos/openshift/hypershift/pulls/8968 -H 'Accept: application/vnd.github.
 
 # Verified diff review against the graph's checkout
 atlas review --diff pr.diff --graph atlas-graph.json --repo /path/to/repo --head HEAD
+
+# Fetch PR metadata and diff directly from GitHub (requires gh auth)
+atlas review --pr openshift/hypershift/8968 --graph atlas-graph.json
 ```
 
 Output shows: the bounded changed diff, changed entities with callers/callees,
 bounded blast radius (controllers and resources), directly evidenced tests,
-explicitly labeled heuristic test links, unmapped files, graph freshness, and
-evidence limitations. It does not claim branch-level coverage. A diff review
-without `--repo` is useful for mapping but remains `unverified`.
+explicitly labeled heuristic test links, evidence-backed repository-pattern
+observations, conservative test analysis, unmapped files, graph freshness, and
+evidence limitations. It does not claim branch-level or changed-behavior
+coverage. A diff review without `--repo` is useful for mapping but remains
+`unverified`; `--pr` reports a head-matched graph only when the graph commit
+matches the GitHub PR head and still reports that no checkout was verified.
+The PR description is user-provided context and is displayed as untrusted
+input, not as a CodeAtlas fact.
 
 ### Connect to Claude Code
 
@@ -254,7 +262,8 @@ text/JSON formatting and no server needed.
 | `atlas where <path>` | Find entities by file path |
 | `atlas stats` | Graph statistics |
 | `atlas freshness` | Compare graph commit and stored file state with a checkout |
-| `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius and structural test links |
+| `atlas review --base <ref>` | PR review: map diff hunks to graph entities, show blast radius, pattern observations, and structural test links |
+| `atlas review --pr <owner/repo/number>` | Fetch GitHub PR metadata and diff, then run the same deterministic graph review |
 | `atlas serve` | Start the MCP server |
 | `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.) |
 

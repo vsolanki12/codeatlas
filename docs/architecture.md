@@ -43,8 +43,10 @@ Four-layer model:
 CodeAtlas itself doesn't decide anything. The consumer does. Adding a new consumer never changes the scanner or the graph format.
 
 **Status:** Implemented. Scanner, Graph, CLI, MCP Server, Assistant integration,
-and deterministic PR-review preparation are operational. LLM reasoning remains
-optional and downstream of graph-derived evidence.
+and deterministic PR-review preparation are operational. PR metadata, bounded
+pattern observations, and conservative test evidence are also available in the
+review consumer. LLM reasoning remains optional and downstream of graph-derived
+evidence.
 
 ### Operational contract
 
@@ -65,6 +67,14 @@ explained and is marked `confidence: inferred`. Unsupported relationships are
 omitted. Query and MCP JSON responses are bounded and expose truncation and
 graph-status metadata so an LLM cannot mistake a partial response for a full
 repository inventory.
+
+The review consumer may fetch PR metadata and a unified diff through GitHub's
+API, but it never parses the repository. Pattern analysis compares changed
+entities with graph-observed peers and cites those entities as evidence.
+Test analysis distinguishes stored `tested_by` relationships from inferred
+test-name or same-file links and reports `INSUFFICIENT_EVIDENCE` for behavior
+or runtime coverage that the graph cannot prove. A PR description remains
+user-provided, untrusted context rather than a graph fact.
 
 ---
 
@@ -118,7 +128,7 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `internal/temporal` | Enriches entities with git history (LastAuthor, LastModified, ChangeCount) | `domain` |
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
-| `internal/review` | PR review: bounded diff evidence, diff parsing, entity-to-hunk mapping, graph enrichment, human-readable formatting | `domain`, `query` |
+| `internal/review` | PR review: GitHub metadata, bounded diff evidence, diff parsing, entity-to-hunk mapping, graph enrichment, evidence-backed pattern observations, conservative test analysis, human-readable formatting | `domain`, `query` |
 | `internal/mcpserver` | MCP server: 11 tools via go-sdk stdio transport | `query` |
 
 Key constraints:
@@ -234,8 +244,11 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 12 | Query Planner (atlas_ask — one-call orchestration) | Implemented |
 | 13 | Question Index (deterministic Q&A pairs) | Implemented |
 | 14 | PR Review (deterministic diff-to-graph review) | Implemented |
+| 15 | PR Metadata (GitHub metadata and diff through `--pr`) | Implemented |
+| 16 | Pattern Analysis (observed naming, error, logging, controller patterns) | Implemented |
+| 17 | Test Analysis (structural links and conservative evidence status) | Implemented |
 
-Current state: 11 MCP tools, 14 CLI commands, schema 1.4.0. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 11 MCP tools, 14 CLI commands, schema 1.4.0, and deterministic PR review phases 14–17. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
 
 ---
 

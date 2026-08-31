@@ -10,10 +10,14 @@ import (
 )
 
 type ChangedEntity struct {
-	Entity      *domain.Entity
-	Approximate bool
-	Path        string
-	Hunks       []Hunk
+	Entity                *domain.Entity
+	Approximate           bool
+	Path                  string
+	Hunks                 []Hunk
+	AddedLines            []AddedLine
+	AddedLinesTruncated   bool
+	DeletedLines          []DeletedLine
+	DeletedLinesTruncated bool
 }
 
 func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []string) {
@@ -44,10 +48,14 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 		if d.Status == FileAdded {
 			for _, e := range entities {
 				changed = append(changed, ChangedEntity{
-					Entity:      e,
-					Approximate: false,
-					Path:        d.Path,
-					Hunks:       d.Hunks,
+					Entity:                e,
+					Approximate:           false,
+					Path:                  d.Path,
+					Hunks:                 d.Hunks,
+					AddedLines:            addedLinesForEntity(d.AddedContent, d.Hunks, e, d.Path),
+					AddedLinesTruncated:   d.AddedContentTruncated,
+					DeletedLines:          append([]DeletedLine(nil), d.DeletedContent...),
+					DeletedLinesTruncated: d.DeletedContentTruncated,
 				})
 			}
 			continue
@@ -63,10 +71,14 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 				continue
 			}
 			changed = append(changed, ChangedEntity{
-				Entity:      entity,
-				Approximate: true,
-				Path:        d.Path,
-				Hunks:       d.Hunks,
+				Entity:                entity,
+				Approximate:           true,
+				Path:                  d.Path,
+				Hunks:                 d.Hunks,
+				AddedLines:            addedLinesForEntity(d.AddedContent, d.Hunks, entity, d.Path),
+				AddedLinesTruncated:   d.AddedContentTruncated,
+				DeletedLines:          append([]DeletedLine(nil), d.DeletedContent...),
+				DeletedLinesTruncated: d.DeletedContentTruncated,
 			})
 		}
 
@@ -109,16 +121,48 @@ func MapToEntities(diffs []FileDiff, idx *query.Index) ([]ChangedEntity, []strin
 
 			if len(overlapping) > 0 {
 				changed = append(changed, ChangedEntity{
-					Entity:      entity,
-					Approximate: entity.Source.EndLine == 0,
-					Path:        d.Path,
-					Hunks:       overlapping,
+					Entity:                entity,
+					Approximate:           entity.Source.EndLine == 0,
+					Path:                  d.Path,
+					Hunks:                 overlapping,
+					AddedLines:            addedLinesForEntity(d.AddedContent, overlapping, entity, d.Path),
+					AddedLinesTruncated:   d.AddedContentTruncated,
+					DeletedLines:          append([]DeletedLine(nil), d.DeletedContent...),
+					DeletedLinesTruncated: d.DeletedContentTruncated,
 				})
 			}
 		}
 	}
 
 	return changed, unmapped
+}
+
+func addedLinesForEntity(lines []AddedLine, hunks []Hunk, entity *domain.Entity, path string) []AddedLine {
+	var result []AddedLine
+	for _, line := range lines {
+		if !lineInHunks(line.Line, hunks) {
+			continue
+		}
+		if entity != nil && entity.Source.File == path && entity.Source.EndLine >= entity.Source.Line &&
+			(line.Line < entity.Source.Line || line.Line > entity.Source.EndLine) {
+			continue
+		}
+		result = append(result, line)
+	}
+	return result
+}
+
+func lineInHunks(line int, hunks []Hunk) bool {
+	for _, hunk := range hunks {
+		end := hunk.NewStart + hunk.NewCount - 1
+		if hunk.NewCount == 0 {
+			end = hunk.NewStart
+		}
+		if line >= hunk.NewStart && line <= end {
+			return true
+		}
+	}
+	return false
 }
 
 func entitiesInFile(idx *query.Index, path string) []*domain.Entity {
