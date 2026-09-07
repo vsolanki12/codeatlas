@@ -94,6 +94,7 @@ type ReviewResult struct {
 	Functions         []EntityReview      `json:"functions,omitempty"`
 	Tests             []TestLink          `json:"tests,omitempty"`
 	TestAssessments   []TestAssessment    `json:"testAssessments,omitempty"`
+	ReviewLeads       []ReviewLead        `json:"reviewLeads,omitempty"`
 	UnmappedFiles     []string            `json:"unmappedFiles,omitempty"`
 	Limitations       []string            `json:"limitations"`
 	Heuristics        []string            `json:"heuristics"`
@@ -383,6 +384,7 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		functions[i].Patterns = analyzePatterns(functions[i], idx)
 	}
 	testAssessments := analyzeTests(functions, tests, idx)
+	reviewLeads := analyzeReviewLeads(functions, testAssessments)
 
 	meta := idx.GraphMetadata()
 	limitations := []string{
@@ -408,6 +410,11 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		limitations = append(limitations, "Graph commit metadata is unavailable; freshness could not be verified.")
 	}
 
+	heuristics := []string{"When no tested_by edge exists, test-to-function mapping uses test naming and same-file conventions."}
+	if len(reviewLeads) > 0 {
+		heuristics = append(heuristics, "Review leads are deterministic prompts for further inspection, not defects, coverage proof, or approval recommendations.")
+	}
+
 	return &ReviewResult{
 		Base:              base,
 		Head:              head,
@@ -417,9 +424,10 @@ func Analyze(diffs []FileDiff, idx *query.Index, base, head string) *ReviewResul
 		Functions:         functions,
 		Tests:             tests,
 		TestAssessments:   testAssessments,
+		ReviewLeads:       reviewLeads,
 		UnmappedFiles:     unmapped,
 		Limitations:       limitations,
-		Heuristics:        []string{"When no tested_by edge exists, test-to-function mapping uses test naming and same-file conventions."},
+		Heuristics:        heuristics,
 		LLMInterpretation: []string{},
 	}
 }

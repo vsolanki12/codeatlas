@@ -147,6 +147,23 @@ func FormatReview(r *ReviewResult) string {
 		b.WriteByte('\n')
 	}
 
+	if len(r.ReviewLeads) > 0 {
+		b.WriteString("Deterministic Review Leads\n")
+		b.WriteString("--------------------------\n")
+		b.WriteString("These are evidence-backed prompts for deeper inspection, not confirmed defects.\n")
+		for _, lead := range r.ReviewLeads {
+			fmt.Fprintf(&b, "  - [%s] %s (%s)\n", lead.Status, lead.Kind, reviewLeadLocation(lead))
+			fmt.Fprintf(&b, "    %s\n", lead.Summary)
+			for _, evidence := range lead.Evidence {
+				fmt.Fprintf(&b, "    evidence: %s\n", reviewLeadEvidenceLabel(evidence))
+			}
+			if len(lead.SuggestedChecks) > 0 {
+				fmt.Fprintf(&b, "    checks: %s\n", strings.Join(lead.SuggestedChecks, "; "))
+			}
+		}
+		b.WriteByte('\n')
+	}
+
 	// Changes
 	if len(r.Functions) > 0 {
 		b.WriteString("Changes\n")

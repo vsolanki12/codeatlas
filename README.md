@@ -181,8 +181,10 @@ atlas review --pr openshift/hypershift/8968 --graph atlas-graph.json
 Output shows: the bounded changed diff, changed entities with callers/callees,
 bounded blast radius (controllers and resources), directly evidenced tests,
 explicitly labeled heuristic test links, evidence-backed repository-pattern
-observations, conservative test analysis, unmapped files, graph freshness, and
-evidence limitations. It does not claim branch-level or changed-behavior
+observations, deterministic review leads with exact changed-line anchors,
+conservative test analysis, unmapped files, graph freshness, and evidence
+limitations. Review leads are prompts for deeper inspection, not confirmed
+defects or coverage claims. It does not claim branch-level or changed-behavior
 coverage. A diff review without `--repo` is useful for mapping but remains
 `unverified`; `--pr` reports a head-matched graph only when the graph commit
 matches the GitHub PR head and still reports that no checkout was verified.

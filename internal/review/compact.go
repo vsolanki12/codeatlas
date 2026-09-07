@@ -31,6 +31,7 @@ type CompactReviewResult struct {
 	Functions            []CompactEntityReview   `json:"functions,omitempty"`
 	Tests                []CompactTestLink       `json:"tests,omitempty"`
 	TestAssessments      []CompactTestAssessment `json:"testAssessments,omitempty"`
+	ReviewLeads          []ReviewLead            `json:"reviewLeads,omitempty"`
 	UnmappedFiles        []string                `json:"unmappedFiles,omitempty"`
 	Limitations          []string                `json:"limitations"`
 	Heuristics           []string                `json:"heuristics"`
@@ -150,6 +151,8 @@ func CompactReview(result *ReviewResult, includeDiff bool) *CompactReviewResult 
 	compact.Tests, truncated = compactTestLinks(result.Tests, maxCompactReviewTests, truncated)
 	compact.Truncated = truncated
 	compact.TestAssessments, truncated = compactTestAssessments(result.TestAssessments, maxCompactReviewAssessments, truncated)
+	compact.Truncated = truncated
+	compact.ReviewLeads, truncated = compactReviewLeads(result.ReviewLeads, maxReviewLeads, truncated)
 	compact.Truncated = truncated
 	compact.UnmappedFiles, truncated = compactStrings(result.UnmappedFiles, maxCompactReviewUnmapped, truncated)
 	compact.Truncated = truncated
@@ -343,6 +346,45 @@ func compactTestReferences(references []TestReference, max int, truncated bool) 
 		compactReference.Reason, fieldTruncated = compactText(reference.Reason, 800)
 		truncated = truncated || relationshipTruncated || fieldTruncated
 		result = append(result, compactReference)
+	}
+	return result, truncated
+}
+
+func compactReviewLeads(leads []ReviewLead, max int, truncated bool) ([]ReviewLead, bool) {
+	if len(leads) > max {
+		leads = leads[:max]
+		truncated = true
+	}
+	result := make([]ReviewLead, 0, len(leads))
+	for _, lead := range leads {
+		copyLead := lead
+		var fieldTruncated bool
+		copyLead.Kind, fieldTruncated = compactText(copyLead.Kind, 128)
+		truncated = truncated || fieldTruncated
+		copyLead.Status, fieldTruncated = compactText(copyLead.Status, 128)
+		truncated = truncated || fieldTruncated
+		copyLead.Summary, fieldTruncated = compactText(copyLead.Summary, 1000)
+		truncated = truncated || fieldTruncated
+		copyLead.File, fieldTruncated = compactText(copyLead.File, maxCompactReviewStringBytes)
+		truncated = truncated || fieldTruncated
+		copyLead.Confidence, fieldTruncated = compactText(copyLead.Confidence, 128)
+		truncated = truncated || fieldTruncated
+		copyLead.RelatedEntities, truncated = compactStrings(copyLead.RelatedEntities, 12, truncated)
+		copyLead.TestEntities, truncated = compactStrings(copyLead.TestEntities, 12, truncated)
+		copyLead.SuggestedChecks, truncated = compactStrings(copyLead.SuggestedChecks, 12, truncated)
+		if len(copyLead.Evidence) > maxReviewLeadEvidence {
+			copyLead.Evidence = append([]ReviewLeadEvidence(nil), copyLead.Evidence[:maxReviewLeadEvidence]...)
+			truncated = true
+		}
+		for i := range copyLead.Evidence {
+			copyLead.Evidence[i].File, fieldTruncated = compactText(copyLead.Evidence[i].File, maxCompactReviewStringBytes)
+			truncated = truncated || fieldTruncated
+			copyLead.Evidence[i].Kind, fieldTruncated = compactText(copyLead.Evidence[i].Kind, 128)
+			truncated = truncated || fieldTruncated
+			copyLead.Evidence[i].Detail, fieldTruncated = compactText(copyLead.Evidence[i].Detail, 800)
+			truncated = truncated || fieldTruncated
+		}
+		result = append(result, copyLead)
 	}
 	return result, truncated
 }
@@ -613,6 +655,20 @@ func FormatReviewCompact(result *ReviewResult, includeDiff bool) string {
 		}
 	} else {
 		b.WriteString("\nChanged entities and graph evidence\n- none mapped\n")
+	}
+
+	if len(compact.ReviewLeads) > 0 {
+		b.WriteString("\nDeterministic review leads\n")
+		b.WriteString("These are evidence-backed prompts, not confirmed defects.\n")
+		for _, lead := range compact.ReviewLeads {
+			fmt.Fprintf(&b, "- [%s] %s (%s): %s\n", lead.Status, lead.Kind, reviewLeadLocation(lead), lead.Summary)
+			for _, evidence := range lead.Evidence {
+				fmt.Fprintf(&b, "  evidence: %s\n", reviewLeadEvidenceLabel(evidence))
+			}
+			if len(lead.SuggestedChecks) > 0 {
+				fmt.Fprintf(&b, "  checks: %s\n", strings.Join(lead.SuggestedChecks, "; "))
+			}
+		}
 	}
 
 	if len(compact.Tests) > 0 || len(compact.TestAssessments) > 0 {
