@@ -219,6 +219,31 @@ func TestParseFunctionCalls(t *testing.T) {
 	}
 }
 
+func TestParseNestedReceiverCallPreservesFullSelector(t *testing.T) {
+	p := NewGoParser()
+	entities, err := p.Parse(domain.File{RelativePath: "testdata/nested_receiver_calls.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	var caller *domain.Entity
+	for i := range entities {
+		if entities[i].ID == "function:nestedcalls.Reconciler.reconcile" {
+			caller = &entities[i]
+			break
+		}
+	}
+	if caller == nil {
+		t.Fatal("expected Reconciler.reconcile function entity")
+	}
+	if len(caller.Calls) != 1 || caller.Calls[0] != "r.RegistryProvider.Reconcile" {
+		t.Fatalf("Calls = %v, want [r.RegistryProvider.Reconcile]", caller.Calls)
+	}
+	if len(caller.CallSites) != 1 || caller.CallSites[0].Name != "r.RegistryProvider.Reconcile" {
+		t.Fatalf("CallSites = %+v, want the full nested selector", caller.CallSites)
+	}
+}
+
 func TestParseImplements(t *testing.T) {
 	p := NewGoParser()
 	entities, err := p.Parse(domain.File{RelativePath: "testdata/implements.go"})
@@ -539,7 +564,7 @@ func TestParseEntityDetails(t *testing.T) {
 		for _, c := range controller.Calls {
 			callSet[c] = true
 		}
-		for _, expected := range []string{"Get", "CreateOrUpdate", "validateConfig"} {
+		for _, expected := range []string{"r.client.Get", "CreateOrUpdate", "validateConfig"} {
 			if !callSet[expected] {
 				t.Errorf("Expected Calls to include %q, got %v", expected, controller.Calls)
 			}

@@ -308,7 +308,7 @@ type explainInput struct {
 func registerExplain(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_explain",
-		Description: "Follow the reconciliation chain from an entity: reconciles, creates, calls, tested_by. Returns a bounded tree showing the architectural narrative. Default text is compact; use detail=true for verbose text.",
+		Description: "Follow the reconciliation chain from an entity: controller implementation methods (contains), reconciles, creates, calls, and tested_by. Returns a bounded tree showing the architectural narrative. Default text is compact; use detail=true for verbose text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input explainInput) (*mcp.CallToolResult, any, error) {
 		r := idx.Explain(input.EntityID, input.Depth)
 		if r.Root == nil {

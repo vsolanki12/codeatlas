@@ -114,6 +114,141 @@ func TestBuild_CreatesFromExplicitCall(t *testing.T) {
 	}
 }
 
+func TestBuild_FunctionCreatesFromExplicitCall(t *testing.T) {
+	functionID := "function:example.com/project/controllers.Reconciler.createSecret"
+	resourceID := "resource:secret.credentials"
+	entities := []domain.Entity{
+		{
+			ID:          functionID,
+			Name:        "createSecret",
+			Kind:        domain.KindFunction,
+			Package:     "example.com/project/controllers",
+			Creates:     []string{"Secret"},
+			CreateSites: []domain.Site{{Name: "Secret", Source: domain.Source{Parser: "go-ast", File: "controllers/helpers.go", Line: 24}}},
+			Source:      domain.Source{Parser: "go", File: "controllers/helpers.go", Line: 18},
+		},
+		{
+			ID:         resourceID,
+			Name:       "credentials",
+			Kind:       domain.KindResource,
+			Properties: []string{"kind=Secret", "metadata.name=credentials"},
+			Source:     domain.Source{Parser: "yaml", File: "deploy/secret.yaml", Line: 1},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 1 {
+		t.Fatalf("got %d relationships, want 1: %+v", len(rels), rels)
+	}
+	rel := rels[0]
+	if rel.Type != domain.RelCreates || rel.From != functionID || rel.To != resourceID {
+		t.Fatalf("unexpected function creates relationship: %+v", rel)
+	}
+	if rel.Confidence != domain.ConfidenceInferred {
+		t.Errorf("confidence = %q, want inferred", rel.Confidence)
+	}
+	if rel.Evidence.Parser != "go-ast" || rel.Evidence.File != "controllers/helpers.go" || rel.Evidence.Line != 24 {
+		t.Errorf("evidence = %+v, want create call at controllers/helpers.go:24", rel.Evidence)
+	}
+	if rel.Evidence.Reason != "function contains explicit create/upsert call; target matched by unique manifest kind" {
+		t.Errorf("evidence reason = %q", rel.Evidence.Reason)
+	}
+}
+
+func TestBuild_FunctionCreatesRequiresUniqueManifestKind(t *testing.T) {
+	functionID := "function:example.com/project/controllers.createSecret"
+	entities := []domain.Entity{
+		{
+			ID:          functionID,
+			Name:        "createSecret",
+			Kind:        domain.KindFunction,
+			Creates:     []string{"Secret"},
+			CreateSites: []domain.Site{{Name: "Secret", Source: domain.Source{Parser: "go-ast", File: "controllers/helpers.go", Line: 24}}},
+			Source:      domain.Source{Parser: "go", File: "controllers/helpers.go", Line: 18},
+		},
+		{ID: "resource:secret.credentials", Name: "credentials", Kind: domain.KindResource, Properties: []string{"kind=Secret"}},
+		{ID: "resource:secret.pull", Name: "pull", Kind: domain.KindResource, Properties: []string{"kind=Secret"}},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 0 {
+		t.Fatalf("ambiguous manifest kind produced a creates relationship: %+v", rels)
+	}
+}
+
+func TestBuild_ControllerContainsExactImplementationMethods(t *testing.T) {
+	controllerID := "controller:example.com/project/controllers.WidgetReconciler"
+	reconcileID := "function:example.com/project/controllers.WidgetReconciler.Reconcile"
+	setupID := "function:example.com/project/controllers.WidgetReconciler.SetupWithManager"
+	entities := []domain.Entity{
+		{ID: controllerID, Name: "WidgetReconciler", Kind: domain.KindController, Source: domain.Source{Parser: "go", File: "controllers/reconcile.go", Line: 10}},
+		{ID: reconcileID, Name: "Reconcile", Kind: domain.KindFunction, Package: "example.com/project/controllers", Source: domain.Source{Parser: "go", File: "controllers/reconcile.go", Line: 10, EndLine: 48}},
+		{ID: setupID, Name: "SetupWithManager", Kind: domain.KindFunction, Package: "example.com/project/controllers", Source: domain.Source{Parser: "go", File: "controllers/setup.go", Line: 12, EndLine: 20}},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 2 {
+		t.Fatalf("got %d relationships, want 2 controller method links: %+v", len(rels), rels)
+	}
+	for _, want := range []struct {
+		to     string
+		file   string
+		line   int
+		reason string
+	}{
+		{reconcileID, "controllers/reconcile.go", 10, "method declaration on the controller receiver is the reconciliation implementation"},
+		{setupID, "controllers/setup.go", 12, "method declaration on the controller receiver configures manager watches"},
+	} {
+		var found *domain.Relationship
+		for i := range rels {
+			if rels[i].To == want.to {
+				found = &rels[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("missing contains relationship to %s", want.to)
+		}
+		if found.From != controllerID || found.Type != domain.RelContains || found.Confidence != domain.ConfidenceProven {
+			t.Errorf("unexpected controller method relationship: %+v", found)
+		}
+		if found.Evidence.Parser != "go-ast" || found.Evidence.File != want.file || found.Evidence.Line != want.line || found.Evidence.Reason != want.reason {
+			t.Errorf("unexpected method evidence: %+v", found.Evidence)
+		}
+	}
+}
+
+func TestBuild_DoesNotResolveNestedSelectorByBareMethodName(t *testing.T) {
+	entities := []domain.Entity{
+		{
+			ID:      "function:pkg.Reconciler.Reconcile",
+			Name:    "Reconcile",
+			Kind:    domain.KindFunction,
+			Package: "pkg",
+			Source:  domain.Source{Parser: "go", File: "reconcile.go", Line: 10},
+		},
+		{
+			ID:      "function:pkg.Reconciler.reconcileHelper",
+			Name:    "reconcileHelper",
+			Kind:    domain.KindFunction,
+			Package: "pkg",
+			Calls:   []string{"r.RegistryProvider.Reconcile"},
+			CallSites: []domain.Site{{
+				Name:   "r.RegistryProvider.Reconcile",
+				Source: domain.Source{Parser: "go-ast", File: "helper.go", Line: 20},
+			}},
+			Source: domain.Source{Parser: "go", File: "helper.go", Line: 15},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	for _, rel := range rels {
+		if rel.Type == domain.RelCalls {
+			t.Fatalf("nested selector was linked by its bare method name: %+v", rel)
+		}
+	}
+}
+
 func TestBuild_PackageImportsUseExactPackageIdentityAndEvidence(t *testing.T) {
 	entities := []domain.Entity{
 		{
@@ -224,6 +359,69 @@ func TestBuild_TestedBy(t *testing.T) {
 	}
 	if r.Confidence != domain.ConfidenceInferred {
 		t.Errorf("Expected Inferred confidence, got %s", r.Confidence)
+	}
+}
+
+func TestBuild_TestedByDirectCallUsesCallSiteEvidence(t *testing.T) {
+	functionID := "function:example.com/project/auth.Login"
+	testID := "test:example.com/project/auth.TestAuthenticationFlow"
+	entities := []domain.Entity{
+		{ID: functionID, Name: "Login", Kind: domain.KindFunction, Package: "example.com/project/auth", Source: domain.Source{Parser: "go", File: "auth.go", Line: 10}},
+		{
+			ID:      testID,
+			Name:    "TestAuthenticationFlow",
+			Kind:    domain.KindTest,
+			Package: "example.com/project/auth",
+			Calls:   []string{"Login"},
+			CallSites: []domain.Site{{
+				Name:   "Login",
+				Source: domain.Source{Parser: "go-ast", File: "auth_test.go", Line: 24},
+			}},
+			Source: domain.Source{Parser: "test", File: "auth_test.go", Line: 18},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 1 {
+		t.Fatalf("got %d relationships, want one direct test link: %+v", len(rels), rels)
+	}
+	rel := rels[0]
+	if rel.From != functionID || rel.To != testID || rel.Type != domain.RelTestedBy {
+		t.Fatalf("unexpected tested_by relationship: %+v", rel)
+	}
+	if rel.Confidence != domain.ConfidenceInferred {
+		t.Errorf("confidence = %q, want inferred", rel.Confidence)
+	}
+	if rel.Evidence.Parser != "go-ast" || rel.Evidence.File != "auth_test.go" || rel.Evidence.Line != 24 {
+		t.Errorf("direct-call evidence = %+v, want auth_test.go:24", rel.Evidence)
+	}
+	if !strings.Contains(rel.Evidence.Reason, "does not prove assertions or behavior coverage") {
+		t.Errorf("evidence reason must state the coverage limitation: %q", rel.Evidence.Reason)
+	}
+}
+
+func TestBuild_TestedByDoesNotResolveReceiverCallByBareName(t *testing.T) {
+	functionID := "function:example.com/project/auth.Run"
+	testID := "test:example.com/project/auth.TestAuthenticationFlow"
+	entities := []domain.Entity{
+		{ID: functionID, Name: "Run", Kind: domain.KindFunction, Package: "example.com/project/auth", Source: domain.Source{Parser: "go", File: "auth.go", Line: 10}},
+		{
+			ID:      testID,
+			Name:    "TestAuthenticationFlow",
+			Kind:    domain.KindTest,
+			Package: "example.com/project/auth",
+			Calls:   []string{"t.Run"},
+			CallSites: []domain.Site{{
+				Name:   "t.Run",
+				Source: domain.Source{Parser: "go-ast", File: "auth_test.go", Line: 20},
+			}},
+			Source: domain.Source{Parser: "test", File: "auth_test.go", Line: 15},
+		},
+	}
+
+	rels := NewRelationshipBuilder("").Build(entities)
+	if len(rels) != 0 {
+		t.Fatalf("receiver call was incorrectly linked by its bare method name: %+v", rels)
 	}
 }
 

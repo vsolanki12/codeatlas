@@ -210,7 +210,7 @@ When a user clicks a relationship and asks "why does CodeAtlas think HostedClust
 | Level | Meaning | Example |
 |---|---|---|
 | `proven` | Directly observed with an exact supported semantic match | A `SetupWithManager.For(...)` registration, an exact package import, or an embed pattern matching a resource file |
-| `inferred` | The source operation is observed, but target resolution relies on a convention or name match | A test name matching a function, an AST call name matched within the caller package, or a create type matched to a unique manifest kind |
+| `inferred` | The source operation is observed, but target resolution relies on a convention or name match | A test call resolved within its package (invocation does not prove coverage), a test name matching a function, an AST call name matched within the caller package, or a create type matched to a unique manifest kind |
 
 Two levels only. No percentages. An unresolved or ambiguous observation is
 kept on the entity (when supported) and is not emitted as an edge. A
@@ -228,18 +228,19 @@ dynamic targets are not guessed, while the original AST observation remains
 | Type | From → To | Meaning |
 |---|---|---|
 | `reconciles` | controller → crd/resource | This controller manages this resource |
-| `creates` | controller → resource | An explicit create/upsert observation resolved to one manifest kind |
+| `creates` | controller/function → resource | An explicit create/upsert observation resolved to one manifest kind |
+| `contains` | controller → function | Exact `Reconcile` or `SetupWithManager` method on the controller receiver |
 | `owns` | controller → crd/resource | `SetupWithManager.Owns(...)` registers the target |
 | `watches` | controller → crd/resource | Changes to this resource trigger reconciliation |
 | `calls` | controller/function → function | A call observation resolved to a function entity |
-| `tested_by` | function → test | A test name matches a function by package-local convention |
+| `tested_by` | function → test | A test directly invokes the function or its name matches a package-local convention; neither proves assertions or behavior coverage |
 | `imports` | package → package | An exact internal package import resolved to a package entity |
 | `embeds` | package → resource | A `//go:embed` pattern matches a scanned resource file |
 
 The domain vocabulary also reserves `documented_in`, `depends_on`,
-`implements`, `emits`, `contains`, and `part_of`; the current scanner does not
-emit those types. Their presence in the enum does not mean the graph proves
-such relationships.
+`implements`, `emits`, and `part_of`; the current scanner does not emit those
+types. Their presence in the enum does not mean the graph proves such
+relationships.
 
 ### Inverse Relationships
 
@@ -286,9 +287,17 @@ choice. Resolution is intentionally conservative.
 - `For`, `Owns`, and `Watches` observations are matched to exactly one CRD by
   name, or to resource entities by their exact Kubernetes `kind` when no CRD
   name match exists. Ambiguous matches are omitted.
-- An explicit create/upsert call is matched only when exactly one scanned
-  resource has the observed Kubernetes kind. The edge is `inferred` because a
-  type-level call does not identify a particular manifest instance.
+- An explicit create/upsert call recorded on a controller or function is
+  matched only when exactly one scanned resource has the observed Kubernetes
+  kind. Function-level edges preserve the Go function containing the call;
+  controller-level edges preserve the controller aggregate used by controller
+  views. Both are `inferred` because a type-level call does not identify a
+  particular manifest instance. Ambiguous and unmatched kinds remain
+  observations on the entity and do not produce an edge.
+- A controller is linked with `contains` to its exact `Reconcile` and
+  `SetupWithManager` function entities when their receiver-qualified IDs are
+  present. The edge is `proven` from the Go method declaration and points to
+  that declaration's source line; absent methods are omitted.
 - `//go:embed` edges are emitted only when the pattern matches the resource
   path relative to the package's source file.
 
@@ -296,11 +305,19 @@ choice. Resolution is intentionally conservative.
 
 1. **Exact qualified match:** an import-path-qualified call is matched against
    the repository-qualified function ID.
-2. **Exact caller-package match:** an unqualified call or receiver method is
-   resolved only when exactly one function with that name exists in the
-   caller's package.
+2. **Exact caller-package match:** an unqualified call or simple receiver
+   method is resolved only when exactly one function with that name exists in
+   the caller's package. A nested selector chain is not reduced to its final
+   method name; it requires an exact qualified match or a `go/types` result.
 3. **Otherwise omit:** a call that is external, unsupported, or ambiguous is
    retained as an entity-level `calls` observation but does not become an edge.
+
+Test links use a separate conservative rule: an unqualified call resolves only
+to one function in the test's package, and a selector call requires an exact
+qualified function ID. Otherwise, CodeAtlas may retain the package-local
+`TestFoo` → `Foo` naming convention as an inferred link. A link establishes a
+direct invocation or naming association only; it does not prove assertions,
+behavioral coverage, or branch execution.
 
 Common generic names (`Get`, `Set`, `Error`, `String`, `New`, `Close`, `Read`,
 `Write`, `Marshal`, `Unmarshal`, and similar built-ins) are skipped to avoid
@@ -317,10 +334,11 @@ All relationship types use a shared `seen` map keyed by relationship ID. This pr
 | `reconciles` | controller | CRD/resource | A `For` watch observation resolves to one target |
 | `owns` | controller | CRD/resource | An `Owns` watch observation resolves to one target |
 | `watches` | controller | CRD/resource | A `Watches` observation resolves to one target |
-| `creates` | controller | resource | An explicit create/upsert observation resolves to one manifest kind |
+| `creates` | controller/function | resource | An explicit create/upsert observation resolves to one manifest kind |
+| `contains` | controller | function | The exact receiver-qualified `Reconcile` or `SetupWithManager` method exists |
 | `imports` | package | package | An import path exactly matches one scanned package |
 | `calls` | controller/function | function | A call observation resolves by exact qualification or caller package |
-| `tested_by` | function | test | `TestFoo` matches `Foo` in the same package |
+| `tested_by` | function | test | The test directly invokes the function, or `TestFoo` matches `Foo` in the same package |
 | `embeds` | package | resource | `//go:embed` pattern matches a resource path |
 
 The `implements` parser observation is intentionally not an emitted edge until

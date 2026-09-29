@@ -748,7 +748,13 @@ func formatHunks(hunks []Hunk) string {
 func formatTestReferences(references []CompactTestReference) string {
 	values := make([]string, 0, len(references))
 	for _, reference := range references {
-		values = append(values, compactEntityLabel(reference.Test)+" ["+string(reference.Confidence)+"]")
+		value := compactEntityLabel(reference.Test) + " [" + string(reference.Confidence) + "]"
+		if evidence := formatTestRelationshipEvidence(reference.Relationship); evidence != "" {
+			value += " — " + evidence
+		} else if reference.Reason != "" {
+			value += " — " + reference.Reason
+		}
+		values = append(values, value)
 	}
 	return strings.Join(values, ", ")
 }

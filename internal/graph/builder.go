@@ -38,7 +38,9 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 	entities = orderedEntities
 
 	byName := make(map[string][]domain.Entity)
+	entityByID := make(map[string]domain.Entity, len(entities))
 	for _, e := range entities {
+		entityByID[e.ID] = e
 		if e.Kind == domain.KindCRD || e.Kind == domain.KindResource {
 			byName[e.Name] = append(byName[e.Name], e)
 		}
@@ -96,6 +98,39 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 		if e.Kind != domain.KindController {
 			continue
 		}
+		controllerIdentity := strings.TrimPrefix(e.ID, "controller:")
+		for _, method := range []struct {
+			name   string
+			reason string
+		}{
+			{name: "Reconcile", reason: "method declaration on the controller receiver is the reconciliation implementation"},
+			{name: "SetupWithManager", reason: "method declaration on the controller receiver configures manager watches"},
+		} {
+			functionID := "function:" + controllerIdentity + "." + method.name
+			function, ok := entityByID[functionID]
+			if !ok || function.Kind != domain.KindFunction || function.Source.File == "" || function.Source.Line <= 0 {
+				continue
+			}
+			relID := domain.NewRelationshipID(e.ID, domain.RelContains, function.ID)
+			if seen[relID] {
+				continue
+			}
+			seen[relID] = true
+			relationships = append(relationships, domain.Relationship{
+				ID:         relID,
+				From:       e.ID,
+				To:         function.ID,
+				Type:       domain.RelContains,
+				Confidence: domain.ConfidenceProven,
+				Evidence: domain.Evidence{
+					Parser:  "go-ast",
+					File:    function.Source.File,
+					Line:    function.Source.Line,
+					Snippet: ReadSnippet(filepath.Join(b.RootDir, function.Source.File), function.Source.Line),
+					Reason:  method.reason,
+				},
+			})
+		}
 
 		for watchIndex, watchName := range e.Watches {
 			if candidates := watchTargets(entities, byName, watchName); len(candidates) == 1 {
@@ -136,9 +171,20 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 			}
 		}
 
-		// A create call proves that code constructs or upserts a named type, but
-		// it does not prove which manifest instance is affected. Emit the edge
-		// only when exactly one scanned resource has the same Kubernetes kind.
+	}
+
+	// Preserve create observations at both supported source levels: controller
+	// aggregates keep controller views useful, while function edges point to the
+	// exact Go function containing the call. The target remains inferred because
+	// a type-level call does not identify a particular manifest instance.
+	for _, e := range entities {
+		if (e.Kind != domain.KindController && e.Kind != domain.KindFunction) || len(e.Creates) == 0 {
+			continue
+		}
+		reason := "explicit create/upsert call; target matched by unique manifest kind"
+		if e.Kind == domain.KindFunction {
+			reason = "function contains explicit create/upsert call; target matched by unique manifest kind"
+		}
 		for _, createName := range e.Creates {
 			candidates := resourcesByKind(entities, createName)
 			if len(candidates) != 1 {
@@ -150,7 +196,7 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 				continue
 			}
 			seen[relID] = true
-			evidence := b.evidenceForNamedSite(e, e.CreateSites, createName, "explicit create/upsert call; target matched by unique manifest kind")
+			evidence := b.evidenceForNamedSite(e, e.CreateSites, createName, reason)
 			relationships = append(relationships, domain.Relationship{
 				ID:         relID,
 				From:       e.ID,
@@ -274,7 +320,9 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 		}
 	}
 
-	// Test → function relationships (existing)
+	// Function → test relationships use direct call-site evidence when a call
+	// resolves uniquely inside the test package. This shows invocation only; it
+	// does not prove assertions, behavior coverage, or branch execution.
 	funcsByPkgNameForTests := make(map[string][]domain.Entity)
 	for _, e := range entities {
 		if e.Kind == domain.KindFunction {
@@ -287,6 +335,27 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 		if e.Kind != domain.KindTest {
 			continue
 		}
+		for callIndex, callName := range e.Calls {
+			target, ok := resolveTestCall(callName, e.Package, funcByQualName, funcsByPkgNameForTests)
+			if !ok {
+				continue
+			}
+			relID := domain.NewRelationshipID(target.ID, domain.RelTestedBy, e.ID)
+			if seen[relID] {
+				continue
+			}
+			seen[relID] = true
+			evidence := b.evidenceForSite(e, e.CallSites, callIndex, callName,
+				"test body directly invokes this function; invocation alone does not prove assertions or behavior coverage")
+			relationships = append(relationships, domain.Relationship{
+				ID:         relID,
+				From:       target.ID,
+				To:         e.ID,
+				Type:       domain.RelTestedBy,
+				Confidence: domain.ConfidenceInferred,
+				Evidence:   evidence,
+			})
+		}
 
 		subject := strings.TrimPrefix(e.Name, "Test")
 		key := e.Package + "." + subject
@@ -296,9 +365,14 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 		}
 		target := candidates[0]
 
+		relID := domain.NewRelationshipID(target.ID, domain.RelTestedBy, e.ID)
+		if seen[relID] {
+			continue
+		}
+		seen[relID] = true
 		snippet := ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line)
 		relationships = append(relationships, domain.Relationship{
-			ID:         domain.NewRelationshipID(target.ID, domain.RelTestedBy, e.ID),
+			ID:         relID,
 			From:       target.ID,
 			To:         e.ID,
 			Type:       domain.RelTestedBy,
@@ -308,12 +382,31 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 				File:    e.Source.File,
 				Line:    e.Source.Line,
 				Snippet: snippet,
-				Reason:  "test function name matches function by convention",
+				Reason:  "test function name matches function by package-local convention; this does not prove invocation or behavior coverage",
 			},
 		})
 	}
 	sort.Slice(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
 	return relationships
+}
+
+func resolveTestCall(callName, callerPkg string, byQualName map[string]domain.Entity, byPkgName map[string][]domain.Entity) (domain.Entity, bool) {
+	if callName == "" {
+		return domain.Entity{}, false
+	}
+	if strings.Contains(callName, ".") {
+		// A selector in a test may be an imported package function or a method
+		// call on a value such as t.Run. Only an exact graph identity is safe;
+		// do not reduce it to a same-named package function.
+		target, ok := byQualName[callName]
+		return target, ok
+	}
+
+	candidates := byPkgName[callerPkg+"."+callName]
+	if len(candidates) != 1 {
+		return domain.Entity{}, false
+	}
+	return candidates[0], true
 }
 
 func (b *RelationshipBuilder) evidenceForSite(entity domain.Entity, sites []domain.Site, index int, name, reason string) domain.Evidence {
@@ -439,6 +532,12 @@ func resolveCall(callName, callerPkg string, byName map[string]domain.Entity, by
 	if strings.Contains(callName, ".") {
 		if target, ok := byQualName[callName]; ok {
 			return target, true
+		}
+		// A selector chain with multiple components may be a field or method
+		// reached through another object (for example r.Client.Reconcile). Its
+		// final method name is not enough to identify a same-package function.
+		if strings.Count(callName, ".") > 1 {
+			return domain.Entity{}, false
 		}
 	}
 

@@ -44,11 +44,15 @@ func analyzeTests(functions []EntityReview, changedTests []TestLink, idx *query.
 				continue
 			}
 			directTestIDs[test.ID] = true
+			reason := "CodeAtlas tested_by relationship (stored edge)"
+			if relationship.Evidence.Reason != "" {
+				reason = relationship.Evidence.Reason
+			}
 			assessment.LinkedTests = append(assessment.LinkedTests, TestReference{
 				Test:         test,
 				Relationship: relationship,
 				Confidence:   relationship.Confidence,
-				Reason:       "CodeAtlas tested_by relationship (stored edge)",
+				Reason:       reason,
 			})
 		}
 

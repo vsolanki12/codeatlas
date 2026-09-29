@@ -640,6 +640,35 @@ func TestExplain_Depth1(t *testing.T) {
 	}
 }
 
+func TestExplain_IncludesControllerImplementationMethods(t *testing.T) {
+	controllerID := "controller:example.com/project/controllers.WidgetReconciler"
+	functionID := "function:example.com/project/controllers.WidgetReconciler.Reconcile"
+	evidence := domain.Evidence{Parser: "go-ast", File: "controllers/reconcile.go", Line: 10, Reason: "controller receiver's Reconcile method"}
+	graph := domain.Graph{
+		Entities: []domain.Entity{
+			{ID: controllerID, Name: "WidgetReconciler", Kind: domain.KindController, Source: domain.Source{Parser: "go", File: "controllers/reconcile.go", Line: 10}},
+			{ID: functionID, Name: "Reconcile", Kind: domain.KindFunction, Package: "example.com/project/controllers", Source: domain.Source{Parser: "go", File: "controllers/reconcile.go", Line: 10, EndLine: 48}},
+		},
+		Relationship: []domain.Relationship{{
+			ID:         domain.NewRelationshipID(controllerID, domain.RelContains, functionID),
+			From:       controllerID,
+			To:         functionID,
+			Type:       domain.RelContains,
+			Confidence: domain.ConfidenceProven,
+			Evidence:   evidence,
+		}},
+	}
+
+	result := newIndex(graph).Explain(controllerID, 1)
+	if result.Root == nil || len(result.Root.Children) != 1 {
+		t.Fatalf("expected the controller's implementation method in explain output: %+v", result)
+	}
+	child := result.Root.Children[0]
+	if child.Entity.ID != functionID || child.EdgeType != domain.RelContains || child.Relationship == nil || child.Relationship.Evidence != evidence {
+		t.Fatalf("explain output lost implementation relationship evidence: %+v", child)
+	}
+}
+
 func TestExplain_Depth2(t *testing.T) {
 	idx := newIndex(testGraph())
 
@@ -746,6 +775,33 @@ func TestImpact_Function(t *testing.T) {
 	// Files: pkg/etcd.go (root) + pkg/controller.go (caller)
 	if len(r.Files) != 2 {
 		t.Fatalf("files: got %d, want 2", len(r.Files))
+	}
+}
+
+func TestImpact_FunctionIncludesCreateRelationship(t *testing.T) {
+	graph := testGraph()
+	relationship := domain.Relationship{
+		ID:         domain.NewRelationshipID("function:pkg.reconcileNetwork", domain.RelCreates, "resource:Deployment.my-deploy"),
+		From:       "function:pkg.reconcileNetwork",
+		To:         "resource:Deployment.my-deploy",
+		Type:       domain.RelCreates,
+		Confidence: domain.ConfidenceInferred,
+		Evidence:   domain.Evidence{Parser: "go-ast", File: "pkg/network.go", Line: 24, Reason: "function contains explicit create/upsert call; target matched by unique manifest kind"},
+	}
+	graph.Relationship = append(graph.Relationship, relationship)
+
+	result := newIndex(graph).Impact("function:pkg.reconcileNetwork")
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if len(result.Resources) != 1 || result.Resources[0].ID != relationship.To {
+		t.Fatalf("resources = %+v, want only %s", result.Resources, relationship.To)
+	}
+	if len(result.Relationships) != 1 || result.Relationships[0].ID != relationship.ID {
+		t.Fatalf("relationships = %+v, want creates evidence %s", result.Relationships, relationship.ID)
+	}
+	if result.Relationships[0].Evidence.File != "pkg/network.go" || result.Relationships[0].Evidence.Line != 24 {
+		t.Errorf("relationship evidence = %+v, want pkg/network.go:24", result.Relationships[0].Evidence)
 	}
 }
 

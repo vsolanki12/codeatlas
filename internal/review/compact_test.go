@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/query"
 	"github.com/vsolanki12/codeatlas/internal/storage"
 )
 
@@ -148,6 +149,28 @@ func TestFormatReviewCompactSeparatesEvidenceAndHeuristics(t *testing.T) {
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("compact review missing %q:\n%s", expected, output)
+		}
+	}
+}
+
+func TestFormatCompactTestReferenceShowsGraphEvidence(t *testing.T) {
+	output := formatTestReferences([]CompactTestReference{{
+		Test: &query.CompactEntity{
+			ID:     "test:example/pkg.TestReconcile",
+			Source: domain.Source{File: "pkg/reconcile_test.go", Line: 20},
+		},
+		Confidence: domain.ConfidenceInferred,
+		Relationship: &domain.Relationship{
+			Evidence: domain.Evidence{
+				File:   "pkg/reconcile_test.go",
+				Line:   31,
+				Reason: "test body directly invokes this function; invocation alone does not prove behavior coverage",
+			},
+		},
+	}})
+	for _, expected := range []string{"inferred", "pkg/reconcile_test.go:31", "directly invokes this function"} {
+		if !strings.Contains(output, expected) {
+			t.Errorf("compact test reference missing %q: %s", expected, output)
 		}
 	}
 }

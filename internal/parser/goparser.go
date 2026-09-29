@@ -1,8 +1,10 @@
 package parser
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
 	"path/filepath"
@@ -351,7 +353,13 @@ func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string
 				}
 				name = prefix + "." + fun.Sel.Name
 			} else {
-				name = fun.Sel.Name
+				// Preserve the complete receiver chain. Reducing an expression such
+				// as r.RegistryProvider.Reconcile to just Reconcile lets the graph
+				// builder attach it to an unrelated same-named method.
+				var expression bytes.Buffer
+				if err := format.Node(&expression, fset, fun); err == nil {
+					name = expression.String()
+				}
 			}
 		case *ast.Ident:
 			name = fun.Name

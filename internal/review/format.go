@@ -304,6 +304,11 @@ func FormatReview(r *ReviewResult) string {
 			} else {
 				b.WriteString("  Targets: unknown\n")
 			}
+			for _, relationship := range tl.Relationships {
+				if evidence := formatTestRelationshipEvidence(relationship); evidence != "" {
+					fmt.Fprintf(&b, "  CodeAtlas relationship evidence [%s]: %s\n", strings.ToUpper(string(relationship.Confidence)), evidence)
+				}
+			}
 			b.WriteString("  Changed behavior covered: INSUFFICIENT_EVIDENCE\n")
 		}
 		b.WriteByte('\n')
@@ -404,7 +409,32 @@ func formatTestReference(reference TestReference) string {
 	if confidence == "" {
 		confidence = "UNKNOWN"
 	}
-	return fmt.Sprintf("%s (%s) [%s] — %s", reference.Test.Name, location, confidence, reference.Reason)
+	formatted := fmt.Sprintf("%s (%s) [%s]", reference.Test.Name, location, confidence)
+	if evidence := formatTestRelationshipEvidence(reference.Relationship); evidence != "" {
+		return formatted + " — " + evidence
+	}
+	if reference.Reason != "" {
+		return formatted + " — " + reference.Reason
+	}
+	return formatted
+}
+
+func formatTestRelationshipEvidence(relationship *domain.Relationship) string {
+	if relationship == nil {
+		return ""
+	}
+	var parts []string
+	if relationship.Evidence.File != "" {
+		location := relationship.Evidence.File
+		if relationship.Evidence.Line > 0 {
+			location = fmt.Sprintf("%s:%d", location, relationship.Evidence.Line)
+		}
+		parts = append(parts, "evidence "+location)
+	}
+	if relationship.Evidence.Reason != "" {
+		parts = append(parts, relationship.Evidence.Reason)
+	}
+	return strings.Join(parts, " — ")
 }
 
 func significantCallees(calls []string) []string {

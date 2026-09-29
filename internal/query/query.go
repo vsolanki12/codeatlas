@@ -830,6 +830,7 @@ func (idx *Index) Investigate(entityID string) *InvestigateResult {
 var explainEdgeOrder = []domain.RelationshipType{
 	domain.RelReconciles,
 	domain.RelCreates,
+	domain.RelContains,
 	domain.RelCalls,
 	domain.RelTestedBy,
 }
