@@ -644,7 +644,7 @@ func FormatExplanation(r *ExplainResult) string {
 	formatExplainNode(&b, r.Root, 0)
 	footer := fmt.Sprintf("%d nodes explored", r.TotalNodes)
 	if r.Capped {
-		footer += " (capped at 100 nodes)"
+		footer += " (truncated: " + explainOmissionText(r) + ")"
 	}
 	b.WriteString(footer)
 	b.WriteByte('\n')
@@ -672,11 +672,18 @@ func FormatExplanationCompact(r *ExplainResult) string {
 	}
 	footer := fmt.Sprintf("%d nodes explored", r.TotalNodes)
 	if r.Capped {
-		footer += " (capped at 100 nodes)"
+		footer += " (truncated: " + explainOmissionText(r) + ")"
 	}
 	b.WriteString(footer)
 	b.WriteByte('\n')
 	return b.String()
+}
+
+func explainOmissionText(r *ExplainResult) string {
+	if len(r.OmissionReasons) == 0 {
+		return "traversal limit"
+	}
+	return strings.Join(r.OmissionReasons, ", ")
 }
 
 func formatCompactNode(b *strings.Builder, node *ExplainNode, indent int) {

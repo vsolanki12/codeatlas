@@ -77,7 +77,7 @@ Development progresses in phases. Each builds on the previous.
 **Delivered:** AND search, brief mode, batch fetch, detail mode.
 
 - AND search: space-separated terms, all must match
-- `atlas_entity` brief mode (~90% token reduction)
+- `atlas_entity` brief mode returns identity, source, and bounded description
 - `atlas_entity` batch fetch via `ids` param (N calls → 1)
 - `atlas_where` detail mode (N entity lookups → 1)
 
@@ -308,7 +308,7 @@ context, but remains a replaceable downstream consumer and presentation layer.
 
 ### Evolution
 
-**Stage 1** (done): Graph → MCP → Claude. ~70-80% token reduction vs grep+read.
+**Stage 1** (done): Graph → MCP → consumers. Compact payloads reduce representation size; equivalent-task end-to-end token savings require correctness and model usage measurements.
 
 **Stage 2** (done): Move orchestration into Atlas. One call replaces search → investigate → explain → impact chain. Atlas traverses internally, returns one structured object. Consumers receive bounded evidence, not an unbounded raw graph dump.
 
@@ -338,7 +338,27 @@ not move probabilistic repository reasoning into the CodeAtlas core.
 | 20. Coverage and Resumable Retrieval | Expose scan disposition and continuation metadata for bounded queries | Done |
 | 21. Verification and Type-Aware Evidence | Verify graph usability, page relationship evidence, and upgrade statically resolved calls | Done |
 
-Target: ~92–95% total reduction (from current ~70–80%).
+Target: reduce end-to-end model context while preserving required implementation,
+API, relationship, and test evidence. No percentage saving is established by
+payload compression alone.
+
+### Shared retrieval and audit corrections
+
+- Versioned, deduplicated evidence manifests share scoped selection across CLI,
+  MCP, and Assistant, with serialized byte budgets and snapshot continuation.
+- Traversal bounds distinguish local omission from global exhaustion; missing
+  exact entities are distinct from ambiguous names.
+- Extraction signatures invalidate incompatible incremental facts; graph
+  metadata records the effective Go build context and type-analysis coverage.
+- Source-linked fields, typed test calls, and resource-operation observations
+  improve implementation routing without inventing unresolved relationships.
+- Assistant materializes selected source spans and gates model calls on usable
+  evidence. Retrieval task fixtures evaluate correctness under budget sweeps.
+- Automated Go checks protect contracts and regressions in both projects.
+- Verified local reviews can include a compatible merge-base graph for changed
+  paths absent from the head graph.
+
+See [the evidence workflow](evidence-workflow.md) for usage and measurement limits.
 
 ---
 

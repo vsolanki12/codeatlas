@@ -161,7 +161,9 @@ func lineInHunks(line int, hunks []Hunk) bool {
 }
 
 func entitiesInFile(idx *query.Index, path string) []*domain.Entity {
-	candidates := idx.EntitiesInFile(path, 200)
+	// Mapping must account for every declaration before presentation is bounded.
+	// A dense source file may contain more than 200 entities.
+	candidates := idx.EntitiesInFile(path, 0)
 	entities := make([]*domain.Entity, 0, len(candidates))
 	for _, entity := range candidates {
 		if entity.Source.File == path {

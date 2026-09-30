@@ -4,7 +4,6 @@ import (
 	"fmt"
 	goast "go/ast"
 	"go/build"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -18,154 +17,16 @@ import (
 // BuildTypedCallRelationships resolves calls with the standard Go type
 // checker. It is intentionally an enrichment pass: a type-checking failure
 // never creates a guessed edge, and callers retain the AST-derived edge or no
-// edge at all. Only targets that already exist as CodeAtlas function entities
-// are emitted.
+// edge at all. Only targets that already exist as CodeAtlas entities are
+// emitted, including tests and field references from the shared pass.
 //
 // The loader is source-backed for packages in the scanned repository and uses
 // the standard compiler importer for dependencies outside the graph. This
 // keeps the pass repository-wide without making the graph depend on generated
 // export data or a particular build cache.
 func BuildTypedCallRelationships(root string, files []domain.File, entities []domain.Entity) []domain.Relationship {
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return nil
-	}
-
-	fileSet := make(map[string]bool, len(files))
-	for _, file := range files {
-		fileSet[filepath.ToSlash(filepath.Clean(file.RelativePath))] = true
-	}
-
-	specs := make(map[string]*sourcePackageSpec)
-	for _, entity := range entities {
-		if entity.Kind != domain.KindPackage {
-			continue
-		}
-		packagePath := entity.Package
-		if packagePath == "" {
-			packagePath = strings.TrimPrefix(entity.ID, "package:")
-		}
-		if packagePath == "" {
-			continue
-		}
-		spec := specs[packagePath]
-		if spec == nil {
-			spec = &sourcePackageSpec{path: packagePath, files: make(map[string]bool)}
-			specs[packagePath] = spec
-		}
-		paths := append([]string(nil), entity.Files...)
-		if entity.Source.File != "" {
-			paths = append(paths, entity.Source.File)
-		}
-		for _, relative := range paths {
-			relative = filepath.ToSlash(filepath.Clean(relative))
-			if !fileSet[relative] || filepath.Ext(relative) != ".go" || strings.HasSuffix(relative, "_test.go") {
-				continue
-			}
-			spec.files[relative] = true
-		}
-	}
-
-	loader := &sourcePackageLoader{
-		root:     rootAbs,
-		specs:    specs,
-		checked:  make(map[string]*typedPackage),
-		checking: make(map[string]bool),
-		fallback: importer.Default(),
-	}
-
-	functionIDs := make(map[string]bool)
-	controllerIDs := make(map[string]bool)
-	for _, entity := range entities {
-		switch entity.Kind {
-		case domain.KindFunction:
-			functionIDs[entity.ID] = true
-		case domain.KindController:
-			controllerIDs[entity.ID] = true
-		}
-	}
-
-	var packagePaths []string
-	for packagePath := range specs {
-		packagePaths = append(packagePaths, packagePath)
-	}
-	sort.Strings(packagePaths)
-
-	var relationships []domain.Relationship
-	seen := make(map[string]bool)
-	for _, packagePath := range packagePaths {
-		checked := loader.check(packagePath)
-		if checked == nil || checked.pkg == nil || checked.info == nil {
-			continue
-		}
-		for _, file := range checked.files {
-			astFile := checked.astByPath[file]
-			if astFile == nil {
-				continue
-			}
-			for _, declaration := range astFile.Decls {
-				fn, ok := declaration.(*goast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
-				}
-				callerID := typedFunctionID(packagePath, fn)
-				if !functionIDs[callerID] {
-					continue
-				}
-				callerIDs := []string{callerID}
-				if receiver := typedReceiverName(fn); receiver != "" && fn.Name.Name == "Reconcile" {
-					controllerID := "controller:" + packagePath + "." + receiver
-					if controllerIDs[controllerID] {
-						callerIDs = append(callerIDs, controllerID)
-					}
-				}
-
-				goast.Inspect(fn.Body, func(node goast.Node) bool {
-					call, ok := node.(*goast.CallExpr)
-					if !ok {
-						return true
-					}
-					target := typedCallTarget(checked.info, call)
-					if target == nil {
-						return true
-					}
-					targetID := typedFunctionObjectID(target)
-					if targetID == "" || !functionIDs[targetID] {
-						return true
-					}
-					position := checked.fset.Position(call.Pos())
-					relative := filepath.ToSlash(filepath.Clean(filePathRelative(rootAbs, position.Filename)))
-					if relative == "." || relative == "" {
-						relative = position.Filename
-					}
-					for _, caller := range callerIDs {
-						relationship := domain.Relationship{
-							ID:         domain.NewRelationshipID(caller, domain.RelCalls, targetID),
-							From:       caller,
-							To:         targetID,
-							Type:       domain.RelCalls,
-							Confidence: domain.ConfidenceProven,
-							Evidence: domain.Evidence{
-								Parser:  "go-types",
-								File:    relative,
-								Line:    position.Line,
-								Snippet: ReadSnippet(filepath.Join(rootAbs, relative), position.Line),
-								Reason:  "Go type checker resolved the call target",
-							},
-						}
-						if relationship.From == relationship.To || seen[relationship.ID] {
-							continue
-						}
-						seen[relationship.ID] = true
-						relationships = append(relationships, relationship)
-					}
-					return true
-				})
-			}
-		}
-	}
-
-	sort.Slice(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
+	context := domain.BuildContext{GOOS: build.Default.GOOS, GOARCH: build.Default.GOARCH, BuildTags: build.Default.BuildTags, CgoEnabled: build.Default.CgoEnabled}
+	relationships, _ := BuildTypedRelationships(root, files, entities, context)
 	return relationships
 }
 
@@ -199,8 +60,9 @@ func relationshipRank(relationship domain.Relationship) int {
 }
 
 type sourcePackageSpec struct {
-	path  string
-	files map[string]bool
+	path    string
+	files   map[string]bool
+	variant string
 }
 
 type typedPackage struct {
@@ -212,11 +74,14 @@ type typedPackage struct {
 }
 
 type sourcePackageLoader struct {
-	root     string
-	specs    map[string]*sourcePackageSpec
-	checked  map[string]*typedPackage
-	checking map[string]bool
-	fallback types.Importer
+	root         string
+	specs        map[string]*sourcePackageSpec
+	checked      map[string]*typedPackage
+	checking     map[string]bool
+	fallback     types.Importer
+	buildContext *build.Context
+	coverage     *domain.TypeAnalysisCoverage
+	attempted    map[string]bool
 }
 
 func (l *sourcePackageLoader) Import(path string) (*types.Package, error) {
@@ -225,7 +90,14 @@ func (l *sourcePackageLoader) Import(path string) (*types.Package, error) {
 	}
 	spec := l.specs[path]
 	if spec == nil {
-		return l.fallback.Import(path)
+		if l.coverage != nil {
+			l.coverage.ExternalImports++
+		}
+		pkg, err := l.fallback.Import(path)
+		if err != nil && l.coverage != nil {
+			l.coverage.ExternalImportFailures++
+		}
+		return pkg, err
 	}
 	if l.checking[path] {
 		return nil, fmt.Errorf("type-check import cycle involving %s", path)
@@ -244,6 +116,12 @@ func (l *sourcePackageLoader) check(path string) *typedPackage {
 	if l.checking[path] {
 		return nil
 	}
+	if l.attempted != nil && l.attempted[path] {
+		return nil
+	}
+	if l.attempted != nil {
+		l.attempted[path] = true
+	}
 	spec := l.specs[path]
 	if spec == nil {
 		return nil
@@ -259,32 +137,48 @@ func (l *sourcePackageLoader) check(path string) *typedPackage {
 	fset := token.NewFileSet()
 	var astFiles []*goast.File
 	astByPath := make(map[string]*goast.File)
+	var errors []string
+	buildContext := &build.Default
+	if l.buildContext != nil {
+		buildContext = l.buildContext
+	}
 	for _, relative := range files {
 		absolute := filepath.Join(l.root, filepath.FromSlash(relative))
-		if matched, err := build.Default.MatchFile(filepath.Dir(absolute), filepath.Base(absolute)); err != nil || !matched {
+		if matched, err := buildContext.MatchFile(filepath.Dir(absolute), filepath.Base(absolute)); err != nil || !matched {
+			if err != nil {
+				errors = append(errors, err.Error())
+			}
 			continue
 		}
 		astFile, err := parser.ParseFile(fset, absolute, nil, parser.ParseComments)
 		if err != nil || astFile.Name == nil {
+			if err != nil {
+				errors = append(errors, err.Error())
+			}
 			continue
 		}
 		astFiles = append(astFiles, astFile)
 		astByPath[relative] = astFile
 	}
 	if len(astFiles) == 0 {
+		l.recordDiagnostics(spec, errors)
 		return nil
 	}
 
 	info := &types.Info{
 		Uses:       make(map[*goast.Ident]types.Object),
 		Selections: make(map[*goast.SelectorExpr]*types.Selection),
+		Types:      make(map[goast.Expr]types.TypeAndValue),
+		Defs:       make(map[*goast.Ident]types.Object),
 	}
 	config := &types.Config{
 		Importer:    l,
 		FakeImportC: true,
-		Error:       func(error) {},
+		Error:       func(err error) { errors = append(errors, err.Error()) },
+		Sizes:       types.SizesFor("gc", buildContext.GOARCH),
 	}
-	pkg, _ := config.Check(path, fset, astFiles, info)
+	pkg, _ := config.Check(spec.path, fset, astFiles, info)
+	l.recordDiagnostics(spec, errors)
 	if pkg == nil {
 		return nil
 	}
@@ -297,6 +191,34 @@ func (l *sourcePackageLoader) check(path string) *typedPackage {
 	}
 	l.checked[path] = checked
 	return checked
+}
+
+func (l *sourcePackageLoader) recordDiagnostics(spec *sourcePackageSpec, errors []string) {
+	if l.coverage == nil {
+		return
+	}
+	if len(errors) == 0 {
+		l.coverage.CheckedPackages++
+		return
+	}
+	l.coverage.FailedPackages++
+	sort.Strings(errors)
+	seen := make(map[string]bool)
+	count := 0
+	for _, message := range errors {
+		message = strings.ReplaceAll(message, l.root+string(filepath.Separator), "")
+		if seen[message] {
+			continue
+		}
+		seen[message] = true
+		l.coverage.DiagnosticCount++
+		if count >= 8 {
+			l.coverage.DiagnosticsTruncated = true
+			continue
+		}
+		l.coverage.Diagnostics = append(l.coverage.Diagnostics, domain.TypeAnalysisDiagnostic{Package: spec.path, Variant: spec.variant, Message: message})
+		count++
+	}
 }
 
 func typedCallTarget(info *types.Info, call *goast.CallExpr) *types.Func {

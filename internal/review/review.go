@@ -90,6 +90,7 @@ type ReviewResult struct {
 	PR                *PRMetadata         `json:"pr,omitempty"`
 	Graph             query.GraphMetadata `json:"graph"`
 	GraphFreshness    string              `json:"graphFreshness"`
+	GraphChanges      *GraphChanges       `json:"graphChanges,omitempty"`
 	ChangedFiles      []FileDiff          `json:"changedFiles"`
 	Functions         []EntityReview      `json:"functions,omitempty"`
 	Tests             []TestLink          `json:"tests,omitempty"`
@@ -111,6 +112,11 @@ func Run(base, head, repo, graphPath string) (*ReviewResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load graph: %w", err)
 	}
+	return runWithIndex(base, head, repo, graphPath, idx)
+}
+
+// Keep one loaded snapshot throughout verification, mapping, and comparison.
+func runWithIndex(base, head, repo, graphPath string, idx *query.Index) (*ReviewResult, error) {
 	if err := verifyGraphAtRef(idx, repo, head, graphPath); err != nil {
 		return nil, err
 	}

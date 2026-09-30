@@ -8,6 +8,7 @@ type Source struct {
 	Parser  string `json:"parser"`
 	File    string `json:"file"`
 	Line    int    `json:"line"`
+	Column  int    `json:"column,omitempty"`
 	EndLine int    `json:"endLine,omitempty"`
 }
 
@@ -26,44 +27,56 @@ const (
 	KindResource
 	KindTemplate
 	KindUnknown
+	KindField
 )
 
 // Entity is a single discovered element in the codebase, such as controller, CRD,
 // function, package, test, document, or other component that Atlas tracks.
 type Entity struct {
-	ID                  string     `json:"id"`
-	Name                string     `json:"name"`
-	Kind                EntityKind `json:"kind"`
-	Description         string     `json:"description,omitempty"`
-	Package             string     `json:"package,omitempty"`
-	Files               []string   `json:"files,omitempty"`
-	Watches             []string   `json:"watches,omitempty"`
-	WatchMethods        []string   `json:"watchMethods,omitempty"`
-	WatchSites          []Site     `json:"watchSites,omitempty"`
-	Creates             []string   `json:"creates,omitempty"`
-	CreateSites         []Site     `json:"createSites,omitempty"`
-	Calls               []string   `json:"calls,omitempty"`
-	CallSites           []Site     `json:"callSites,omitempty"`
-	Implements          []string   `json:"implements,omitempty"`
-	ImplementationSites []Site     `json:"implementationSites,omitempty"`
-	EnvVars             []string   `json:"env_vars,omitempty"`
-	Imports             []string   `json:"imports,omitempty"`
-	ImportSites         []Site     `json:"importSites,omitempty"`
-	Literals            []string   `json:"literals,omitempty"`
-	Properties          []string   `json:"properties,omitempty"`
-	Embeds              []string   `json:"embeds,omitempty"`
-	EmbedSites          []Site     `json:"embedSites,omitempty"`
-	LastAuthor          string     `json:"lastAuthor,omitempty"`
-	LastModified        string     `json:"lastModified,omitempty"`
-	ChangeCount         int        `json:"changeCount,omitempty"`
-	Content             string     `json:"content,omitempty"`
-	Source              Source     `json:"source"`
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	Kind                EntityKind          `json:"kind"`
+	Description         string              `json:"description,omitempty"`
+	Generated           bool                `json:"generated,omitempty"`
+	ResourceOperations  []ResourceOperation `json:"resourceOperations,omitempty"`
+	ReferenceSites      []ReferenceSite     `json:"referenceSites,omitempty"`
+	Package             string              `json:"package,omitempty"`
+	Files               []string            `json:"files,omitempty"`
+	Watches             []string            `json:"watches,omitempty"`
+	WatchMethods        []string            `json:"watchMethods,omitempty"`
+	WatchSites          []Site              `json:"watchSites,omitempty"`
+	Creates             []string            `json:"creates,omitempty"`
+	CreateSites         []Site              `json:"createSites,omitempty"`
+	Calls               []string            `json:"calls,omitempty"`
+	CallSites           []Site              `json:"callSites,omitempty"`
+	Implements          []string            `json:"implements,omitempty"`
+	ImplementationSites []Site              `json:"implementationSites,omitempty"`
+	EnvVars             []string            `json:"env_vars,omitempty"`
+	Imports             []string            `json:"imports,omitempty"`
+	ImportSites         []Site              `json:"importSites,omitempty"`
+	Literals            []string            `json:"literals,omitempty"`
+	Properties          []string            `json:"properties,omitempty"`
+	Embeds              []string            `json:"embeds,omitempty"`
+	EmbedSites          []Site              `json:"embedSites,omitempty"`
+	LastAuthor          string              `json:"lastAuthor,omitempty"`
+	LastModified        string              `json:"lastModified,omitempty"`
+	ChangeCount         int                 `json:"changeCount,omitempty"`
+	Content             string              `json:"content,omitempty"`
+	Source              Source              `json:"source"`
 }
 
 // Site records the exact source location associated with a named fact on an
 // entity, such as a call, watch, or //go:embed pattern.
 type Site struct {
 	Name   string `json:"name"`
+	Source Source `json:"source"`
+}
+
+// ReferenceSite preserves each exact typed field usage, including repeated
+// references that share one entity-to-field relationship. It proves source
+// identity only, without interpreting reads, writes, or assertions.
+type ReferenceSite struct {
+	Target string `json:"target"`
 	Source Source `json:"source"`
 }
 
@@ -80,6 +93,7 @@ func (k EntityKind) String() string {
 		"resource",
 		"template",
 		"unknown",
+		"field",
 	}
 	if int(k) < len(name) {
 		return name[k]
@@ -114,6 +128,8 @@ func (k *EntityKind) UnmarshalJSON(data []byte) error {
 		*k = KindResource
 	case "template":
 		*k = KindTemplate
+	case "field":
+		*k = KindField
 	default:
 		*k = KindUnknown
 	}

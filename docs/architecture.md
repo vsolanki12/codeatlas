@@ -255,7 +255,13 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 16 | Pattern Analysis (observed naming, error, logging, controller patterns) | Implemented |
 | 17 | Test Analysis (structural links and conservative evidence status) | Implemented |
 
-Current state: 13 MCP tools, 15 CLI commands, schema 1.5.0, explicit scan coverage, resumable bounded entity and relationship queries, type-aware call evidence, deterministic PR review phases 14–17, and MCP consumer parity for freshness/review. Run `atlas stats` for entity/relationship counts and `go test ./...` for test count.
+Current state: 13 MCP tools, schema 1.6.0, extractor provenance and build context,
+separate type-analysis coverage, source-linked fields and typed test calls,
+shared bounded evidence manifests, resumable retrieval, and deterministic PR
+review including optional merge-base graph evidence. The query layer selects
+stored facts and source spans; Assistant materializes verified spans. See
+[the evidence workflow](evidence-workflow.md). Run `atlas stats` for graph
+counts and `go test ./...` for regression checks.
 
 ---
 

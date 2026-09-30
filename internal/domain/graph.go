@@ -12,7 +12,7 @@ const CurrentEntityIdentity = "repository-path-v1"
 
 // CurrentSchemaVersion is the graph schema emitted by the current scanner.
 // New fields are optional so older graphs remain readable by newer consumers.
-const CurrentSchemaVersion = "1.5.0"
+const CurrentSchemaVersion = "1.6.0"
 
 // ScanFileStatus describes how the scanner accounted for a discovered file.
 // A status is deliberately more precise than a warning string: consumers can
@@ -50,24 +50,29 @@ type ScanCoverage struct {
 
 // Graph is the top-level container for an Atlas scan result.
 type Graph struct {
-	Schema           string            `json:"schema"`
-	SchemaVersion    string            `json:"schemaVersion"`
-	EntityIdentity   string            `json:"entityIdentity,omitempty"`
-	GeneratedAt      string            `json:"generatedAt"`
-	Repository       string            `json:"repository"`
-	Commit           string            `json:"commit"`
-	Branch           string            `json:"branch"`
-	ScanDuration     string            `json:"scanDuration"`
-	ScanComplete     bool              `json:"scanComplete"`
-	ScanWarnings     []string          `json:"scanWarnings,omitempty"`
-	ScanFiles        []ScanFile        `json:"scanFiles,omitempty"`
-	ScanCoverage     *ScanCoverage     `json:"scanCoverage,omitempty"`
-	Entities         []Entity          `json:"entities"`
-	Relationship     []Relationship    `json:"relationships"`
-	FileTimestamps   map[string]string `json:"fileTimestamps,omitempty"`
-	FileFingerprints map[string]string `json:"fileFingerprints,omitempty"`
-	Views            map[string]View   `json:"views,omitempty"`
-	Questions        map[string]string `json:"questions,omitempty"`
+	Schema              string                `json:"schema"`
+	SchemaVersion       string                `json:"schemaVersion"`
+	EntityIdentity      string                `json:"entityIdentity,omitempty"`
+	ExtractorVersion    string                `json:"extractorVersion,omitempty"`
+	ExtractorBuild      string                `json:"extractorBuild,omitempty"`
+	ExtractionSignature string                `json:"extractionSignature,omitempty"`
+	BuildContext        *BuildContext         `json:"buildContext,omitempty"`
+	TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+	GeneratedAt         string                `json:"generatedAt"`
+	Repository          string                `json:"repository"`
+	Commit              string                `json:"commit"`
+	Branch              string                `json:"branch"`
+	ScanDuration        string                `json:"scanDuration"`
+	ScanComplete        bool                  `json:"scanComplete"`
+	ScanWarnings        []string              `json:"scanWarnings,omitempty"`
+	ScanFiles           []ScanFile            `json:"scanFiles,omitempty"`
+	ScanCoverage        *ScanCoverage         `json:"scanCoverage,omitempty"`
+	Entities            []Entity              `json:"entities"`
+	Relationship        []Relationship        `json:"relationships"`
+	FileTimestamps      map[string]string     `json:"fileTimestamps,omitempty"`
+	FileFingerprints    map[string]string     `json:"fileFingerprints,omitempty"`
+	Views               map[string]View       `json:"views,omitempty"`
+	Questions           map[string]string     `json:"questions,omitempty"`
 }
 
 // MarshalJSON writes the canonical graph schema. The Go field remains named
@@ -75,27 +80,33 @@ type Graph struct {
 // while the wire format uses the documented plural key.
 func (g Graph) MarshalJSON() ([]byte, error) {
 	type wireGraph struct {
-		Schema           string            `json:"schema"`
-		SchemaVersion    string            `json:"schemaVersion"`
-		EntityIdentity   string            `json:"entityIdentity,omitempty"`
-		GeneratedAt      string            `json:"generatedAt"`
-		Repository       string            `json:"repository"`
-		Commit           string            `json:"commit"`
-		Branch           string            `json:"branch"`
-		ScanDuration     string            `json:"scanDuration"`
-		ScanComplete     bool              `json:"scanComplete"`
-		ScanWarnings     []string          `json:"scanWarnings,omitempty"`
-		ScanFiles        []ScanFile        `json:"scanFiles,omitempty"`
-		ScanCoverage     *ScanCoverage     `json:"scanCoverage,omitempty"`
-		Entities         []Entity          `json:"entities"`
-		Relationships    []Relationship    `json:"relationships"`
-		FileTimestamps   map[string]string `json:"fileTimestamps,omitempty"`
-		FileFingerprints map[string]string `json:"fileFingerprints,omitempty"`
-		Views            map[string]View   `json:"views,omitempty"`
-		Questions        map[string]string `json:"questions,omitempty"`
+		Schema              string                `json:"schema"`
+		SchemaVersion       string                `json:"schemaVersion"`
+		EntityIdentity      string                `json:"entityIdentity,omitempty"`
+		ExtractorVersion    string                `json:"extractorVersion,omitempty"`
+		ExtractorBuild      string                `json:"extractorBuild,omitempty"`
+		ExtractionSignature string                `json:"extractionSignature,omitempty"`
+		BuildContext        *BuildContext         `json:"buildContext,omitempty"`
+		TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+		GeneratedAt         string                `json:"generatedAt"`
+		Repository          string                `json:"repository"`
+		Commit              string                `json:"commit"`
+		Branch              string                `json:"branch"`
+		ScanDuration        string                `json:"scanDuration"`
+		ScanComplete        bool                  `json:"scanComplete"`
+		ScanWarnings        []string              `json:"scanWarnings,omitempty"`
+		ScanFiles           []ScanFile            `json:"scanFiles,omitempty"`
+		ScanCoverage        *ScanCoverage         `json:"scanCoverage,omitempty"`
+		Entities            []Entity              `json:"entities"`
+		Relationships       []Relationship        `json:"relationships"`
+		FileTimestamps      map[string]string     `json:"fileTimestamps,omitempty"`
+		FileFingerprints    map[string]string     `json:"fileFingerprints,omitempty"`
+		Views               map[string]View       `json:"views,omitempty"`
+		Questions           map[string]string     `json:"questions,omitempty"`
 	}
 	return json.Marshal(wireGraph{
 		Schema: g.Schema, SchemaVersion: g.SchemaVersion, EntityIdentity: g.EntityIdentity, GeneratedAt: g.GeneratedAt,
+		ExtractorVersion: g.ExtractorVersion, ExtractorBuild: g.ExtractorBuild, ExtractionSignature: g.ExtractionSignature, BuildContext: g.BuildContext, TypeAnalysis: g.TypeAnalysis,
 		Repository: g.Repository, Commit: g.Commit, Branch: g.Branch,
 		ScanDuration: g.ScanDuration, ScanComplete: g.ScanComplete, ScanWarnings: g.ScanWarnings,
 		ScanFiles: g.ScanFiles, ScanCoverage: g.ScanCoverage,
@@ -109,25 +120,30 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 // legacy singular key so existing graphs can be migrated by rescanning.
 func (g *Graph) UnmarshalJSON(data []byte) error {
 	type wireGraph struct {
-		Schema           string            `json:"schema"`
-		SchemaVersion    string            `json:"schemaVersion"`
-		EntityIdentity   string            `json:"entityIdentity"`
-		GeneratedAt      string            `json:"generatedAt"`
-		Repository       string            `json:"repository"`
-		Commit           string            `json:"commit"`
-		Branch           string            `json:"branch"`
-		ScanDuration     string            `json:"scanDuration"`
-		ScanComplete     bool              `json:"scanComplete"`
-		ScanWarnings     []string          `json:"scanWarnings"`
-		ScanFiles        []ScanFile        `json:"scanFiles"`
-		ScanCoverage     *ScanCoverage     `json:"scanCoverage"`
-		Entities         []Entity          `json:"entities"`
-		Relationships    []Relationship    `json:"relationships"`
-		LegacyRelations  []Relationship    `json:"relationship"`
-		FileTimestamps   map[string]string `json:"fileTimestamps"`
-		FileFingerprints map[string]string `json:"fileFingerprints"`
-		Views            map[string]View   `json:"views"`
-		Questions        map[string]string `json:"questions"`
+		Schema              string                `json:"schema"`
+		SchemaVersion       string                `json:"schemaVersion"`
+		EntityIdentity      string                `json:"entityIdentity"`
+		ExtractorVersion    string                `json:"extractorVersion"`
+		ExtractorBuild      string                `json:"extractorBuild"`
+		ExtractionSignature string                `json:"extractionSignature"`
+		BuildContext        *BuildContext         `json:"buildContext"`
+		TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis"`
+		GeneratedAt         string                `json:"generatedAt"`
+		Repository          string                `json:"repository"`
+		Commit              string                `json:"commit"`
+		Branch              string                `json:"branch"`
+		ScanDuration        string                `json:"scanDuration"`
+		ScanComplete        bool                  `json:"scanComplete"`
+		ScanWarnings        []string              `json:"scanWarnings"`
+		ScanFiles           []ScanFile            `json:"scanFiles"`
+		ScanCoverage        *ScanCoverage         `json:"scanCoverage"`
+		Entities            []Entity              `json:"entities"`
+		Relationships       []Relationship        `json:"relationships"`
+		LegacyRelations     []Relationship        `json:"relationship"`
+		FileTimestamps      map[string]string     `json:"fileTimestamps"`
+		FileFingerprints    map[string]string     `json:"fileFingerprints"`
+		Views               map[string]View       `json:"views"`
+		Questions           map[string]string     `json:"questions"`
 	}
 	var w wireGraph
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -142,6 +158,7 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 	}
 	*g = Graph{
 		Schema: w.Schema, SchemaVersion: w.SchemaVersion, EntityIdentity: w.EntityIdentity, GeneratedAt: w.GeneratedAt,
+		ExtractorVersion: w.ExtractorVersion, ExtractorBuild: w.ExtractorBuild, ExtractionSignature: w.ExtractionSignature, BuildContext: w.BuildContext, TypeAnalysis: w.TypeAnalysis,
 		Repository: w.Repository, Commit: w.Commit, Branch: w.Branch,
 		ScanDuration: w.ScanDuration, ScanComplete: w.ScanComplete, ScanWarnings: w.ScanWarnings,
 		ScanFiles: w.ScanFiles, ScanCoverage: w.ScanCoverage,

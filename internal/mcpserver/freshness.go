@@ -18,30 +18,39 @@ type freshnessInput struct {
 }
 
 type compactFreshnessResult struct {
-	Available         bool                 `json:"available"`
-	SchemaVersion     string               `json:"schemaVersion,omitempty"`
-	SchemaCurrent     bool                 `json:"schemaCurrent"`
-	GraphRepository   string               `json:"graphRepository,omitempty"`
-	Repository        string               `json:"repository,omitempty"`
-	GraphCommit       string               `json:"graphCommit,omitempty"`
-	RepoHead          string               `json:"repoHead,omitempty"`
-	EntityIdentity    string               `json:"entityIdentity,omitempty"`
-	ScanComplete      bool                 `json:"scanComplete"`
-	ScanWarnings      []string             `json:"scanWarnings,omitempty"`
-	ScanCoverage      *domain.ScanCoverage `json:"scanCoverage,omitempty"`
-	RepositoryMatch   bool                 `json:"repositoryMatch"`
-	Verifiable        bool                 `json:"verifiable"`
-	Stale             bool                 `json:"stale"`
-	Dirty             bool                 `json:"dirty"`
-	StateVerifiable   bool                 `json:"stateVerifiable"`
-	FingerprintSource string               `json:"fingerprintSource,omitempty"`
-	ChangedFiles      []string             `json:"changedFiles,omitempty"`
-	NewFiles          []string             `json:"newFiles,omitempty"`
-	DeletedFiles      []string             `json:"deletedFiles,omitempty"`
-	Truncated         bool                 `json:"truncated,omitempty"`
+	Available                   bool                         `json:"available"`
+	SchemaVersion               string                       `json:"schemaVersion,omitempty"`
+	SchemaCurrent               bool                         `json:"schemaCurrent"`
+	ExtractorVersion            string                       `json:"extractorVersion,omitempty"`
+	ExtractorBuild              string                       `json:"extractorBuild,omitempty"`
+	ExpectedExtractorBuild      string                       `json:"expectedExtractorBuild,omitempty"`
+	ExtractorBuildMatch         bool                         `json:"extractorBuildMatch"`
+	ExtractorCurrent            bool                         `json:"extractorCurrent"`
+	ExtractionSignature         string                       `json:"extractionSignature,omitempty"`
+	BuildContext                *domain.BuildContext         `json:"buildContext,omitempty"`
+	TypeAnalysis                *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+	TypeAnalysisDiagnosticCount int                          `json:"typeAnalysisDiagnosticCount,omitempty"`
+	GraphRepository             string                       `json:"graphRepository,omitempty"`
+	Repository                  string                       `json:"repository,omitempty"`
+	GraphCommit                 string                       `json:"graphCommit,omitempty"`
+	RepoHead                    string                       `json:"repoHead,omitempty"`
+	EntityIdentity              string                       `json:"entityIdentity,omitempty"`
+	ScanComplete                bool                         `json:"scanComplete"`
+	ScanWarnings                []string                     `json:"scanWarnings,omitempty"`
+	ScanCoverage                *domain.ScanCoverage         `json:"scanCoverage,omitempty"`
+	RepositoryMatch             bool                         `json:"repositoryMatch"`
+	Verifiable                  bool                         `json:"verifiable"`
+	Stale                       bool                         `json:"stale"`
+	Dirty                       bool                         `json:"dirty"`
+	StateVerifiable             bool                         `json:"stateVerifiable"`
+	FingerprintSource           string                       `json:"fingerprintSource,omitempty"`
+	ChangedFiles                []string                     `json:"changedFiles,omitempty"`
+	NewFiles                    []string                     `json:"newFiles,omitempty"`
+	DeletedFiles                []string                     `json:"deletedFiles,omitempty"`
+	Truncated                   bool                         `json:"truncated,omitempty"`
 }
 
-func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string) {
+func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "atlas_freshness",
 		Description: "Verify whether the loaded CodeAtlas graph describes a repository checkout. " +
@@ -49,7 +58,11 @@ func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string) {
 			"A dirty, stale, incomplete, or unverifiable result is a limitation, not proof that a fact is absent.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input freshnessInput) (*mcp.CallToolResult, any, error) {
 		repo := strings.TrimSpace(input.Repo)
-		result := freshness.CheckWithGraphPath(repo, idx.Graph(), graphPath)
+		expected := ""
+		if len(extractorBuild) > 0 {
+			expected = extractorBuild[0]
+		}
+		result := freshness.Verify(repo, idx.Graph(), graphPath, freshness.VerifyOptions{ExpectedExtractorBuild: expected}).Freshness
 		compact := compactFreshness(result)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: formatFreshness(compact)}},
@@ -60,23 +73,36 @@ func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string) {
 
 func compactFreshness(result freshness.Result) compactFreshnessResult {
 	compact := compactFreshnessResult{
-		Available:         result.Available,
-		SchemaVersion:     result.SchemaVersion,
-		SchemaCurrent:     result.SchemaCurrent,
-		GraphRepository:   result.GraphRepository,
-		Repository:        result.Repository,
-		GraphCommit:       result.GraphCommit,
-		RepoHead:          result.RepoHead,
-		EntityIdentity:    result.EntityIdentity,
-		ScanComplete:      result.ScanComplete,
-		ScanWarnings:      append([]string(nil), result.ScanWarnings...),
-		ScanCoverage:      copyScanCoverage(result.ScanCoverage),
-		RepositoryMatch:   result.RepositoryMatch,
-		Verifiable:        result.Verifiable,
-		Stale:             result.Stale,
-		Dirty:             result.Dirty,
-		StateVerifiable:   result.StateVerifiable,
-		FingerprintSource: result.FingerprintSource,
+		Available:              result.Available,
+		SchemaVersion:          result.SchemaVersion,
+		SchemaCurrent:          result.SchemaCurrent,
+		ExtractorVersion:       result.ExtractorVersion,
+		ExtractorBuild:         result.ExtractorBuild,
+		ExpectedExtractorBuild: result.ExpectedExtractorBuild,
+		ExtractorBuildMatch:    result.ExtractorBuildMatch,
+		ExtractorCurrent:       result.ExtractorCurrent,
+		ExtractionSignature:    result.ExtractionSignature,
+		BuildContext:           result.BuildContext,
+		GraphRepository:        result.GraphRepository,
+		Repository:             result.Repository,
+		GraphCommit:            result.GraphCommit,
+		RepoHead:               result.RepoHead,
+		EntityIdentity:         result.EntityIdentity,
+		ScanComplete:           result.ScanComplete,
+		ScanWarnings:           append([]string(nil), result.ScanWarnings...),
+		ScanCoverage:           copyScanCoverage(result.ScanCoverage),
+		RepositoryMatch:        result.RepositoryMatch,
+		Verifiable:             result.Verifiable,
+		Stale:                  result.Stale,
+		Dirty:                  result.Dirty,
+		StateVerifiable:        result.StateVerifiable,
+		FingerprintSource:      result.FingerprintSource,
+	}
+	if result.TypeAnalysis != nil {
+		copy := *result.TypeAnalysis
+		compact.TypeAnalysisDiagnosticCount = copy.DiagnosticCount
+		copy.Diagnostics = nil
+		compact.TypeAnalysis = &copy
 	}
 	compact.ChangedFiles, compact.Truncated = boundedFreshnessFiles(result.ChangedFiles, compact.Truncated)
 	compact.NewFiles, compact.Truncated = boundedFreshnessFiles(result.NewFiles, compact.Truncated)
@@ -111,6 +137,11 @@ func formatFreshness(result compactFreshnessResult) string {
 	fmt.Fprintf(&b, "Graph repository: %s\n", result.GraphRepository)
 	fmt.Fprintf(&b, "Repository checked: %s\n", result.Repository)
 	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", result.SchemaVersion, result.SchemaCurrent)
+	fmt.Fprintf(&b, "Extractor: %s (current=%t) | signature: %s\n", result.ExtractorVersion, result.ExtractorCurrent, result.ExtractionSignature)
+	fmt.Fprintf(&b, "Extractor build: %s (matches current executable=%t)\n", result.ExtractorBuild, result.ExtractorBuildMatch)
+	if result.TypeAnalysis != nil {
+		fmt.Fprintf(&b, "Type analysis: %d/%d packages checked, %d failed; %d calls resolved, %d unresolved\n", result.TypeAnalysis.CheckedPackages, result.TypeAnalysis.Packages, result.TypeAnalysis.FailedPackages, result.TypeAnalysis.ResolvedCalls, result.TypeAnalysis.UnresolvedCalls)
+	}
 	fmt.Fprintf(&b, "Graph commit: %s\n", result.GraphCommit)
 	fmt.Fprintf(&b, "Repository HEAD: %s\n", result.RepoHead)
 	fmt.Fprintf(&b, "Entity identity: %s\n", result.EntityIdentity)

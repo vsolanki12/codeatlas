@@ -101,6 +101,38 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 				if doc != "" {
 					typeComments[s.Name.Name] = doc
 				}
+				if structure, ok := s.Type.(*ast.StructType); ok {
+					for _, field := range structure.Fields.List {
+						description := ""
+						if field.Doc != nil {
+							description = strings.TrimSpace(field.Doc.Text())
+						}
+						if field.Comment != nil {
+							description = strings.TrimSpace(description + "\n" + field.Comment.Text())
+						}
+						start := field.Pos()
+						end := field.End()
+						if field.Doc != nil && field.Doc.Pos() < start {
+							start = field.Doc.Pos()
+						}
+						if field.Comment != nil && field.Comment.End() > end {
+							end = field.Comment.End()
+						}
+						names := field.Names
+						if len(names) == 0 {
+							if name := expressionTypeName(field.Type); name != "" {
+								names = []*ast.Ident{{Name: name}}
+							}
+						}
+						for _, name := range names {
+							entities = append(entities, domain.Entity{
+								ID:   fmt.Sprintf("field:%s.%s.%s", packagePath, s.Name.Name, name.Name),
+								Name: name.Name, Kind: domain.KindField, Package: packagePath, Description: description,
+								Source: domain.Source{Parser: "go-ast", File: file.RelativePath, Line: p.fset.Position(start).Line, EndLine: p.fset.Position(end).Line},
+							})
+						}
+					}
+				}
 			case *ast.ValueSpec:
 				if genDecl.Tok != token.VAR {
 					continue
@@ -152,11 +184,13 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		var callSites []domain.Site
 		var creates []string
 		var createSites []domain.Site
+		var operations []domain.ResourceOperation
 		var envVars []string
 		var literals []string
 		if fn.Body != nil {
 			calls, callSites, envVars = extractCallsAndEnvVars(fn.Body, importAliases, file.RelativePath, p.fset)
 			creates, createSites = extractCreateSites(fn.Body, file.RelativePath, p.fset)
+			operations = extractResourceOperations(fn.Body, file.RelativePath, p.fset)
 			literals = extractLiterals(fn.Body)
 		}
 
@@ -177,6 +211,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			CallSites:           callSites,
 			Creates:             creates,
 			CreateSites:         createSites,
+			ResourceOperations:  operations,
 			Implements:          implements,
 			ImplementationSites: implSites[recv],
 			EnvVars:             envVars,
@@ -297,6 +332,9 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		})
 	}
 
+	for i := range entities {
+		entities[i].Generated = ast.IsGenerated(astFile)
+	}
 	return entities, nil
 }
 
@@ -433,7 +471,7 @@ func extractCreateSites(body *ast.BlockStmt, filePath string, fset *token.FileSe
 			if !ok || !createMethodNames[selector.Sel.Name] {
 				return true
 			}
-			if object := createObjectArg(node.Args); object != nil {
+			if object := resourceObjectArg(selector.Sel.Name, node.Args); object != nil {
 				typeName := createTypeName(object, variableTypes)
 				if typeName != "" {
 					position := fset.Position(node.Pos())
@@ -474,6 +512,42 @@ func createObjectArg(args []ast.Expr) ast.Expr {
 	return nil
 }
 
+// Client methods take (context, object); controllerutil upsert helpers take
+// (context, client, object, mutate). The method name determines the signature.
+func resourceObjectArg(method string, args []ast.Expr) ast.Expr {
+	if method == "CreateOrUpdate" || method == "CreateOrPatch" {
+		if len(args) >= 3 {
+			return args[2]
+		}
+		return nil
+	}
+	return createObjectArg(args)
+}
+
+func extractResourceOperations(body *ast.BlockStmt, filePath string, fset *token.FileSet) []domain.ResourceOperation {
+	var operations []domain.ResourceOperation
+	ast.Inspect(body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !createMethodNames[selector.Sel.Name] {
+			return true
+		}
+		var method bytes.Buffer
+		_ = format.Node(&method, fset, selector)
+		operations = append(operations, domain.ResourceOperation{
+			Operation: selector.Sel.Name, Method: method.String(), Confidence: domain.ConfidenceInferred,
+			ObjectType:     createTypeName(resourceObjectArg(selector.Sel.Name, call.Args), nil),
+			ObservedMethod: method.String(), ObservedObjectType: createTypeName(resourceObjectArg(selector.Sel.Name, call.Args), nil),
+			Source: domain.Source{Parser: "go-ast", File: filePath, Line: fset.Position(call.Pos()).Line, Column: fset.Position(call.Pos()).Column, EndLine: fset.Position(call.End()).Line},
+		})
+		return true
+	})
+	return operations
+}
+
 func createTypeName(expr ast.Expr, variables map[string]string) string {
 	switch value := expr.(type) {
 	case *ast.Ident:
@@ -500,6 +574,10 @@ func expressionTypeName(expr ast.Expr) string {
 		return expressionTypeName(value.X)
 	case *ast.ArrayType:
 		return expressionTypeName(value.Elt)
+	case *ast.IndexExpr:
+		return expressionTypeName(value.X)
+	case *ast.IndexListExpr:
+		return expressionTypeName(value.X)
 	}
 	return ""
 }

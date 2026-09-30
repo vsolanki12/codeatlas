@@ -27,6 +27,7 @@ type CompactReviewResult struct {
 	PR                   *CompactPRMetadata      `json:"pr,omitempty"`
 	Graph                query.GraphMetadata     `json:"graph"`
 	GraphFreshness       string                  `json:"graphFreshness"`
+	GraphChanges         *GraphChanges           `json:"graphChanges,omitempty"`
 	ChangedFiles         []FileDiff              `json:"changedFiles"`
 	Functions            []CompactEntityReview   `json:"functions,omitempty"`
 	Tests                []CompactTestLink       `json:"tests,omitempty"`
@@ -134,12 +135,16 @@ func CompactReview(result *ReviewResult, includeDiff bool) *CompactReviewResult 
 		Head:              head,
 		Graph:             graph,
 		GraphFreshness:    graphFreshness,
+		GraphChanges:      compactGraphChanges(result.GraphChanges),
 		Limitations:       limitations,
 		Heuristics:        heuristics,
 		LLMInterpretation: llmInterpretation,
 	}
 
 	truncated := baseTruncated || headTruncated || graphTruncated || freshnessTruncated || limitationsTruncated || heuristicsTruncated || interpretationTruncated
+	if compact.GraphChanges != nil {
+		truncated = truncated || compact.GraphChanges.Truncated
+	}
 	var sectionTruncated bool
 	compact.PR, sectionTruncated = compactPRMetadata(result.PR)
 	truncated = truncated || sectionTruncated
@@ -559,6 +564,7 @@ func FormatReviewCompact(result *ReviewResult, includeDiff bool) string {
 	b.WriteString("=============================\n")
 	fmt.Fprintf(&b, "Base: %s | Head: %s\n", compact.Base, compact.Head)
 	fmt.Fprintf(&b, "Graph: %s (%s, %s)\n", compact.Graph.Commit, compact.GraphFreshness, scanStatus(compact.Graph.ScanComplete))
+	b.WriteString(formatGraphChanges(compact.GraphChanges))
 	if compact.Graph.Repository != "" {
 		fmt.Fprintf(&b, "Graph repository: %s\n", compact.Graph.Repository)
 	}

@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"fmt"
+	"go/build"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -32,10 +34,40 @@ type Result struct {
 type ScanOptions struct {
 	Temporal      bool
 	PreviousGraph string
+	GOOS          string
+	GOARCH        string
+	BuildTags     []string
+}
+
+// EffectiveBuildContext resolves explicit target settings without mutating the
+// process environment. The context is persisted and used for cache identity.
+func EffectiveBuildContext(opts ScanOptions) domain.BuildContext {
+	context := domain.BuildContext{GOOS: opts.GOOS, GOARCH: opts.GOARCH, GoVersion: runtime.Version(), CgoEnabled: build.Default.CgoEnabled}
+	if context.GOOS == "" {
+		context.GOOS = build.Default.GOOS
+	}
+	if context.GOARCH == "" {
+		context.GOARCH = build.Default.GOARCH
+	}
+	seen := make(map[string]bool)
+	for _, tag := range opts.BuildTags {
+		if tag = strings.TrimSpace(tag); tag != "" && !seen[tag] {
+			seen[tag] = true
+			context.BuildTags = append(context.BuildTags, tag)
+		}
+	}
+	sort.Strings(context.BuildTags)
+	return context
 }
 
 func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error) {
 	start := time.Now()
+	buildContext := EffectiveBuildContext(opts)
+	extractorBuild, err := ExecutableBuildIdentity()
+	if err != nil {
+		return nil, fmt.Errorf("extractor build identity: %w", err)
+	}
+	signature := domain.ExtractionSignature(domain.CurrentExtractorVersion, buildContext, extractorBuild)
 	absRepo, err := filepath.Abs(repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("resolve repository path: %w", err)
@@ -75,7 +107,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		// marking the new graph complete would turn an unknown into a false fact.
 		// Legacy graphs also have ScanComplete=false, so they receive one full
 		// migration scan before incremental mode is enabled.
-		if err == nil && prev.ScanComplete && prev.EntityIdentity == domain.CurrentEntityIdentity && sameRepository(prev.Repository, repoPath) && (len(prev.FileTimestamps) > 0 || len(prev.FileFingerprints) > 0) {
+		if err == nil && prev.ScanComplete && prev.SchemaVersion == domain.CurrentSchemaVersion && prev.ExtractorVersion == domain.CurrentExtractorVersion && prev.ExtractorBuild == extractorBuild && prev.ExtractionSignature == signature && prev.EntityIdentity == domain.CurrentEntityIdentity && sameRepository(prev.Repository, repoPath) && (len(prev.FileTimestamps) > 0 || len(prev.FileFingerprints) > 0) {
 			previousState := prev.FileFingerprints
 			if len(previousState) == 0 {
 				previousState = prev.FileTimestamps
@@ -185,11 +217,23 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 
 	// Step 4: Deduplicate entities by ID, merging Files and Imports.
+	activeFiles := activeGoSourceFiles(repoPath, allFiles, buildContext)
 	seenIdx := make(map[string]int)
 	deduped := entities[:0]
 	for _, e := range entities {
 		if idx, ok := seenIdx[e.ID]; ok {
-			if deduped[idx].Description == "" && e.Description != "" {
+			existingActive, incomingActive := activeFiles[deduped[idx].Source.File], activeFiles[e.Source.File]
+			if filepath.Ext(deduped[idx].Source.File) == ".go" && filepath.Ext(e.Source.File) == ".go" && deduped[idx].Source.File != e.Source.File {
+				deduped[idx].Files = appendUnique(deduped[idx].Files, []string{deduped[idx].Source.File, e.Source.File})
+			}
+			if incomingActive && !existingActive {
+				// Identity remains shared across variants; its primary source and
+				// documentation describe the declaration selected by the target.
+				deduped[idx].Source = e.Source
+				deduped[idx].Description = e.Description
+				deduped[idx].Generated = e.Generated
+			}
+			if deduped[idx].Description == "" && e.Description != "" && (!existingActive || incomingActive) {
 				deduped[idx].Description = e.Description
 			}
 			deduped[idx].Files = appendUnique(deduped[idx].Files, e.Files)
@@ -210,6 +254,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 			deduped[idx].EmbedSites = appendUniqueSites(deduped[idx].EmbedSites, e.EmbedSites)
 			deduped[idx].Implements = appendUnique(deduped[idx].Implements, e.Implements)
 			deduped[idx].EnvVars = appendUnique(deduped[idx].EnvVars, e.EnvVars)
+			if !existingActive || incomingActive {
+				deduped[idx].Generated = deduped[idx].Generated && e.Generated
+			}
+			deduped[idx].ResourceOperations = append(deduped[idx].ResourceOperations, e.ResourceOperations...)
+			deduped[idx].ReferenceSites = append(deduped[idx].ReferenceSites, e.ReferenceSites...)
 			continue
 		}
 		seenIdx[e.ID] = len(deduped)
@@ -235,17 +284,25 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 
 	// Step 6: Build relationships
 	builder := graph.NewRelationshipBuilder(repoPath)
-	relationships := builder.Build(entities)
 	// Upgrade only relationships whose call targets are resolved by Go's type
 	// checker. The AST builder remains the fallback for repositories that do
 	// not type-check cleanly; typed analysis never invents a target outside the
 	// graph.
-	typedRelationships := graph.BuildTypedCallRelationships(repoPath, allFiles, entities)
+	typedRelationships, typeCoverage := graph.BuildTypedRelationships(repoPath, allFiles, entities, buildContext)
+	// Typed resource resolution can add observations. Canonicalize them before
+	// edge building so full and incremental scans serialize the same facts.
+	sortEntities(entities)
+	relationships := builder.Build(entities)
 	relationships = graph.MergeRelationships(relationships, typedRelationships)
 
 	// Step 7: Assemble graph with metadata
 	duration := time.Since(start)
 	g := graph.BuildGraph(repoPath, entities, relationships, duration)
+	g.ExtractorVersion = domain.CurrentExtractorVersion
+	g.ExtractorBuild = extractorBuild
+	g.ExtractionSignature = signature
+	g.BuildContext = &buildContext
+	g.TypeAnalysis = &typeCoverage
 
 	// Step 7b: Store file timestamps for incremental scanning
 	timestamps := make(map[string]string, len(allFiles))
@@ -294,6 +351,25 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		ReusedFiles:  reusedCount,
 		DeletedFiles: deletedCount,
 	}, nil
+}
+
+func activeGoSourceFiles(root string, files []domain.File, context domain.BuildContext) map[string]bool {
+	buildContext := build.Default
+	buildContext.GOOS = context.GOOS
+	buildContext.GOARCH = context.GOARCH
+	buildContext.BuildTags = append([]string(nil), context.BuildTags...)
+	buildContext.CgoEnabled = context.CgoEnabled
+	active := make(map[string]bool)
+	for _, file := range files {
+		if filepath.Ext(file.RelativePath) != ".go" {
+			continue
+		}
+		absolute := filepath.Join(root, filepath.FromSlash(file.RelativePath))
+		if matches, err := buildContext.MatchFile(filepath.Dir(absolute), filepath.Base(absolute)); err == nil && matches {
+			active[file.RelativePath] = true
+		}
+	}
+	return active
 }
 
 func initializeScanFiles(files []domain.File, reused map[string]bool) []domain.ScanFile {
@@ -481,7 +557,7 @@ func packageRescanRequired(previous []domain.Entity, changed []domain.File, dele
 		return false
 	}
 	for _, file := range changed {
-		if filepath.Ext(file.RelativePath) != ".go" || strings.HasSuffix(file.RelativePath, "_test.go") {
+		if filepath.Ext(file.RelativePath) != ".go" {
 			continue
 		}
 		dir := filepath.ToSlash(filepath.Dir(file.RelativePath))
@@ -509,7 +585,7 @@ func packageRescanRequired(previous []domain.Entity, changed []domain.File, dele
 		}
 	}
 	for _, deletedPath := range deleted {
-		if filepath.Ext(deletedPath) != ".go" || strings.HasSuffix(deletedPath, "_test.go") {
+		if filepath.Ext(deletedPath) != ".go" {
 			continue
 		}
 		dir := filepath.ToSlash(filepath.Dir(deletedPath))
@@ -576,6 +652,45 @@ func sortEntities(entities []domain.Entity) {
 			return siteLess(entities[i].ImplementationSites[a], entities[i].ImplementationSites[b])
 		})
 		sort.Slice(entities[i].EmbedSites, func(a, b int) bool { return siteLess(entities[i].EmbedSites[a], entities[i].EmbedSites[b]) })
+		sort.Slice(entities[i].ResourceOperations, func(a, b int) bool {
+			left, right := entities[i].ResourceOperations[a], entities[i].ResourceOperations[b]
+			if left.Source.File != right.Source.File {
+				return left.Source.File < right.Source.File
+			}
+			if left.Source.Line != right.Source.Line {
+				return left.Source.Line < right.Source.Line
+			}
+			if left.Source.Column != right.Source.Column {
+				return left.Source.Column < right.Source.Column
+			}
+			return left.Method < right.Method
+		})
+		sort.Slice(entities[i].ReferenceSites, func(a, b int) bool {
+			left, right := entities[i].ReferenceSites[a], entities[i].ReferenceSites[b]
+			if left.Source.File != right.Source.File {
+				return left.Source.File < right.Source.File
+			}
+			if left.Source.Line != right.Source.Line {
+				return left.Source.Line < right.Source.Line
+			}
+			if left.Source.Column != right.Source.Column {
+				return left.Source.Column < right.Source.Column
+			}
+			if left.Target != right.Target {
+				return left.Target < right.Target
+			}
+			if left.Source.EndLine != right.Source.EndLine {
+				return left.Source.EndLine < right.Source.EndLine
+			}
+			return left.Source.Parser < right.Source.Parser
+		})
+		references := entities[i].ReferenceSites[:0]
+		for _, reference := range entities[i].ReferenceSites {
+			if len(references) == 0 || references[len(references)-1] != reference {
+				references = append(references, reference)
+			}
+		}
+		entities[i].ReferenceSites = references
 	}
 	sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
 }
@@ -634,7 +749,7 @@ func siteLess(a, b domain.Site) bool {
 func normalizePackageFiles(entities []domain.Entity, files []domain.File) {
 	available := make(map[string]bool, len(files))
 	for _, file := range files {
-		if filepath.Ext(file.RelativePath) == ".go" && !strings.HasSuffix(file.RelativePath, "_test.go") {
+		if filepath.Ext(file.RelativePath) == ".go" {
 			available[file.RelativePath] = true
 		}
 	}

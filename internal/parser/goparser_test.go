@@ -148,7 +148,7 @@ func TestParseFixtures(t *testing.T) {
 		{"empty file", "testdata/empty.go", 1, 0, 0},
 		{"standalone functions", "testdata/functions.go", 4, 3, 0},
 		{"methods", "testdata/methods.go", 3, 2, 0},
-		{"controller with watches", "testdata/controller.go", 11, 9, 1},
+		{"controller with watches", "testdata/controller.go", 12, 9, 1},
 	}
 
 	p := NewGoParser()

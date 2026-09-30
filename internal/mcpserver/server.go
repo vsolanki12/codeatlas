@@ -3,12 +3,13 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/vsolanki12/codeatlas/internal/query"
 )
 
-func Run(ctx context.Context, graphPath string) error {
+func Run(ctx context.Context, graphPath string, extractorBuild ...string) error {
 	idx, err := query.LoadGraph(graphPath)
 	if err != nil {
 		return fmt.Errorf("load graph: %w", err)
@@ -19,25 +20,25 @@ func Run(ctx context.Context, graphPath string) error {
 		Version: "0.3.0",
 	}, nil)
 
-	registerTools(server, idx, graphPath)
+	registerTools(server, idx, graphPath, extractorBuild...)
 
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
-func registerTools(s *mcp.Server, idx *query.Index, graphPath string) {
+func registerTools(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
 	registerSearch(s, idx)
 	registerEntity(s, idx)
 	registerContext(s, idx)
 	registerWhere(s, idx)
 	registerStats(s, idx)
-	registerFreshness(s, idx, graphPath)
+	registerFreshness(s, idx, graphPath, extractorBuild...)
 	registerTemporal(s, idx)
 	registerInvestigate(s, idx)
 	registerExplain(s, idx)
 	registerImpact(s, idx)
 	registerView(s, idx)
 	registerAsk(s, idx)
-	registerReview(s, idx, graphPath)
+	registerReview(s, idx, graphPath, extractorBuild...)
 }
 
 type entityInput struct {
@@ -89,10 +90,17 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 			}, nil, nil
 		}
 		if input.Brief {
-			entity := query.CompactEntitySummary(e)
+			description := e.Description
+			if len(description) > 240 {
+				description = description[:240]
+				for !utf8.ValidString(description) {
+					description = description[:len(description)-1]
+				}
+			}
+			entity := map[string]any{"id": e.ID, "name": e.Name, "kind": e.Kind.String(), "source": e.Source, "description": description}
 			return &mcp.CallToolResult{
 				Content:           []mcp.Content{&mcp.TextContent{Text: query.FormatEntity(e) + "\n"}},
-				StructuredContent: map[string]any{"graph": idx.GraphMetadata(), "entity": entity, "truncated": entity.Truncated},
+				StructuredContent: map[string]any{"graph": idx.GraphMetadata(), "entity": entity, "truncated": len(e.Description) > 240},
 			}, nil, nil
 		}
 		text := query.FormatEntityFull(e)
@@ -158,11 +166,9 @@ func registerSearch(s *mcp.Server, idx *query.Index) {
 		if err != nil {
 			return nil, nil, err
 		}
-		var page query.EntityPage
-		if input.Kind != "" {
-			page = idx.LookupPage(input.Kind, input.Query, offset, limit)
-		} else {
-			page = idx.SearchPage(input.Query, offset, limit)
+		page, err := idx.SearchKindPage(input.Query, input.Kind, offset, limit)
+		if err != nil {
+			return nil, nil, err
 		}
 		text := query.FormatEntityList(page.Entities) + query.FormatEntityPage(page)
 		result := idx.CompactEntityListPageResult(page, false, 0)
@@ -230,8 +236,12 @@ func registerTemporal(s *mcp.Server, idx *query.Index) {
 		page := idx.TemporalPage(input.Kind, input.Name, input.Since, input.Author, input.Stale, offset, limit)
 		if len(page.Entities) == 0 && page.Total == 0 {
 			result := idx.CompactEntityListPageResult(page, false, 0)
+			message := "No temporal results match these filters.\n"
+			if idx.TemporalPage("", "", "", "", false, 0, 1).Total == 0 {
+				message = "No temporal data. Re-scan with --temporal flag.\n"
+			}
 			return &mcp.CallToolResult{
-				Content:           []mcp.Content{&mcp.TextContent{Text: "No temporal data. Re-scan with --temporal flag.\n" + query.FormatEntityPage(page)}},
+				Content:           []mcp.Content{&mcp.TextContent{Text: message + query.FormatEntityPage(page)}},
 				StructuredContent: result,
 			}, nil, nil
 		}
@@ -378,16 +388,33 @@ func registerView(s *mcp.Server, idx *query.Index) {
 }
 
 type askInput struct {
-	Entity string `json:"entity" jsonschema:"entity name or ID to ask about"`
-	Intent string `json:"intent,omitempty" jsonschema:"understand (how it works), impact (what breaks), or debug (everything about it). Default: view only"`
-	Detail bool   `json:"detail,omitempty" jsonschema:"true for full verbose output with complete entity IDs and paths. Default: compact"`
+	Entity           string `json:"entity,omitempty" jsonschema:"exact entity name or ID; optional when question is provided"`
+	Question         string `json:"question,omitempty" jsonschema:"complete scoped question; selects a deduplicated evidence manifest"`
+	Scope            string `json:"scope,omitempty" jsonschema:"package, file path, or entity scope"`
+	Evidence         bool   `json:"evidence,omitempty" jsonschema:"return versioned evidence manifest for an exact entity"`
+	BudgetBytes      int    `json:"budget_bytes,omitempty" jsonschema:"serialized manifest budget in bytes (default 16384, minimum 2048)"`
+	Offset           int    `json:"offset,omitempty" jsonschema:"manifest continuation offset"`
+	GraphFingerprint string `json:"graph_fingerprint,omitempty" jsonschema:"snapshot fingerprint from the previous manifest"`
+	Intent           string `json:"intent,omitempty" jsonschema:"understand (how it works), impact (what breaks), or debug (everything about it). Default: view only"`
+	Detail           bool   `json:"detail,omitempty" jsonschema:"true for full verbose output with complete entity IDs and paths. Default: compact"`
 }
 
 func registerAsk(s *mcp.Server, idx *query.Index) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_ask",
-		Description: "Ask an engineering question about an entity. Returns bounded pre-computed knowledge view plus optional evidence-bearing analysis. Use detail=true for verbose human-readable text; structured output remains bounded.",
+		Description: "Retrieve engineering evidence. Prefer question with optional scope for a versioned, deduplicated manifest of implementation, definitions, relationships, tests, and source spans under budget_bytes. Use graph_fingerprint and offset to continue. Entity alone retains the legacy entity report; evidence=true selects the manifest.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
+		if input.Question != "" || input.Evidence || input.Scope != "" || input.BudgetBytes != 0 || input.Offset != 0 || input.GraphFingerprint != "" {
+			packet, err := idx.Evidence(query.EvidenceRequest{Question: input.Question, Entity: input.Entity, Scope: input.Scope,
+				Intent: input.Intent, BudgetBytes: input.BudgetBytes, Offset: input.Offset, GraphFingerprint: input.GraphFingerprint})
+			if err != nil {
+				return nil, nil, err
+			}
+			// The text is a small summary of the selected packet. Evidence appears
+			// once in structured content, avoiding two complete representations.
+			text := fmt.Sprintf("Evidence %s: %d entities, %d relationships, %d source spans; truncated=%t.\n", packet.Status, len(packet.Entities), len(packet.Relationships), len(packet.Sources), packet.Truncated)
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}, StructuredContent: packet}, nil, nil
+		}
 		r := idx.Ask(input.Entity, input.Intent)
 		if r == nil {
 			return &mcp.CallToolResult{

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: atlas <command> [flags]")
 		fmt.Fprintln(os.Stderr, "commands: scan, search, explain, impact, investigate, ask, view,")
-		fmt.Fprintln(os.Stderr, "          context, where, stats, freshness, verify, serve, query, review")
+		fmt.Fprintln(os.Stderr, "          evidence, context, where, stats, freshness, verify, serve, query, review, version")
 		os.Exit(1)
 	}
 
@@ -40,6 +41,10 @@ func main() {
 		runInvestigate(os.Args[2:])
 	case "ask":
 		runAsk(os.Args[2:])
+	case "evidence":
+		runEvidence(os.Args[2:])
+	case "version":
+		runVersion()
 	case "view":
 		runView(os.Args[2:])
 	case "query":
@@ -64,18 +69,35 @@ func main() {
 	}
 }
 
-func reorderArgs(args []string) []string {
+func reorderArgs(fs *flag.FlagSet, args []string) []string {
 	var flags, positional []string
+	terminated := false
 	for i := 0; i < len(args); i++ {
-		if strings.HasPrefix(args[i], "-") {
+		if args[i] == "--" {
+			positional = append(positional, args[i+1:]...)
+			terminated = true
+			break
+		}
+		if strings.HasPrefix(args[i], "-") && args[i] != "-" {
 			flags = append(flags, args[i])
-			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") && strings.Contains(args[i], "=") == false {
+			name := strings.TrimLeft(args[i], "-")
+			option := fs.Lookup(name)
+			isBool := name == "h" || name == "help"
+			if option != nil {
+				if value, ok := option.Value.(interface{ IsBoolFlag() bool }); ok {
+					isBool = value.IsBoolFlag()
+				}
+			}
+			if !isBool && !strings.Contains(args[i], "=") && i+1 < len(args) {
 				flags = append(flags, args[i+1])
 				i++
 			}
 		} else {
 			positional = append(positional, args[i])
 		}
+	}
+	if terminated {
+		flags = append(flags, "--")
 	}
 	return append(flags, positional...)
 }
@@ -85,13 +107,21 @@ func runScan(args []string) {
 	repo := fs.String("repo", ".", "path to the repository root")
 	output := fs.String("output", "atlas.json", "output file path")
 	temporal := fs.Bool("temporal", false, "enrich entities with git history")
-	fs.Parse(reorderArgs(args))
+	goos := fs.String("goos", "", "target operating system for type analysis (default: host)")
+	goarch := fs.String("goarch", "", "target architecture for type analysis (default: host)")
+	tags := fs.String("tags", "", "comma-separated Go build tags for type analysis")
+	fs.Parse(reorderArgs(fs, args))
 
 	if fs.NArg() > 0 {
 		*repo = fs.Arg(0)
 	}
 
-	opts := scanner.ScanOptions{Temporal: *temporal}
+	opts := scanner.ScanOptions{Temporal: *temporal, GOOS: *goos, GOARCH: *goarch}
+	for _, tag := range strings.Split(*tags, ",") {
+		if tag = strings.TrimSpace(tag); tag != "" {
+			opts.BuildTags = append(opts.BuildTags, tag)
+		}
+	}
 	if absOut, err := filepath.Abs(*output); err == nil {
 		if _, err := os.Stat(absOut); err == nil {
 			opts.PreviousGraph = absOut
@@ -130,7 +160,7 @@ func runSearch(args []string) {
 	limit := fs.Int("limit", query.DefaultPageLimit, "maximum results to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	q := fs.Arg(0)
 	if q == "" && *kind == "" {
@@ -149,15 +179,10 @@ func runSearch(args []string) {
 		os.Exit(1)
 	}
 
-	var page query.EntityPage
-	if q != "" {
-		if *kind != "" {
-			page = idx.LookupPage(*kind, q, offsetValue, limitValue)
-		} else {
-			page = idx.SearchPage(q, offsetValue, limitValue)
-		}
-	} else {
-		page = idx.LookupPage(*kind, "", offsetValue, limitValue)
+	page, err := idx.SearchKindPage(q, *kind, offsetValue, limitValue)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "search: %v\n", err)
+		os.Exit(1)
 	}
 
 	if *jsonOutput {
@@ -179,7 +204,7 @@ func runExplain(args []string) {
 	depth := fs.Int("depth", 2, "traversal depth (max 3)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -220,7 +245,7 @@ func runImpact(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -261,7 +286,7 @@ func runInvestigate(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -304,7 +329,7 @@ func runAsk(args []string) {
 	detail := fs.Bool("detail", false, "full verbose output (no compact formatting)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entity := fs.Arg(0)
 	if entity == "" {
@@ -335,12 +360,63 @@ func runAsk(args []string) {
 	fmt.Print(query.FormatAsk(result))
 }
 
+// runEvidence exposes the same graph-selected manifest consumed by MCP and
+// Assistant. Source materialization remains the verified consumer's job.
+func runEvidence(args []string) {
+	fs := flag.NewFlagSet("evidence", flag.ExitOnError)
+	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	question := fs.String("question", "", "complete engineering question")
+	entity := fs.String("entity", "", "exact entity ID or name (optional with question)")
+	scope := fs.String("scope", "", "package, path, or entity scope")
+	intent := fs.String("intent", "understand", "understand, impact, or debug")
+	budget := fs.Int("budget-bytes", 16384, "serialized evidence budget in bytes (minimum 2048)")
+	offset := fs.Int("offset", 0, "continuation offset")
+	fingerprint := fs.String("graph-fingerprint", "", "graph snapshot required for continuation")
+	jsonOutput := fs.Bool("json", false, "emit the versioned evidence manifest")
+	fs.Parse(reorderArgs(fs, args))
+	if *question == "" && *entity == "" {
+		*question = strings.Join(fs.Args(), " ")
+	}
+	idx, err := query.LoadGraph(*graphPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load graph: %v\n", err)
+		os.Exit(1)
+	}
+	packet, err := idx.Evidence(query.EvidenceRequest{Question: *question, Entity: *entity,
+		Scope: *scope, Intent: *intent, BudgetBytes: *budget, Offset: *offset, GraphFingerprint: *fingerprint})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "evidence: %v\n", err)
+		os.Exit(1)
+	}
+	if *jsonOutput {
+		printJSON(packet)
+		return
+	}
+	printJSON(packet)
+}
+
+func runVersion() {
+	version := map[string]any{"schemaVersion": domain.CurrentSchemaVersion, "extractorVersion": domain.CurrentExtractorVersion, "evidenceVersion": "1.0"}
+	if build, err := scanner.ExecutableBuildIdentity(); err == nil {
+		version["extractorBuild"] = build
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		version["goVersion"] = info.GoVersion
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" || setting.Key == "vcs.modified" {
+				version[setting.Key] = setting.Value
+			}
+		}
+	}
+	printJSON(version)
+}
+
 func runView(args []string) {
 	fs := flag.NewFlagSet("view", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entity := fs.Arg(0)
 	if entity == "" {
@@ -379,7 +455,7 @@ func runQuery(args []string) {
 	relationshipLimit := fs.Int("relationship-limit", 40, "maximum relationship evidence to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	remaining := fs.Args()
 	var kind, name string
@@ -456,7 +532,7 @@ func runContext(args []string) {
 	depth := fs.Int("depth", 1, "BFS traversal depth")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	entityID := fs.Arg(0)
 	if entityID == "" {
@@ -489,7 +565,7 @@ func runWhere(args []string) {
 	limit := fs.Int("limit", query.DefaultPageLimit, "maximum results to return (maximum 100)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	compact := fs.Bool("compact", false, "emit bounded JSON with entity summaries")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	symbol := fs.Arg(0)
 	if symbol == "" {
@@ -525,7 +601,7 @@ func runStats(args []string) {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	idx, err := query.LoadGraph(*graphPath)
 	if err != nil {
@@ -546,14 +622,19 @@ func runFreshness(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	repo := fs.String("repo", "", "path to the repository checkout")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	g, err := storage.ReadGraph(*graphPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load graph: %v\n", err)
 		os.Exit(1)
 	}
-	result := freshness.CheckWithGraphPath(*repo, g, *graphPath)
+	extractorBuild, err := scanner.ExecutableBuildIdentity()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "extractor identity: %v\n", err)
+		os.Exit(1)
+	}
+	result := freshness.Verify(*repo, g, *graphPath, freshness.VerifyOptions{ExpectedExtractorBuild: extractorBuild}).Freshness
 	if *jsonOutput {
 		printJSON(result)
 		return
@@ -595,17 +676,24 @@ func runVerify(args []string) {
 	requireComplete := fs.Bool("require-complete", true, "require a complete scan with no parser failures")
 	failOnIgnored := fs.Bool("fail-on-ignored", false, "also fail when discovered files have no registered parser")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	graph, err := storage.ReadGraph(*graphPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load graph: %v\n", err)
 		os.Exit(1)
 	}
+	extractorBuild, err := scanner.ExecutableBuildIdentity()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "extractor identity: %v\n", err)
+		os.Exit(1)
+	}
 	result := freshness.Verify(*repo, graph, *graphPath, freshness.VerifyOptions{
-		RequireCurrentSchema: true,
-		RequireComplete:      *requireComplete,
-		FailOnIgnored:        *failOnIgnored,
+		RequireCurrentSchema:    true,
+		RequireCurrentExtractor: true,
+		ExpectedExtractorBuild:  extractorBuild,
+		RequireComplete:         *requireComplete,
+		FailOnIgnored:           *failOnIgnored,
 	})
 	if *jsonOutput {
 		printJSON(result)
@@ -625,6 +713,7 @@ func formatVerification(result freshness.Verification) string {
 	fmt.Fprintf(&b, "Graph repository: %s\n", f.GraphRepository)
 	fmt.Fprintf(&b, "Repository checked: %s\n", f.Repository)
 	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", f.SchemaVersion, f.SchemaCurrent)
+	fmt.Fprintf(&b, "Extractor: %s (current=%t) | signature: %s\n", f.ExtractorVersion, f.ExtractorCurrent, f.ExtractionSignature)
 	fmt.Fprintf(&b, "Graph commit: %s\n", f.GraphCommit)
 	fmt.Fprintf(&b, "Repository HEAD: %s\n", f.RepoHead)
 	fmt.Fprintf(&b, "Scan complete: %t\n", f.ScanComplete)
@@ -651,9 +740,14 @@ func freshnessStatus(complete bool) string {
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
-	if err := mcpserver.Run(context.Background(), *graphPath); err != nil {
+	extractorBuild, err := scanner.ExecutableBuildIdentity()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "extractor identity: %v\n", err)
+		os.Exit(1)
+	}
+	if err := mcpserver.Run(context.Background(), *graphPath, extractorBuild); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -663,15 +757,20 @@ func runReview(args []string) {
 	fs := flag.NewFlagSet("review", flag.ExitOnError)
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	base := fs.String("base", "", "base git ref (e.g., upstream/main)")
+	baseGraph := fs.String("base-graph", "", "graph scanned at the review merge base (local ref review only)")
 	head := fs.String("head", "HEAD", "head git ref")
 	repo := fs.String("repo", "", "path to the git repository (required for verified diff review)")
 	diffSource := fs.String("diff", "", "read diff from file or stdin (-)")
 	pr := fs.String("pr", "", "fetch a GitHub pull request (owner/repository/number)")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
-	fs.Parse(reorderArgs(args))
+	fs.Parse(reorderArgs(fs, args))
 
 	var result *review.ReviewResult
 	var err error
+	if *baseGraph != "" && (*pr != "" || *diffSource != "") {
+		fmt.Fprintln(os.Stderr, "--base-graph requires a verified local ref review with --base and --repo")
+		os.Exit(1)
+	}
 
 	if *pr != "" {
 		if *diffSource != "" || *base != "" || *repo != "" || *head != "HEAD" {
@@ -699,7 +798,15 @@ func runReview(args []string) {
 		if *repo == "" {
 			*repo = "."
 		}
-		result, err = review.Run(*base, *head, *repo, *graphPath)
+		if *baseGraph != "" {
+			var extractorBuild string
+			extractorBuild, err = scanner.ExecutableBuildIdentity()
+			if err == nil {
+				result, err = review.RunWithBaseGraph(*base, *head, *repo, *graphPath, *baseGraph, extractorBuild)
+			}
+		} else {
+			result, err = review.Run(*base, *head, *repo, *graphPath)
+		}
 	}
 
 	if err != nil {

@@ -22,6 +22,7 @@ var validRelationshipTypes = map[RelationshipType]bool{
 	RelContains:     true,
 	RelPartOf:       true,
 	RelEmbeds:       true,
+	RelReferences:   true,
 }
 
 // Validate checks the graph contract before the graph is persisted or
@@ -47,6 +48,21 @@ func (g Graph) Validate() error {
 	if g.ScanComplete && len(g.ScanWarnings) > 0 {
 		problems = append(problems, "complete graph contains scan warnings")
 	}
+	if g.ExtractionSignature != "" {
+		if g.ExtractorVersion == "" || g.BuildContext == nil {
+			problems = append(problems, "extraction signature requires extractor version and build context")
+		} else if g.ExtractionSignature != ExtractionSignature(g.ExtractorVersion, *g.BuildContext, g.ExtractorBuild) {
+			problems = append(problems, "extraction signature does not match extractor version and build context")
+		}
+	}
+	if coverage := g.TypeAnalysis; coverage != nil {
+		if coverage.Packages < 0 || coverage.CheckedPackages < 0 || coverage.FailedPackages < 0 || coverage.Files < 0 || coverage.ExcludedFiles < 0 || coverage.ResolvedCalls < 0 || coverage.UnresolvedCalls < 0 || coverage.ResolvedReferences < 0 || coverage.ExternalImports < 0 || coverage.ExternalImportFailures < 0 || coverage.DiagnosticCount < 0 {
+			problems = append(problems, "type analysis coverage counts must be non-negative")
+		}
+		if coverage.CheckedPackages+coverage.FailedPackages > coverage.Packages || coverage.ExcludedFiles > coverage.Files || coverage.ExternalImportFailures > coverage.ExternalImports {
+			problems = append(problems, "type analysis coverage counts are inconsistent")
+		}
+	}
 
 	entityIDs := make(map[string]bool, len(g.Entities))
 	for _, e := range g.Entities {
@@ -60,12 +76,12 @@ func (g Graph) Validate() error {
 		if strings.TrimSpace(e.Name) == "" {
 			problems = append(problems, fmt.Sprintf("entity %s has empty name", e.ID))
 		}
-		if e.Kind < KindOperator || e.Kind > KindUnknown {
+		if e.Kind < KindOperator || e.Kind > KindField {
 			problems = append(problems, fmt.Sprintf("entity %s has invalid kind: %d", e.ID, e.Kind))
 		} else if e.Kind == KindUnknown {
 			problems = append(problems, fmt.Sprintf("entity %s has unknown kind", e.ID))
 		}
-		if e.Kind >= KindOperator && e.Kind < KindUnknown {
+		if e.Kind >= KindOperator && e.Kind <= KindField && e.Kind != KindUnknown {
 			expectedPrefix := e.Kind.String() + ":"
 			if !strings.HasPrefix(e.ID, expectedPrefix) {
 				problems = append(problems, fmt.Sprintf("entity %s does not match kind %s", e.ID, e.Kind))
@@ -91,6 +107,32 @@ func (g Graph) Validate() error {
 			}
 			if err := validateSource(site.Source, fmt.Sprintf("entity %s site %s", e.ID, site.Name)); err != nil {
 				problems = append(problems, err.Error())
+			}
+		}
+		for _, operation := range e.ResourceOperations {
+			if operation.Operation == "" {
+				problems = append(problems, fmt.Sprintf("entity %s has resource operation with empty name", e.ID))
+			}
+			if operation.Confidence != ConfidenceProven && operation.Confidence != ConfidenceInferred {
+				problems = append(problems, fmt.Sprintf("entity %s has resource operation with invalid confidence", e.ID))
+			}
+			if err := validateSource(operation.Source, fmt.Sprintf("entity %s resource operation", e.ID)); err != nil {
+				problems = append(problems, err.Error())
+			}
+		}
+		for _, reference := range e.ReferenceSites {
+			if strings.TrimSpace(reference.Target) == "" {
+				problems = append(problems, fmt.Sprintf("entity %s has a reference site with empty target", e.ID))
+			}
+			if err := validateSource(reference.Source, fmt.Sprintf("entity %s reference site", e.ID)); err != nil {
+				problems = append(problems, err.Error())
+			}
+		}
+	}
+	for _, entity := range g.Entities {
+		for _, reference := range entity.ReferenceSites {
+			if !entityIDs[reference.Target] {
+				problems = append(problems, fmt.Sprintf("entity %s references unknown field target: %s", entity.ID, reference.Target))
 			}
 		}
 	}

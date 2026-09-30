@@ -4,6 +4,11 @@
 
 Instead of reading thousands of source files, your AI assistant queries a pre-built graph. Repeated questions reuse the same deterministic facts, reducing context size and cost while keeping evidence tied to the source repository.
 
+For scoped questions and shared source selection with CodeAtlas Assistant, see
+[Using CodeAtlas and Assistant together](docs/evidence-workflow.md). The
+`atlas evidence` command and MCP `atlas_ask(question=...)` return a versioned
+manifest with a byte budget, source spans, selection reasons, and omissions.
+
 ---
 
 ## Why CodeAtlas
@@ -350,6 +355,6 @@ arguments.
 
 ## Status
 
-**Schema:** 1.5.0 · **MCP Tools:** 13 · **CLI Commands:** 15 · **Parsers:** Go AST, template-aware YAML, Markdown, Test · **Current:** deterministic graph, explicit scan coverage, resumable bounded retrieval, type-aware call evidence, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
+**Schema:** 1.6.0 · **MCP Tools:** 13 · **Parsers:** Go AST, template-aware YAML, Markdown, Test · **Current:** deterministic graph, extractor provenance, type-analysis coverage, shared bounded evidence manifests, source-linked fields and test calls, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

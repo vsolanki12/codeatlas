@@ -202,15 +202,20 @@ func paginateRelationships(relationships []*domain.Relationship, offset, limit i
 }
 
 type GraphStats struct {
-	SchemaVersion  string               `json:"schemaVersion"`
-	EntityIdentity string               `json:"entityIdentity,omitempty"`
-	Repository     string               `json:"repository"`
-	Commit         string               `json:"commit"`
-	Branch         string               `json:"branch"`
-	GeneratedAt    string               `json:"generatedAt"`
-	ScanComplete   bool                 `json:"scanComplete"`
-	ScanWarnings   []string             `json:"scanWarnings,omitempty"`
-	ScanCoverage   *domain.ScanCoverage `json:"scanCoverage,omitempty"`
+	SchemaVersion       string                       `json:"schemaVersion"`
+	EntityIdentity      string                       `json:"entityIdentity,omitempty"`
+	ExtractorVersion    string                       `json:"extractorVersion,omitempty"`
+	ExtractorBuild      string                       `json:"extractorBuild,omitempty"`
+	ExtractionSignature string                       `json:"extractionSignature,omitempty"`
+	BuildContext        *domain.BuildContext         `json:"buildContext,omitempty"`
+	TypeAnalysis        *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+	Repository          string                       `json:"repository"`
+	Commit              string                       `json:"commit"`
+	Branch              string                       `json:"branch"`
+	GeneratedAt         string                       `json:"generatedAt"`
+	ScanComplete        bool                         `json:"scanComplete"`
+	ScanWarnings        []string                     `json:"scanWarnings,omitempty"`
+	ScanCoverage        *domain.ScanCoverage         `json:"scanCoverage,omitempty"`
 
 	TotalEntities int            `json:"totalEntities"`
 	TotalRels     int            `json:"totalRelationships"`
@@ -353,6 +358,7 @@ func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
 	}
 
 	visited := map[string]bool{entityID: true}
+	distances := map[string]int{entityID: 0}
 	var rels []*domain.Relationship
 	seenRels := make(map[string]bool)
 	frontier := []string{entityID}
@@ -367,6 +373,7 @@ func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
 				}
 				if !visited[r.To] {
 					visited[r.To] = true
+					distances[r.To] = d + 1
 					next = append(next, r.To)
 				}
 			}
@@ -377,6 +384,7 @@ func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
 				}
 				if !visited[r.From] {
 					visited[r.From] = true
+					distances[r.From] = d + 1
 					next = append(next, r.From)
 				}
 			}
@@ -395,12 +403,16 @@ func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
 	}
 
 	sort.Slice(entities, func(i, j int) bool {
+		if distances[entities[i].ID] != distances[entities[j].ID] {
+			return distances[entities[i].ID] < distances[entities[j].ID]
+		}
 		return entities[i].ID < entities[j].ID
 	})
 	if len(entities) > maxEntities {
 		entities = entities[:maxEntities]
 		truncated = true
 	}
+	sort.Slice(entities, func(i, j int) bool { return entities[i].ID < entities[j].ID })
 	rootIncluded := false
 	for _, entity := range entities {
 		if entity.ID == entityID {
@@ -429,12 +441,18 @@ func (idx *Index) Neighbors(entityID string, depth int) *Subgraph {
 	rels = filteredRels
 
 	sort.Slice(rels, func(i, j int) bool {
+		iDistance := distances[rels[i].From] + distances[rels[i].To]
+		jDistance := distances[rels[j].From] + distances[rels[j].To]
+		if iDistance != jDistance {
+			return iDistance < jDistance
+		}
 		return rels[i].ID < rels[j].ID
 	})
 	if len(rels) > maxRelationships {
 		rels = rels[:maxRelationships]
 		truncated = true
 	}
+	sort.Slice(rels, func(i, j int) bool { return rels[i].ID < rels[j].ID })
 
 	return &Subgraph{Graph: idx.GraphMetadata(), Entities: entities, Relationships: rels, Truncated: truncated}
 }
@@ -487,6 +505,28 @@ func (idx *Index) SearchWithStatus(query string, maxResults int) ([]*domain.Enti
 // SearchPage returns a deterministic, resumable page of full-text matches.
 func (idx *Index) SearchPage(query string, offset, limit int) EntityPage {
 	return paginateEntities(idx.Search(query, 0), offset, limit)
+}
+
+// SearchKindPage applies a kind filter without changing full-text AND matching
+// or relevance ordering. An empty query lists the selected kind by stable ID.
+func (idx *Index) SearchKindPage(text, kind string, offset, limit int) (EntityPage, error) {
+	if kind == "" {
+		return idx.SearchPage(text, offset, limit), nil
+	}
+	k, ok := ParseKind(kind)
+	if !ok {
+		return EntityPage{}, fmt.Errorf("unknown entity kind %q", kind)
+	}
+	if strings.TrimSpace(text) == "" {
+		return idx.LookupPage(kind, "", offset, limit), nil
+	}
+	var entities []*domain.Entity
+	for _, entity := range idx.Search(text, 0) {
+		if entity.Kind == k {
+			entities = append(entities, entity)
+		}
+	}
+	return paginateEntities(entities, offset, limit), nil
 }
 
 func scoreEntity(e *domain.Entity, terms []string) int {
@@ -577,19 +617,24 @@ func (idx *Index) WherePage(path string, offset, limit int) EntityPage {
 
 func (idx *Index) Stats() *GraphStats {
 	s := &GraphStats{
-		SchemaVersion:  idx.graph.SchemaVersion,
-		EntityIdentity: idx.graph.EntityIdentity,
-		Repository:     idx.graph.Repository,
-		Commit:         idx.graph.Commit,
-		Branch:         idx.graph.Branch,
-		GeneratedAt:    idx.graph.GeneratedAt,
-		ScanComplete:   idx.graph.ScanComplete,
-		ScanWarnings:   append([]string(nil), idx.graph.ScanWarnings...),
-		ScanCoverage:   copyScanCoverage(idx.graph.ScanCoverage),
-		TotalEntities:  len(idx.graph.Entities),
-		TotalRels:      len(idx.graph.Relationship),
-		EntityCounts:   make(map[string]int),
-		RelCounts:      make(map[string]int),
+		SchemaVersion:       idx.graph.SchemaVersion,
+		EntityIdentity:      idx.graph.EntityIdentity,
+		ExtractorVersion:    idx.graph.ExtractorVersion,
+		ExtractorBuild:      idx.graph.ExtractorBuild,
+		ExtractionSignature: idx.graph.ExtractionSignature,
+		BuildContext:        idx.graph.BuildContext,
+		TypeAnalysis:        idx.graph.TypeAnalysis,
+		Repository:          idx.graph.Repository,
+		Commit:              idx.graph.Commit,
+		Branch:              idx.graph.Branch,
+		GeneratedAt:         idx.graph.GeneratedAt,
+		ScanComplete:        idx.graph.ScanComplete,
+		ScanWarnings:        append([]string(nil), idx.graph.ScanWarnings...),
+		ScanCoverage:        copyScanCoverage(idx.graph.ScanCoverage),
+		TotalEntities:       len(idx.graph.Entities),
+		TotalRels:           len(idx.graph.Relationship),
+		EntityCounts:        make(map[string]int),
+		RelCounts:           make(map[string]int),
 	}
 
 	for _, e := range idx.graph.Entities {
@@ -755,10 +800,11 @@ type ExplainNode struct {
 }
 
 type ExplainResult struct {
-	Graph      GraphMetadata `json:"graph"`
-	Root       *ExplainNode  `json:"root"`
-	TotalNodes int           `json:"totalNodes"`
-	Capped     bool          `json:"truncated,omitempty"`
+	Graph           GraphMetadata `json:"graph"`
+	Root            *ExplainNode  `json:"root"`
+	TotalNodes      int           `json:"totalNodes"`
+	OmissionReasons []string      `json:"omissionReasons,omitempty"`
+	Capped          bool          `json:"truncated,omitempty"`
 }
 
 func (idx *Index) Investigate(entityID string) *InvestigateResult {
@@ -850,10 +896,11 @@ func (idx *Index) Explain(entityID string, depth int) *ExplainResult {
 	visited := map[string]bool{entityID: true}
 	total := 1
 	capped := false
+	var omissionReasons []string
 
 	var build func(eid string, d int) []*ExplainNode
 	build = func(eid string, d int) []*ExplainNode {
-		if d <= 0 || capped {
+		if d <= 0 || total >= 100 {
 			return nil
 		}
 		var children []*ExplainNode
@@ -872,22 +919,23 @@ func (idx *Index) Explain(entityID string, depth int) *ExplainResult {
 			sort.Slice(targets, func(i, j int) bool {
 				return targets[i].To < targets[j].To
 			})
-			if len(targets) > maxEdges {
-				capped = true
-			}
 			for _, r := range targets {
-				if count >= maxEdges || total >= 100 {
-					if total >= 100 {
-						capped = true
-					}
-					break
-				}
 				if visited[r.To] {
 					continue
 				}
 				target := idx.byID[r.To]
 				if target == nil {
 					continue
+				}
+				if count >= maxEdges {
+					capped = true
+					omissionReasons = append(omissionReasons, "edge_limit")
+					break
+				}
+				if total >= 100 {
+					capped = true
+					omissionReasons = append(omissionReasons, "node_budget")
+					break
 				}
 				visited[r.To] = true
 				total++
@@ -908,10 +956,11 @@ func (idx *Index) Explain(entityID string, depth int) *ExplainResult {
 	root.Children = build(entityID, depth)
 
 	return &ExplainResult{
-		Graph:      idx.GraphMetadata(),
-		Root:       root,
-		TotalNodes: total,
-		Capped:     capped,
+		Graph:           idx.GraphMetadata(),
+		Root:            root,
+		TotalNodes:      total,
+		Capped:          capped,
+		OmissionReasons: uniqueStrings(omissionReasons),
 	}
 }
 

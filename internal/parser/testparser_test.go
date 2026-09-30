@@ -17,15 +17,19 @@ func TestTestParser_Parse(t *testing.T) {
 		t.Fatalf("TestParser.Parse failed unexpectedly: %v", err)
 	}
 
-	// We expect exactly 2 entities (TestLogin and TestLogout). HelperUtility must be ignored.
-	if len(entities) != 2 {
-		t.Fatalf("Expected exactly 2 test entities, got %d", len(entities))
+	// Executable tests remain tests; helpers and their package are retained for
+	// source-backed call-chain resolution.
+	if len(entities) != 4 {
+		t.Fatalf("Expected package, helper, and 2 test entities, got %d", len(entities))
 	}
 
 	// Build a fast lookup map to evaluate metadata targets
 	byName := make(map[string]domain.Entity)
 	for _, ent := range entities {
 		byName[ent.Name] = ent
+	}
+	if helper := byName["HelperUtility"]; helper.Kind != domain.KindFunction || helper.Source.File == "" {
+		t.Fatalf("test helper was not retained as a source-backed function: %+v", helper)
 	}
 
 	// 1. Assert specific entity details for TestLogin

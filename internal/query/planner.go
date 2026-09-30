@@ -8,6 +8,7 @@ import (
 
 type AskResult struct {
 	Graph         GraphMetadata          `json:"graph"`
+	Status        string                 `json:"status"`
 	Entity        *domain.Entity         `json:"entity"`
 	Candidates    []*domain.Entity       `json:"candidates,omitempty"`
 	Match         string                 `json:"match"`
@@ -24,10 +25,15 @@ type AskResult struct {
 func (idx *Index) Ask(entity string, intent string) *AskResult {
 	e, candidates := idx.Resolve(entity)
 	if e == nil {
+		status := "no_match"
+		if len(candidates) > 0 {
+			status = "ambiguous"
+		}
 		return &AskResult{
 			Graph:      idx.GraphMetadata(),
+			Status:     status,
 			Candidates: candidates,
-			Match:      "ambiguous",
+			Match:      status,
 			Ambiguous:  len(candidates) > 0,
 		}
 	}
@@ -36,7 +42,7 @@ func (idx *Index) Ask(entity string, intent string) *AskResult {
 		match = "name"
 	}
 
-	r := &AskResult{Graph: idx.GraphMetadata(), Entity: e, Match: match}
+	r := &AskResult{Graph: idx.GraphMetadata(), Status: "ok", Entity: e, Match: match}
 	r.View = idx.ResolveView(e.ID)
 
 	switch strings.ToLower(intent) {

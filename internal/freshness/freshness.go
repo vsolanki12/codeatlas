@@ -15,26 +15,34 @@ import (
 )
 
 type Result struct {
-	Available         bool                 `json:"available"`
-	SchemaVersion     string               `json:"schemaVersion,omitempty"`
-	SchemaCurrent     bool                 `json:"schemaCurrent"`
-	GraphRepository   string               `json:"graphRepository,omitempty"`
-	Repository        string               `json:"repository,omitempty"`
-	GraphCommit       string               `json:"graphCommit,omitempty"`
-	RepoHead          string               `json:"repoHead,omitempty"`
-	EntityIdentity    string               `json:"entityIdentity,omitempty"`
-	ScanComplete      bool                 `json:"scanComplete"`
-	ScanWarnings      []string             `json:"scanWarnings,omitempty"`
-	ScanCoverage      *domain.ScanCoverage `json:"scanCoverage,omitempty"`
-	RepositoryMatch   bool                 `json:"repositoryMatch"`
-	Verifiable        bool                 `json:"verifiable"`
-	Stale             bool                 `json:"stale"`
-	Dirty             bool                 `json:"dirty"`
-	StateVerifiable   bool                 `json:"stateVerifiable"`
-	FingerprintSource string               `json:"fingerprintSource,omitempty"`
-	ChangedFiles      []string             `json:"changedFiles,omitempty"`
-	NewFiles          []string             `json:"newFiles,omitempty"`
-	DeletedFiles      []string             `json:"deletedFiles,omitempty"`
+	Available              bool                         `json:"available"`
+	SchemaVersion          string                       `json:"schemaVersion,omitempty"`
+	SchemaCurrent          bool                         `json:"schemaCurrent"`
+	GraphRepository        string                       `json:"graphRepository,omitempty"`
+	Repository             string                       `json:"repository,omitempty"`
+	GraphCommit            string                       `json:"graphCommit,omitempty"`
+	RepoHead               string                       `json:"repoHead,omitempty"`
+	EntityIdentity         string                       `json:"entityIdentity,omitempty"`
+	ExtractorVersion       string                       `json:"extractorVersion,omitempty"`
+	ExtractorBuild         string                       `json:"extractorBuild,omitempty"`
+	ExpectedExtractorBuild string                       `json:"expectedExtractorBuild,omitempty"`
+	ExtractorBuildMatch    bool                         `json:"extractorBuildMatch"`
+	ExtractorCurrent       bool                         `json:"extractorCurrent"`
+	ExtractionSignature    string                       `json:"extractionSignature,omitempty"`
+	BuildContext           *domain.BuildContext         `json:"buildContext,omitempty"`
+	TypeAnalysis           *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+	ScanComplete           bool                         `json:"scanComplete"`
+	ScanWarnings           []string                     `json:"scanWarnings,omitempty"`
+	ScanCoverage           *domain.ScanCoverage         `json:"scanCoverage,omitempty"`
+	RepositoryMatch        bool                         `json:"repositoryMatch"`
+	Verifiable             bool                         `json:"verifiable"`
+	Stale                  bool                         `json:"stale"`
+	Dirty                  bool                         `json:"dirty"`
+	StateVerifiable        bool                         `json:"stateVerifiable"`
+	FingerprintSource      string                       `json:"fingerprintSource,omitempty"`
+	ChangedFiles           []string                     `json:"changedFiles,omitempty"`
+	NewFiles               []string                     `json:"newFiles,omitempty"`
+	DeletedFiles           []string                     `json:"deletedFiles,omitempty"`
 }
 
 // VerifyOptions controls the repository-integrity contract required by a
@@ -42,9 +50,11 @@ type Result struct {
 // graph unless FailOnIgnored is explicitly requested: an unsupported asset
 // should only block work that depends on that asset's evidence.
 type VerifyOptions struct {
-	RequireCurrentSchema bool
-	RequireComplete      bool
-	FailOnIgnored        bool
+	RequireCurrentSchema    bool
+	RequireCurrentExtractor bool
+	ExpectedExtractorBuild  string
+	RequireComplete         bool
+	FailOnIgnored           bool
 }
 
 // Verification is the CI-friendly form of a freshness check. It keeps the
@@ -61,6 +71,11 @@ type Verification struct {
 // CI output and prompt context.
 func Verify(repoPath string, graph domain.Graph, graphPath string, opts VerifyOptions) Verification {
 	result := Verification{Freshness: CheckWithGraphPath(repoPath, graph, graphPath)}
+	if opts.ExpectedExtractorBuild != "" {
+		result.Freshness.ExpectedExtractorBuild = opts.ExpectedExtractorBuild
+		result.Freshness.ExtractorBuildMatch = result.Freshness.ExtractorBuild == opts.ExpectedExtractorBuild
+		result.Freshness.ExtractorCurrent = result.Freshness.ExtractorCurrent && result.Freshness.ExtractorBuildMatch
+	}
 	result.Issues = verificationIssues(result.Freshness, opts)
 	result.Valid = len(result.Issues) == 0
 	return result
@@ -85,6 +100,12 @@ func verificationIssues(result Result, opts VerifyOptions) []string {
 		} else {
 			issues = append(issues, fmt.Sprintf("graph entity identity %q is not current (%s required)", result.EntityIdentity, domain.CurrentEntityIdentity))
 		}
+	}
+	if opts.RequireCurrentExtractor && (!result.ExtractorCurrent || result.ExtractorBuild == "" || result.ExtractionSignature == "" || result.BuildContext == nil) {
+		issues = append(issues, "graph extractor provenance is missing or incompatible; perform a full scan with the current extractor")
+	}
+	if opts.ExpectedExtractorBuild != "" && result.ExtractorBuild != opts.ExpectedExtractorBuild {
+		issues = append(issues, "graph extractor build differs from the expected executable; perform a full scan with the current build")
 	}
 	if !result.RepositoryMatch {
 		issues = append(issues, "graph repository does not match the requested checkout")
@@ -130,17 +151,23 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 		repoPath = graph.Repository
 	}
 	result := Result{
-		Available:       true,
-		SchemaVersion:   graph.SchemaVersion,
-		SchemaCurrent:   graph.SchemaVersion == domain.CurrentSchemaVersion,
-		GraphRepository: graph.Repository,
-		Repository:      repoPath,
-		GraphCommit:     graph.Commit,
-		EntityIdentity:  graph.EntityIdentity,
-		ScanComplete:    graph.ScanComplete,
-		ScanWarnings:    append([]string(nil), graph.ScanWarnings...),
-		ScanCoverage:    copyScanCoverage(graph.ScanCoverage),
-		RepositoryMatch: samePath(graph.Repository, repoPath),
+		Available:           true,
+		SchemaVersion:       graph.SchemaVersion,
+		SchemaCurrent:       graph.SchemaVersion == domain.CurrentSchemaVersion,
+		GraphRepository:     graph.Repository,
+		Repository:          repoPath,
+		GraphCommit:         graph.Commit,
+		EntityIdentity:      graph.EntityIdentity,
+		ExtractorVersion:    graph.ExtractorVersion,
+		ExtractorBuild:      graph.ExtractorBuild,
+		ExtractorCurrent:    graph.ExtractorVersion == domain.CurrentExtractorVersion && graph.ExtractorBuild != "",
+		ExtractionSignature: graph.ExtractionSignature,
+		BuildContext:        copyBuildContext(graph.BuildContext),
+		TypeAnalysis:        summarizedTypeAnalysis(graph.TypeAnalysis),
+		ScanComplete:        graph.ScanComplete,
+		ScanWarnings:        append([]string(nil), graph.ScanWarnings...),
+		ScanCoverage:        copyScanCoverage(graph.ScanCoverage),
+		RepositoryMatch:     samePath(graph.Repository, repoPath),
 	}
 	if repoPath == "" {
 		return result
@@ -206,6 +233,30 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 	sort.Strings(result.DeletedFiles)
 	result.Dirty = len(result.ChangedFiles) > 0 || len(result.NewFiles) > 0 || len(result.DeletedFiles) > 0
 	return result
+}
+
+func copyBuildContext(context *domain.BuildContext) *domain.BuildContext {
+	if context == nil {
+		return nil
+	}
+	copy := *context
+	copy.BuildTags = append([]string(nil), context.BuildTags...)
+	return &copy
+}
+
+func summarizedTypeAnalysis(coverage *domain.TypeAnalysisCoverage) *domain.TypeAnalysisCoverage {
+	if coverage == nil {
+		return nil
+	}
+	copy := *coverage
+	const maxDiagnostics = 4
+	count := len(coverage.Diagnostics)
+	if count > maxDiagnostics {
+		count = maxDiagnostics
+		copy.DiagnosticsTruncated = true
+	}
+	copy.Diagnostics = append([]domain.TypeAnalysisDiagnostic(nil), coverage.Diagnostics[:count]...)
+	return &copy
 }
 
 func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {

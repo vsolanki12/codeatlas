@@ -10,31 +10,33 @@ import (
 // routing and architectural context without repeating large entity payloads.
 // Relationship evidence remains the authority for relationship claims.
 type CompactEntity struct {
-	ID                  string        `json:"id"`
-	Name                string        `json:"name"`
-	Kind                string        `json:"kind"`
-	Description         string        `json:"description,omitempty"`
-	Content             string        `json:"content,omitempty"`
-	Package             string        `json:"package,omitempty"`
-	Files               []string      `json:"files,omitempty"`
-	Watches             []string      `json:"watches,omitempty"`
-	WatchMethods        []string      `json:"watchMethods,omitempty"`
-	WatchSites          []domain.Site `json:"watchSites,omitempty"`
-	Creates             []string      `json:"creates,omitempty"`
-	CreateSites         []domain.Site `json:"createSites,omitempty"`
-	Calls               []string      `json:"calls,omitempty"`
-	CallSites           []domain.Site `json:"callSites,omitempty"`
-	EnvVars             []string      `json:"envVars,omitempty"`
-	Implements          []string      `json:"implements,omitempty"`
-	ImplementationSites []domain.Site `json:"implementationSites,omitempty"`
-	Imports             []string      `json:"imports,omitempty"`
-	ImportSites         []domain.Site `json:"importSites,omitempty"`
-	Literals            []string      `json:"literals,omitempty"`
-	Properties          []string      `json:"properties,omitempty"`
-	Embeds              []string      `json:"embeds,omitempty"`
-	EmbedSites          []domain.Site `json:"embedSites,omitempty"`
-	Source              domain.Source `json:"source"`
-	Truncated           bool          `json:"truncated,omitempty"`
+	ID                  string                     `json:"id"`
+	Name                string                     `json:"name"`
+	Kind                string                     `json:"kind"`
+	Description         string                     `json:"description,omitempty"`
+	Generated           bool                       `json:"generated,omitempty"`
+	ResourceOperations  []domain.ResourceOperation `json:"resourceOperations,omitempty"`
+	Content             string                     `json:"content,omitempty"`
+	Package             string                     `json:"package,omitempty"`
+	Files               []string                   `json:"files,omitempty"`
+	Watches             []string                   `json:"watches,omitempty"`
+	WatchMethods        []string                   `json:"watchMethods,omitempty"`
+	WatchSites          []domain.Site              `json:"watchSites,omitempty"`
+	Creates             []string                   `json:"creates,omitempty"`
+	CreateSites         []domain.Site              `json:"createSites,omitempty"`
+	Calls               []string                   `json:"calls,omitempty"`
+	CallSites           []domain.Site              `json:"callSites,omitempty"`
+	EnvVars             []string                   `json:"envVars,omitempty"`
+	Implements          []string                   `json:"implements,omitempty"`
+	ImplementationSites []domain.Site              `json:"implementationSites,omitempty"`
+	Imports             []string                   `json:"imports,omitempty"`
+	ImportSites         []domain.Site              `json:"importSites,omitempty"`
+	Literals            []string                   `json:"literals,omitempty"`
+	Properties          []string                   `json:"properties,omitempty"`
+	Embeds              []string                   `json:"embeds,omitempty"`
+	EmbedSites          []domain.Site              `json:"embedSites,omitempty"`
+	Source              domain.Source              `json:"source"`
+	Truncated           bool                       `json:"truncated,omitempty"`
 }
 
 // CompactRelationship preserves the complete relationship identity and
@@ -88,10 +90,12 @@ type CompactExplainNode struct {
 }
 
 type CompactExplainResult struct {
-	Graph      GraphMetadata       `json:"graph"`
-	Root       *CompactExplainNode `json:"root"`
-	TotalNodes int                 `json:"totalNodes"`
-	Capped     bool                `json:"truncated,omitempty"`
+	Graph           GraphMetadata       `json:"graph"`
+	Root            *CompactExplainNode `json:"root"`
+	TotalNodes      int                 `json:"totalNodes"`
+	ReturnedNodes   int                 `json:"returnedNodes"`
+	OmissionReasons []string            `json:"omissionReasons,omitempty"`
+	Capped          bool                `json:"truncated,omitempty"`
 }
 
 type CompactImpactResult struct {
@@ -135,6 +139,7 @@ type CompactView struct {
 
 type CompactAskResult struct {
 	Graph         GraphMetadata             `json:"graph"`
+	Status        string                    `json:"status"`
 	Entity        *CompactEntity            `json:"entity"`
 	Candidates    []*CompactEntity          `json:"candidates,omitempty"`
 	Match         string                    `json:"match"`
@@ -258,6 +263,9 @@ func (idx *Index) CompactEntityRelationshipPageResult(entity *domain.Entity, pag
 	for _, relationship := range page.Relationships {
 		result.Relationships = append(result.Relationships, compactRelationship(relationship))
 	}
+	for _, entity := range result.Entities {
+		result.Truncated = result.Truncated || entity.Truncated
+	}
 	return result
 }
 
@@ -280,11 +288,15 @@ func CompactAsk(result *AskResult) *CompactAskResult {
 	}
 	compact := &CompactAskResult{
 		Graph:     result.Graph,
+		Status:    result.Status,
 		Entity:    compactEntity(result.Entity),
 		Match:     result.Match,
 		Ambiguous: result.Ambiguous,
 		QAHit:     result.QAHit,
 		View:      compactView(result.View),
+	}
+	if compact.View != nil {
+		compact.Truncated = compact.View.Truncated
 	}
 	compact.Candidates = CompactEntities(result.Candidates)
 	for _, candidate := range compact.Candidates {
@@ -364,11 +376,18 @@ func compactEntity(entity *domain.Entity) *CompactEntity {
 		Name:        entity.Name,
 		Kind:        entity.Kind.String(),
 		Description: entity.Description,
+		Generated:   entity.Generated,
 		Package:     entity.Package,
 		Source:      entity.Source,
 	}
 	truncated := false
-	result.Files, truncated = cappedStrings(entity.Files, 6)
+	if len(entity.ResourceOperations) > 8 {
+		result.ResourceOperations = append([]domain.ResourceOperation(nil), entity.ResourceOperations[:8]...)
+		truncated = true
+	} else {
+		result.ResourceOperations = append([]domain.ResourceOperation(nil), entity.ResourceOperations...)
+	}
+	result.Files, truncated = cappedStringsWithFlag(entity.Files, 6, truncated)
 	result.Watches, truncated = cappedStringsWithFlag(entity.Watches, 8, truncated)
 	result.WatchMethods, truncated = cappedStringsWithFlag(entity.WatchMethods, 8, truncated)
 	result.WatchSites, truncated = cappedSitesWithFlag(entity.WatchSites, 8, truncated)
@@ -386,13 +405,13 @@ func compactEntity(entity *domain.Entity) *CompactEntity {
 	result.Embeds, truncated = cappedStringsWithFlag(entity.Embeds, 6, truncated)
 	result.EmbedSites, truncated = cappedSitesWithFlag(entity.EmbedSites, 6, truncated)
 	if len(result.Description) > 240 {
-		result.Description = result.Description[:240] + "..."
+		result.Description = truncateEvidenceString(result.Description, 240)
 		truncated = true
 	}
 	if entity.Kind == domain.KindDocument && entity.Content != "" {
 		result.Content = entity.Content
 		if len(result.Content) > 600 {
-			result.Content = result.Content[:597] + "..."
+			result.Content = truncateEvidenceString(result.Content, 600)
 			truncated = true
 		}
 	}
@@ -434,7 +453,7 @@ func compactView(view *domain.View) *CompactView {
 		result.Relationships = append([]domain.ViewRelationship(nil), view.Relationships...)
 	}
 	if len(result.Description) > 240 {
-		result.Description = result.Description[:240] + "..."
+		result.Description = truncateEvidenceString(result.Description, 240)
 		truncated = true
 	}
 	result.Truncated = truncated
@@ -489,9 +508,13 @@ func compactResolvedRelationships(relationships []ResolvedRel, max int) ([]Compa
 	}
 	result := make([]CompactResolvedRel, 0, len(relationships))
 	for _, relationship := range relationships {
+		target := compactEntity(relationship.Target)
+		if target != nil {
+			truncated = truncated || target.Truncated
+		}
 		result = append(result, CompactResolvedRel{
 			Relationship: compactRelationship(relationship.Rel),
-			Target:       compactEntity(relationship.Target),
+			Target:       target,
 		})
 	}
 	return result, truncated
@@ -500,12 +523,36 @@ func compactResolvedRelationships(relationships []ResolvedRel, max int) ([]Compa
 func compactExplain(result *ExplainResult) *CompactExplainResult {
 	budget := 60
 	root, truncated := compactExplainNode(result.Root, &budget)
-	return &CompactExplainResult{
-		Graph:      result.Graph,
-		Root:       root,
-		TotalNodes: result.TotalNodes,
-		Capped:     result.Capped || truncated,
+	reasons := append([]string(nil), result.OmissionReasons...)
+	if budget == 0 && result.TotalNodes > 60 {
+		reasons = append(reasons, "node_budget")
 	}
+	if compactExplainMetadataTruncated(root) {
+		reasons = append(reasons, "metadata")
+	}
+	return &CompactExplainResult{
+		Graph:           result.Graph,
+		Root:            root,
+		TotalNodes:      result.TotalNodes,
+		ReturnedNodes:   60 - budget,
+		OmissionReasons: uniqueStrings(reasons),
+		Capped:          result.Capped || truncated,
+	}
+}
+
+func compactExplainMetadataTruncated(node *CompactExplainNode) bool {
+	if node == nil {
+		return false
+	}
+	if node.Entity != nil && node.Entity.Truncated {
+		return true
+	}
+	for _, child := range node.Children {
+		if compactExplainMetadataTruncated(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func compactExplainNode(node *ExplainNode, budget *int) (*CompactExplainNode, bool) {
@@ -529,6 +576,11 @@ func compactExplainNode(node *ExplainNode, budget *int) (*CompactExplainNode, bo
 		}
 		if childTruncated {
 			truncated = true
+		}
+		if *budget == 0 {
+			if len(result.Children) < len(node.Children) {
+				truncated = true
+			}
 			break
 		}
 	}

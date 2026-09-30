@@ -1,6 +1,9 @@
 package query
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,7 +13,9 @@ import (
 )
 
 type Index struct {
-	graph domain.Graph
+	graph              domain.Graph
+	graphFingerprint   string
+	evidenceVocabulary map[string]bool
 
 	byID      map[string]*domain.Entity
 	byKind    map[domain.EntityKind][]*domain.Entity
@@ -68,28 +73,48 @@ func containsString(values []string, want string) bool {
 // GraphMetadata returns the small immutable portion of the graph that
 // consumers need to report freshness and scan completeness.
 type GraphMetadata struct {
-	SchemaVersion  string               `json:"schemaVersion"`
-	EntityIdentity string               `json:"entityIdentity,omitempty"`
-	Repository     string               `json:"repository"`
-	Commit         string               `json:"commit"`
-	Branch         string               `json:"branch"`
-	GeneratedAt    string               `json:"generatedAt"`
-	ScanComplete   bool                 `json:"scanComplete"`
-	ScanWarnings   []string             `json:"scanWarnings,omitempty"`
-	ScanCoverage   *domain.ScanCoverage `json:"scanCoverage,omitempty"`
+	SchemaVersion               string                       `json:"schemaVersion"`
+	EntityIdentity              string                       `json:"entityIdentity,omitempty"`
+	ExtractorVersion            string                       `json:"extractorVersion,omitempty"`
+	ExtractorBuild              string                       `json:"extractorBuild,omitempty"`
+	ExtractionSignature         string                       `json:"extractionSignature,omitempty"`
+	BuildContext                *domain.BuildContext         `json:"buildContext,omitempty"`
+	TypeAnalysis                *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
+	TypeAnalysisDiagnosticCount int                          `json:"typeAnalysisDiagnosticCount,omitempty"`
+	Repository                  string                       `json:"repository"`
+	Commit                      string                       `json:"commit"`
+	Branch                      string                       `json:"branch"`
+	GeneratedAt                 string                       `json:"generatedAt"`
+	ScanComplete                bool                         `json:"scanComplete"`
+	ScanWarnings                []string                     `json:"scanWarnings,omitempty"`
+	ScanCoverage                *domain.ScanCoverage         `json:"scanCoverage,omitempty"`
 }
 
 func (idx *Index) GraphMetadata() GraphMetadata {
+	var analysis *domain.TypeAnalysisCoverage
+	diagnosticCount := 0
+	if idx.graph.TypeAnalysis != nil {
+		copy := *idx.graph.TypeAnalysis
+		diagnosticCount = copy.DiagnosticCount
+		copy.Diagnostics = nil
+		analysis = &copy
+	}
 	return GraphMetadata{
-		SchemaVersion:  idx.graph.SchemaVersion,
-		EntityIdentity: idx.graph.EntityIdentity,
-		Repository:     idx.graph.Repository,
-		Commit:         idx.graph.Commit,
-		Branch:         idx.graph.Branch,
-		GeneratedAt:    idx.graph.GeneratedAt,
-		ScanComplete:   idx.graph.ScanComplete,
-		ScanWarnings:   append([]string(nil), idx.graph.ScanWarnings...),
-		ScanCoverage:   copyScanCoverage(idx.graph.ScanCoverage),
+		SchemaVersion:               idx.graph.SchemaVersion,
+		EntityIdentity:              idx.graph.EntityIdentity,
+		ExtractorVersion:            idx.graph.ExtractorVersion,
+		ExtractorBuild:              idx.graph.ExtractorBuild,
+		ExtractionSignature:         idx.graph.ExtractionSignature,
+		BuildContext:                idx.graph.BuildContext,
+		TypeAnalysis:                analysis,
+		TypeAnalysisDiagnosticCount: diagnosticCount,
+		Repository:                  idx.graph.Repository,
+		Commit:                      idx.graph.Commit,
+		Branch:                      idx.graph.Branch,
+		GeneratedAt:                 idx.graph.GeneratedAt,
+		ScanComplete:                idx.graph.ScanComplete,
+		ScanWarnings:                append([]string(nil), idx.graph.ScanWarnings...),
+		ScanCoverage:                copyScanCoverage(idx.graph.ScanCoverage),
 	}
 }
 
@@ -102,15 +127,19 @@ func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {
 }
 
 func newIndex(g domain.Graph) *Index {
+	encoded, _ := json.Marshal(g)
+	digest := sha256.Sum256(encoded)
 	idx := &Index{
-		graph:      g,
-		byID:       make(map[string]*domain.Entity, len(g.Entities)),
-		byKind:     make(map[domain.EntityKind][]*domain.Entity),
-		byName:     make(map[string][]*domain.Entity),
-		byPackage:  make(map[string][]*domain.Entity),
-		fromEntity: make(map[string][]*domain.Relationship),
-		toEntity:   make(map[string][]*domain.Relationship),
-		byRelType:  make(map[domain.RelationshipType][]*domain.Relationship),
+		graph:              g,
+		graphFingerprint:   hex.EncodeToString(digest[:]),
+		evidenceVocabulary: buildEvidenceVocabulary(g.Entities),
+		byID:               make(map[string]*domain.Entity, len(g.Entities)),
+		byKind:             make(map[domain.EntityKind][]*domain.Entity),
+		byName:             make(map[string][]*domain.Entity),
+		byPackage:          make(map[string][]*domain.Entity),
+		fromEntity:         make(map[string][]*domain.Relationship),
+		toEntity:           make(map[string][]*domain.Relationship),
+		byRelType:          make(map[domain.RelationshipType][]*domain.Relationship),
 	}
 
 	for i := range g.Entities {
@@ -159,6 +188,10 @@ func newIndex(g domain.Graph) *Index {
 
 	return idx
 }
+
+// GraphFingerprint identifies the entire loaded graph snapshot, including its
+// extraction provenance. Offsets are only meaningful within this snapshot.
+func (idx *Index) GraphFingerprint() string { return idx.graphFingerprint }
 
 func (idx *Index) GetView(entityID string) *domain.View {
 	return idx.viewByID[entityID]
@@ -211,6 +244,8 @@ func ParseKind(s string) (domain.EntityKind, bool) {
 		return domain.KindResource, true
 	case "template":
 		return domain.KindTemplate, true
+	case "field":
+		return domain.KindField, true
 	default:
 		return domain.KindUnknown, false
 	}

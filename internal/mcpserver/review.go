@@ -13,16 +13,17 @@ import (
 const maxMCPReviewDiffBytes = 4 * 1024 * 1024
 
 type reviewInput struct {
-	PR       string `json:"pr,omitempty" jsonschema:"GitHub pull request in owner/repository/number form"`
-	Diff     string `json:"diff,omitempty" jsonschema:"raw unified diff text; use this instead of pr for a supplied diff"`
-	Base     string `json:"base,omitempty" jsonschema:"base git ref for verified local review; requires repo"`
-	Head     string `json:"head,omitempty" jsonschema:"head git ref for verified local review; defaults to HEAD"`
-	Repo     string `json:"repo,omitempty" jsonschema:"repository checkout path for verified local review"`
-	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
-	OmitDiff bool   `json:"omit_diff,omitempty" jsonschema:"true to omit the bounded diff excerpt and reduce tokens"`
+	PR        string `json:"pr,omitempty" jsonschema:"GitHub pull request in owner/repository/number form"`
+	Diff      string `json:"diff,omitempty" jsonschema:"raw unified diff text; use this instead of pr for a supplied diff"`
+	Base      string `json:"base,omitempty" jsonschema:"base git ref for verified local review; requires repo"`
+	BaseGraph string `json:"base_graph,omitempty" jsonschema:"graph scanned at the review merge base; local ref review only"`
+	Head      string `json:"head,omitempty" jsonschema:"head git ref for verified local review; defaults to HEAD"`
+	Repo      string `json:"repo,omitempty" jsonschema:"repository checkout path for verified local review"`
+	Detail    bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
+	OmitDiff  bool   `json:"omit_diff,omitempty" jsonschema:"true to omit the bounded diff excerpt and reduce tokens"`
 }
 
-func registerReview(s *mcp.Server, idx *query.Index, graphPath string) {
+func registerReview(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "atlas_review",
 		Description: "Run deterministic CodeAtlas PR review preparation. Choose exactly one mode: " +
@@ -66,7 +67,11 @@ func registerReview(s *mcp.Server, idx *query.Index, graphPath string) {
 			if head == "" {
 				head = "HEAD"
 			}
-			result, err = review.Run(strings.TrimSpace(input.Base), head, repo, graphPath)
+			if input.BaseGraph != "" {
+				result, err = review.RunWithBaseGraph(strings.TrimSpace(input.Base), head, repo, graphPath, input.BaseGraph, extractorBuild...)
+			} else {
+				result, err = review.Run(strings.TrimSpace(input.Base), head, repo, graphPath)
+			}
 		}
 		if err != nil {
 			return nil, nil, err
@@ -94,6 +99,9 @@ func (input reviewInput) validate() error {
 	pr := strings.TrimSpace(input.PR)
 	diff := input.Diff != ""
 	base := strings.TrimSpace(input.Base)
+	if input.BaseGraph != "" && (pr != "" || diff) {
+		return fmt.Errorf("base_graph requires a verified local ref review")
+	}
 	if pr != "" {
 		if diff || base != "" || strings.TrimSpace(input.Head) != "" || strings.TrimSpace(input.Repo) != "" {
 			return fmt.Errorf("pr mode cannot be combined with diff, base, head, or repo")

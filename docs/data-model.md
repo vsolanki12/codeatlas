@@ -13,6 +13,37 @@ Consumers must preserve that distinction. Relationships that cannot be
 resolved from a supported parser signal are omitted; relationships resolved by
 convention or name matching are retained only as `confidence: inferred`.
 
+Schema 1.6.0 also records `extractorVersion`, `extractorBuild`, `extractionSignature`,
+`buildContext`, and `typeAnalysis`. The extraction signature identifies the
+extractor contract, executable SHA256, and effective Go build settings; incompatible signatures
+cannot reuse incremental parser facts. `buildContext` contains `goos`,
+`goarch`, `buildTags`, `goVersion`, and `cgoEnabled`. `typeAnalysis` records
+package counts (`packages`, `checkedPackages`, `failedPackages`), file counts
+(`files`, `excludedFiles`), `resolvedCalls`, `unresolvedCalls`,
+`resolvedReferences`, and package/variant diagnostics. This quality report is
+independent of parse-level `scanComplete`.
+It also records `dependencyMode`, `externalImports`, `externalImportFailures`,
+`diagnosticCount`, and `diagnosticsTruncated`. External package imports currently
+use host compiler export data; package diagnostics make that limitation visible.
+
+A `field` entity has a deterministic `field:<package>.<struct>.<field>` ID,
+declaration source span, and extracted documentation. The forward
+`references` relationship links a function or test to a statically resolved
+field use with source evidence. Unresolved selectors do not produce guessed
+field edges. `referenceSites` retains every resolved occurrence as
+`{target, source}`, where `target` is the exact field ID and `source` includes
+the occurrence line and optional column. The stored forward edge retains one
+proof; repeated occurrences are not lost during entity-to-field deduplication.
+
+Each `ResourceOperation` contains `operation`, optional `method`, optional
+`objectType`, `confidence`, and `source`. An empty object type reports failed
+resolution. These observations remain available when the relationship builder
+cannot select a unique scanned manifest entity. They do not assert a runtime
+object identity or successful resource creation.
+`observedMethod` and `observedObjectType` retain immutable AST observations so
+incremental scans can reset and rerun type enrichment without carrying stale
+resolved values. `Source.column` optionally distinguishes operations on one line.
+
 ---
 
 ## Core Concept: Everything is an Entity
@@ -56,6 +87,9 @@ Different kinds carry different optional fields. The scanner populates only the 
 | `changeCount` | number | no | Optional git enrichment |
 | `content` | string | no | Bounded Markdown content excerpt |
 | `source` | Source | yes | Primary location where this entity was discovered |
+| `generated` | boolean | no | Go source declares a generated-code header |
+| `resourceOperations` | ResourceOperation[] | no | Source-backed create/upsert observations, retained when no manifest edge resolves |
+| `referenceSites` | ReferenceSite[] | no | Every typed field selector/literal occurrence, with exact target ID and source coordinates |
 
 The scanner populates only fields supported by the parser. Relationship-like
 fields are observations, not edges. A site is not a relationship by itself;
@@ -69,6 +103,7 @@ emits a graph edge.
 | `controller` | A receiver with a `Reconcile` or `SetupWithManager` method | Go AST method declarations |
 | `crd` | A Custom Resource Definition | Kubernetes CRD YAML with `spec.names.kind`, or supported CRD manifest shape |
 | `function` | A Go function or method | `go/ast.FuncDecl` |
+| `field` | A named Go struct field, including API configuration fields | Source-linked Go AST field declaration |
 | `package` | A Go package in a scanned directory | Go AST package clause; files are merged by repository package identity |
 | `test` | A top-level `Test*` function in a test file | Go AST function declarations in `_test.go` |
 | `document` | A Markdown document | Markdown files discovered by the scanner |
@@ -390,7 +425,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "codeatlas",
-  "schemaVersion": "1.5.0",
+  "schemaVersion": "1.6.0",
   "entityIdentity": "repository-path-v1",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "/work/project",

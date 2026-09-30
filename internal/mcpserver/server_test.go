@@ -111,6 +111,38 @@ func TestRegisterToolsExposesAllTools(t *testing.T) {
 	if page.Total != 2 || page.Offset != 0 || page.Limit != 1 || page.NextOffset != 1 || !page.Truncated {
 		t.Fatalf("search page = %+v, want total=2 offset=0 limit=1 nextOffset=1 truncated", page)
 	}
+	filtered, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "atlas_search", Arguments: map[string]any{"query": "Widget example/pkg", "kind": "function"},
+	})
+	if err != nil || filtered.IsError {
+		t.Fatalf("kind-filtered full-text search: %v %+v", err, filtered)
+	}
+	encoded, _ = json.Marshal(filtered.StructuredContent)
+	if err := json.Unmarshal(encoded, &page); err != nil || page.Total != 2 {
+		t.Fatalf("kind filtering changed multi-term search semantics: %s", encoded)
+	}
+	for _, tc := range []struct{ entity, status string }{
+		{"function:example/pkg.Reconcile", "ok"},
+		{"function:example/pkg.DoesNotExist", "no_match"},
+	} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+			Name: "atlas_ask", Arguments: map[string]any{"entity": tc.entity, "evidence": true, "budget_bytes": 4096},
+		})
+		if err != nil || result.IsError {
+			t.Fatalf("evidence retrieval: %v %+v", err, result)
+		}
+		encoded, _ := json.Marshal(result.StructuredContent)
+		var packet query.EvidencePacket
+		if err := json.Unmarshal(encoded, &packet); err != nil {
+			t.Fatal(err)
+		}
+		if packet.Version != "1.0" || packet.Status != tc.status || len(encoded) > 4096 {
+			t.Fatalf("evidence contract = %s", encoded)
+		}
+		if tc.status == "ok" && len(packet.Sources) == 0 {
+			t.Fatal("resolved entity lost its source span")
+		}
+	}
 
 	tools, err := clientSession.ListTools(ctx, nil)
 	if err != nil {

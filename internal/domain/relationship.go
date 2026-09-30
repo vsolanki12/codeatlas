@@ -18,6 +18,7 @@ const (
 	RelContains     RelationshipType = "contains"
 	RelPartOf       RelationshipType = "part_of"
 	RelEmbeds       RelationshipType = "embeds"
+	RelReferences   RelationshipType = "references"
 )
 
 // How certain Atlas is that a relationship exists.

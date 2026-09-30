@@ -36,6 +36,7 @@ func FormatReview(r *ReviewResult) string {
 		fmt.Fprintf(&b, "Graph: commit unavailable (%s, %s)\n", r.GraphFreshness, scanStatus(r.Graph.ScanComplete))
 	}
 	b.WriteByte('\n')
+	b.WriteString(formatGraphChanges(r.GraphChanges))
 
 	if r.PR != nil {
 		b.WriteString("Pull request metadata (GitHub)\n")

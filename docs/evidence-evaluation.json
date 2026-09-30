@@ -1,0 +1,833 @@
+{
+  "date": "2026-10-01",
+  "repositoryCommit": "c28a4f2",
+  "schemaVersion": "1.6.0",
+  "evidenceVersion": "1.0",
+  "scope": "local working-tree implementation; HyperShift revision-specific fixtures",
+  "projectionComparison": {
+    "comparison": "same selected evidence and actual retained source; JSON vs deterministic prompt projection",
+    "rawManifestPromptBytes": 34686,
+    "projectedPromptBytes": 23269,
+    "representationReductionPercent": 32.9,
+    "actualModelTokenCounts": null
+  },
+  "results": [
+    {
+      "taskID": "autorepair-pascalcase",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:170-170 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1316-1316 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1543-1543 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1940-1944 (test)",
+        "missing source snippet reconcileMachineHealthCheck",
+        "missing source snippet TestCAPIReconcile",
+        "missing source snippet AutoRepair: true"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 2325,
+        "characters": 2325,
+        "estimatedTokens": 582
+      },
+      "promptEvidence": {
+        "bytes": 1950,
+        "characters": 1950,
+        "estimatedTokens": 488
+      },
+      "sourceContext": {
+        "bytes": 912,
+        "characters": 912,
+        "estimatedTokens": 228
+      },
+      "prompt": {
+        "bytes": 4317,
+        "characters": 4313,
+        "estimatedTokens": 1079
+      },
+      "uniqueFiles": 1,
+      "uniqueSourceLines": 8,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-pascalcase",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 7832,
+        "characters": 7832,
+        "estimatedTokens": 1958
+      },
+      "promptEvidence": {
+        "bytes": 2664,
+        "characters": 2664,
+        "estimatedTokens": 666
+      },
+      "sourceContext": {
+        "bytes": 11727,
+        "characters": 11727,
+        "estimatedTokens": 2932
+      },
+      "prompt": {
+        "bytes": 15846,
+        "characters": 15842,
+        "estimatedTokens": 3961
+      },
+      "uniqueFiles": 3,
+      "uniqueSourceLines": 245,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-pascalcase",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 15965,
+        "characters": 15965,
+        "estimatedTokens": 3992
+      },
+      "promptEvidence": {
+        "bytes": 4548,
+        "characters": 4548,
+        "estimatedTokens": 1137
+      },
+      "sourceContext": {
+        "bytes": 17266,
+        "characters": 17266,
+        "estimatedTokens": 4317
+      },
+      "prompt": {
+        "bytes": 23269,
+        "characters": 23265,
+        "estimatedTokens": 5817
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 372,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-pascalcase",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 32489,
+        "characters": 32489,
+        "estimatedTokens": 8123
+      },
+      "promptEvidence": {
+        "bytes": 8612,
+        "characters": 8612,
+        "estimatedTokens": 2153
+      },
+      "sourceContext": {
+        "bytes": 19610,
+        "characters": 19610,
+        "estimatedTokens": 4903
+      },
+      "prompt": {
+        "bytes": 29677,
+        "characters": 29673,
+        "estimatedTokens": 7419
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 285,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-camelcase",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:170-170 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1316-1316 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1543-1543 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1940-1944 (test)",
+        "missing source snippet reconcileMachineHealthCheck",
+        "missing source snippet TestCAPIReconcile",
+        "missing source snippet AutoRepair: true"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 2325,
+        "characters": 2325,
+        "estimatedTokens": 582
+      },
+      "promptEvidence": {
+        "bytes": 1950,
+        "characters": 1950,
+        "estimatedTokens": 488
+      },
+      "sourceContext": {
+        "bytes": 912,
+        "characters": 912,
+        "estimatedTokens": 228
+      },
+      "prompt": {
+        "bytes": 4317,
+        "characters": 4313,
+        "estimatedTokens": 1079
+      },
+      "uniqueFiles": 1,
+      "uniqueSourceLines": 8,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-camelcase",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 7832,
+        "characters": 7832,
+        "estimatedTokens": 1958
+      },
+      "promptEvidence": {
+        "bytes": 2664,
+        "characters": 2664,
+        "estimatedTokens": 666
+      },
+      "sourceContext": {
+        "bytes": 11727,
+        "characters": 11727,
+        "estimatedTokens": 2932
+      },
+      "prompt": {
+        "bytes": 15846,
+        "characters": 15842,
+        "estimatedTokens": 3961
+      },
+      "uniqueFiles": 3,
+      "uniqueSourceLines": 245,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-camelcase",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 15965,
+        "characters": 15965,
+        "estimatedTokens": 3992
+      },
+      "promptEvidence": {
+        "bytes": 4548,
+        "characters": 4548,
+        "estimatedTokens": 1137
+      },
+      "sourceContext": {
+        "bytes": 17266,
+        "characters": 17266,
+        "estimatedTokens": 4317
+      },
+      "prompt": {
+        "bytes": 23269,
+        "characters": 23265,
+        "estimatedTokens": 5817
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 372,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-camelcase",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 32489,
+        "characters": 32489,
+        "estimatedTokens": 8123
+      },
+      "promptEvidence": {
+        "bytes": 8612,
+        "characters": 8612,
+        "estimatedTokens": 2153
+      },
+      "sourceContext": {
+        "bytes": 19610,
+        "characters": 19610,
+        "estimatedTokens": 4903
+      },
+      "prompt": {
+        "bytes": 29677,
+        "characters": 29673,
+        "estimatedTokens": 7419
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 285,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-full-id",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:170-170 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1316-1316 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1543-1543 (test)",
+        "missing materialized source hypershift-operator/controllers/nodepool/capi_test.go:1940-1944 (test)",
+        "missing source snippet reconcileMachineHealthCheck",
+        "missing source snippet TestCAPIReconcile",
+        "missing source snippet AutoRepair: true"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 2323,
+        "characters": 2323,
+        "estimatedTokens": 581
+      },
+      "promptEvidence": {
+        "bytes": 1949,
+        "characters": 1949,
+        "estimatedTokens": 488
+      },
+      "sourceContext": {
+        "bytes": 912,
+        "characters": 912,
+        "estimatedTokens": 228
+      },
+      "prompt": {
+        "bytes": 4316,
+        "characters": 4312,
+        "estimatedTokens": 1078
+      },
+      "uniqueFiles": 1,
+      "uniqueSourceLines": 8,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-full-id",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 7848,
+        "characters": 7848,
+        "estimatedTokens": 1962
+      },
+      "promptEvidence": {
+        "bytes": 2663,
+        "characters": 2663,
+        "estimatedTokens": 666
+      },
+      "sourceContext": {
+        "bytes": 11727,
+        "characters": 11727,
+        "estimatedTokens": 2932
+      },
+      "prompt": {
+        "bytes": 15845,
+        "characters": 15841,
+        "estimatedTokens": 3961
+      },
+      "uniqueFiles": 3,
+      "uniqueSourceLines": 245,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-full-id",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 15985,
+        "characters": 15985,
+        "estimatedTokens": 3997
+      },
+      "promptEvidence": {
+        "bytes": 4547,
+        "characters": 4547,
+        "estimatedTokens": 1137
+      },
+      "sourceContext": {
+        "bytes": 17266,
+        "characters": 17266,
+        "estimatedTokens": 4317
+      },
+      "prompt": {
+        "bytes": 23268,
+        "characters": 23264,
+        "estimatedTokens": 5816
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 372,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "autorepair-full-id",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "ok",
+      "passed": false,
+      "failures": [
+        "missing materialized source hypershift-operator/controllers/nodepool/capi.go:726-827 (implementation)"
+      ],
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 32517,
+        "characters": 32517,
+        "estimatedTokens": 8130
+      },
+      "promptEvidence": {
+        "bytes": 8611,
+        "characters": 8611,
+        "estimatedTokens": 2153
+      },
+      "sourceContext": {
+        "bytes": 19610,
+        "characters": 19610,
+        "estimatedTokens": 4903
+      },
+      "prompt": {
+        "bytes": 29676,
+        "characters": 29672,
+        "estimatedTokens": 7418
+      },
+      "uniqueFiles": 4,
+      "uniqueSourceLines": 285,
+      "truncated": true,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-concept",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1298,
+        "characters": 1298,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-concept",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1298,
+        "characters": 1298,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-concept",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1299,
+        "characters": 1299,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-concept",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1299,
+        "characters": 1299,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "ambiguous-method-name",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "ambiguous",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 3261,
+        "characters": 3261,
+        "estimatedTokens": 816
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "ambiguous-method-name",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "ambiguous",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 3261,
+        "characters": 3261,
+        "estimatedTokens": 816
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "ambiguous-method-name",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "ambiguous",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 3262,
+        "characters": 3262,
+        "estimatedTokens": 816
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "ambiguous-method-name",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "ambiguous",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 3262,
+        "characters": 3262,
+        "estimatedTokens": 816
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-exact-id",
+      "budgetBytes": 4096,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1298,
+        "characters": 1298,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-exact-id",
+      "budgetBytes": 8192,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1298,
+        "characters": 1298,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-exact-id",
+      "budgetBytes": 16384,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1299,
+        "characters": 1299,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    },
+    {
+      "taskID": "nonexistent-exact-id",
+      "budgetBytes": 32768,
+      "sourceBudgetBytes": 24000,
+      "status": "no_match",
+      "passed": true,
+      "atlasCalls": 1,
+      "manifest": {
+        "bytes": 1299,
+        "characters": 1299,
+        "estimatedTokens": 325
+      },
+      "promptEvidence": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "sourceContext": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "prompt": {
+        "bytes": 0,
+        "characters": 0,
+        "estimatedTokens": 0
+      },
+      "uniqueFiles": 0,
+      "uniqueSourceLines": 0,
+      "truncated": false,
+      "graphFingerprint": "2e3d5e331423a605933aa0d1b9a56ddbcaadda2d8f914f37751ae045d99eb724"
+    }
+  ],
+  "snippetValidation": "retained source code only; headers, reasons, and omissions excluded"
+}

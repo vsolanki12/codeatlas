@@ -30,7 +30,7 @@ atlas scan -repo /path/to/repo -output atlas-graph.json  # Scan a repo
   atlas verify -graph atlas-graph.json -repo /path/to/repo # Verify graph contract
 ```
 
-There is no `Makefile`, CI, or Docker configuration — the project builds with standard Go tooling.
+The project builds with standard Go tooling. GitHub checks run formatting, tests, vet, and builds; there is no `Makefile` or Docker configuration.
 
 ## Code Architecture
 
@@ -60,7 +60,7 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 
 ## Graph Schema Invariants
 
-The Atlas Graph JSON (schema 1.5.0) is the product. All consumers read the same file. Key rules:
+The Atlas Graph JSON (schema 1.6.0) is the product. All consumers read the same file. Key rules:
 
 1. **No entity without a source.** If the scanner can't point to a file and line, the entity is not created.
 2. **No relationship without evidence.** Every edge carries `evidence` (parser, file, line, snippet, reason).
