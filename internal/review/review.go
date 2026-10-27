@@ -5,13 +5,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/freshness"
+	"github.com/vsolanki12/codeatlas/internal/profile"
 	"github.com/vsolanki12/codeatlas/internal/query"
+	"github.com/vsolanki12/codeatlas/internal/repoid"
 )
 
 type EntityReview struct {
@@ -177,6 +178,10 @@ func runFromPR(prInput, graphPath string, run githubRunner) (*ReviewResult, erro
 	ref, err := parsePRRef(prInput)
 	if err != nil {
 		return nil, err
+	}
+	metadataSummary := idx.GraphMetadata()
+	if !repoid.MatchesGitHubRepository(metadataSummary.RepositoryID, metadataSummary.RepositoryRemote, metadataSummary.GoModule, metadataSummary.Repository, ref.repository()) {
+		return nil, fmt.Errorf("review refused: PR repository %s does not match loaded graph %s", ref.repository(), metadataSummary.RepositoryID)
 	}
 	metadata, diffOutput, err := fetchPR(ref, run)
 	if err != nil {
@@ -458,12 +463,8 @@ func verifyGraphAtRef(idx *query.Index, repo, ref, graphPath string) error {
 	if meta.EntityIdentity != domain.CurrentEntityIdentity {
 		return fmt.Errorf("review refused: graph uses legacy or unsupported entity identity %q; rescan before reviewing", meta.EntityIdentity)
 	}
-	if meta.Repository != "" {
-		graphRoot := existingRepositoryPath(meta.Repository)
-		repoRoot := existingRepositoryPath(repo)
-		if graphRoot != "" && repoRoot != "" && graphRoot != repoRoot {
-			return fmt.Errorf("review refused: graph repository %s differs from review repository %s", meta.Repository, repo)
-		}
+	if !graphRepositoryMatches(idx.Graph(), repo) {
+		return fmt.Errorf("review refused: graph repository %s differs from review repository %s", meta.Repository, repo)
 	}
 	if ref == "" {
 		ref = "HEAD"
@@ -490,19 +491,12 @@ func verifyGraphAtRef(idx *query.Index, repo, ref, graphPath string) error {
 	return nil
 }
 
-func existingRepositoryPath(path string) string {
-	info, err := os.Stat(path)
-	if err != nil || !info.IsDir() {
-		return ""
-	}
-	abs, err := filepath.Abs(path)
+func graphRepositoryMatches(graph domain.Graph, repo string) bool {
+	repoProfile, err := profile.Load(repo)
 	if err != nil {
-		return ""
+		return false
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
-	}
-	return filepath.Clean(abs)
+	return repoid.Matches(graph.RepositoryID, graph.Repository, repo, repoProfile.RepositoryID)
 }
 
 func markGraphVerified(result *ReviewResult) {

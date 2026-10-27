@@ -6,14 +6,24 @@ The graph is an evidence-bearing snapshot, not a claim that every repository
 fact was discovered. `scanComplete: false` and `scanWarnings` mean the graph is
 usable for the facts it contains but cannot support completeness claims.
 `scanCoverage` and `scanFiles` make the supported-parser boundary explicit:
-parsed files have parser-backed facts, ignored files have no registered parser,
-and failed files must be treated as missing evidence. Coverage does not claim
-that runtime behavior or every language/tooling file is modeled.
+parsed files have parser-backed facts, failed files must be treated as missing
+evidence, and source files in languages CodeAtlas has no parser for are
+counted in `unsupportedSource` as a statement of scope. Coverage does not
+claim that runtime behavior or every language/tooling file is modeled.
 Consumers must preserve that distinction. Relationships that cannot be
 resolved from a supported parser signal are omitted; relationships resolved by
 convention or name matching are retained only as `confidence: inferred`.
 
-Schema 1.6.0 also records `extractorVersion`, `extractorBuild`, `extractionSignature`,
+Schema 1.8.0 also records stable repository identity and scope metadata:
+`repositoryId`, `repositoryRemote`, `goModule`, `profileDigest`, and `excludedPaths`. The optional
+`.codeatlas.yaml` profile controls relative file/directory exclusions and can
+override the repository ID. Identity defaults to the normalized Git `origin`
+remote, then the Go module path; an explicit profile ID overrides that selector
+while the normalized remote remains available for PR repository checks. The
+absolute `repository` path remains for local checkout diagnostics. Profile
+changes invalidate incremental reuse.
+
+Schema 1.8.0 also records `extractorVersion`, `extractorBuild`, `extractionSignature`,
 `buildContext`, and `typeAnalysis`. The extraction signature identifies the
 extractor contract, executable SHA256, and effective Go build settings; incompatible signatures
 cannot reuse incremental parser facts. `buildContext` contains `goos`,
@@ -23,8 +33,11 @@ package counts (`packages`, `checkedPackages`, `failedPackages`), file counts
 `resolvedReferences`, and package/variant diagnostics. This quality report is
 independent of parse-level `scanComplete`.
 It also records `dependencyMode`, `externalImports`, `externalImportFailures`,
-`diagnosticCount`, and `diagnosticsTruncated`. External package imports currently
-use host compiler export data; package diagnostics make that limitation visible.
+`diagnosticCount`, and `diagnosticsTruncated`. External package imports are resolved from
+toolchain export data located with `go list -deps -test -export`, run once per
+module in the repository. When the toolchain cannot be consulted the importer
+falls back to GOROOT/GOPATH lookup, `dependencyMode` says so, and type
+enrichment degrades instead of failing the scan.
 
 A `field` entity has a deterministic `field:<package>.<struct>.<field>` ID,
 declaration source span, and extracted documentation. The forward
@@ -100,9 +113,11 @@ emits a graph edge.
 
 | Kind | What It Represents | Current scanner signal |
 |---|---|---|
-| `controller` | A receiver with a `Reconcile` or `SetupWithManager` method | Go AST method declarations |
+| `controller` | A receiver with a `Reconcile`/`SetupWithManager` method, or a type registered as a library-go factory sync function | Go AST method declarations; `factory...WithSync(c.m).ToController(...)` chains |
 | `crd` | A Custom Resource Definition | Kubernetes CRD YAML with `spec.names.kind`, or supported CRD manifest shape |
 | `function` | A Go function or method | `go/ast.FuncDecl` |
+| `type` | A named Go type that is not an interface | Go AST `TypeSpec` |
+| `interface` | A named Go interface declaration | Go AST `TypeSpec` with an interface type |
 | `field` | A named Go struct field, including API configuration fields | Source-linked Go AST field declaration |
 | `package` | A Go package in a scanned directory | Go AST package clause; files are merged by repository package identity |
 | `test` | A top-level `Test*` function in a test file | Go AST function declarations in `_test.go` |
@@ -111,10 +126,10 @@ emits a graph edge.
 | `template` | A Kubernetes manifest template whose runtime identity is unresolved | YAML/template syntax with a static `kind` but templated identity |
 | `operator` | Reserved entity kind | Not emitted by the current parsers |
 
-The current scanner does not emit separate component, interface, or operator
-entities. An interface assertion is retained as an observation on the entity;
-it is not converted into an `implements` edge without a modeled interface
-target.
+The current scanner does not emit separate component or operator entities.
+Interface satisfaction is proven by the Go type checker rather than by the
+`var _ Iface = (*T)(nil)` assertion convention, which most code does not
+write; see `implements` under Relationship Types.
 
 ### Important kind details
 
@@ -126,6 +141,15 @@ target.
   `Reconcile` or `SetupWithManager` method, including when multiple controllers
   share one source file. Facts from a setup method stay attached to that
   receiver.
+- `reconcileMethod` names the method implementing the control loop:
+  `Reconcile` for controller-runtime, and the registered sync method for an
+  openshift/library-go factory controller. The sync method name is read from
+  `WithSync(c.<method>)` and is not assumed to be `sync`. A builder chain whose
+  receiver cannot be resolved, or that never reaches `ToController`, produces
+  no controller rather than a guessed one.
+- A `type` or `interface` entity carries no members of its own. Membership is
+  the `contains` edge to the field and method entities, which already encode
+  their owning type in their deterministic IDs.
 - Function receiver names are encoded in the function ID; there is no separate
   `receiver`, `file`, `line`, `signature`, or `doc` field. Use `source` and the
   ID to locate the declaration.
@@ -264,7 +288,9 @@ dynamic targets are not guessed, while the original AST observation remains
 |---|---|---|
 | `reconciles` | controller → crd/resource | This controller manages this resource |
 | `creates` | controller/function → resource | An explicit create/upsert observation resolved to one manifest kind |
-| `contains` | controller → function | Exact `Reconcile` or `SetupWithManager` method on the controller receiver |
+| `contains` | controller → function | Exact control-loop (`reconcileMethod`) or `SetupWithManager` method on the controller receiver |
+| `contains` | type/interface → function/field | A method or field declared on that named type |
+| `implements` | type → interface | The Go type checker found the value or pointer method set satisfies the interface |
 | `owns` | controller → crd/resource | `SetupWithManager.Owns(...)` registers the target |
 | `watches` | controller → crd/resource | Changes to this resource trigger reconciliation |
 | `calls` | controller/function → function | A call observation resolved to a function entity |
@@ -272,10 +298,14 @@ dynamic targets are not guessed, while the original AST observation remains
 | `imports` | package → package | An exact internal package import resolved to a package entity |
 | `embeds` | package → resource | A `//go:embed` pattern matches a scanned resource file |
 
-The domain vocabulary also reserves `documented_in`, `depends_on`,
-`implements`, `emits`, and `part_of`; the current scanner does not emit those
-types. Their presence in the enum does not mean the graph proves such
-relationships.
+`implements` is restricted to interfaces the graph already contains, so no
+edge can point outside the repository. Empty interfaces are skipped: every
+type satisfies them, which is true and useless. Generic types are skipped
+because satisfaction depends on instantiation.
+
+The domain vocabulary also reserves `documented_in`, `depends_on`, `emits`,
+and `part_of`; the current scanner does not emit those types. Their presence
+in the enum does not mean the graph proves such relationships.
 
 ### Inverse Relationships
 
@@ -370,14 +400,18 @@ All relationship types use a shared `seen` map keyed by relationship ID. This pr
 | `owns` | controller | CRD/resource | An `Owns` watch observation resolves to one target |
 | `watches` | controller | CRD/resource | A `Watches` observation resolves to one target |
 | `creates` | controller/function | resource | An explicit create/upsert observation resolves to one manifest kind |
-| `contains` | controller | function | The exact receiver-qualified `Reconcile` or `SetupWithManager` method exists |
+| `contains` | controller | function | The exact receiver-qualified control-loop or `SetupWithManager` method exists |
+| `contains` | type/interface | function/field | The member's ID names this type as its declaring scope |
+| `implements` | type | interface | `types.Implements` holds for the value or pointer method set |
 | `imports` | package | package | An import path exactly matches one scanned package |
 | `calls` | controller/function | function | A call observation resolves by exact qualification or caller package |
 | `tested_by` | function | test | The test directly invokes the function, or `TestFoo` matches `Foo` in the same package |
 | `embeds` | package | resource | `//go:embed` pattern matches a resource path |
 
-The `implements` parser observation is intentionally not an emitted edge until
-interface declarations have a first-class entity model.
+The `var _ Iface = (*T)(nil)` parser observation remains on the entity. The
+emitted `implements` edge comes from the type checker's method sets, which is
+the only complete answer for a language with no declaration site for
+interface satisfaction.
 
 ---
 
@@ -425,10 +459,15 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 ```json
 {
   "schema": "codeatlas",
-  "schemaVersion": "1.6.0",
+  "schemaVersion": "1.8.0",
   "entityIdentity": "repository-path-v1",
   "generatedAt": "2026-07-14T16:00:00Z",
   "repository": "/work/project",
+  "repositoryId": "git:github.com/example/project",
+  "repositoryRemote": "github.com/example/project",
+  "goModule": "github.com/example/project",
+  "profileDigest": "sha256:...",
+  "excludedPaths": ["console"],
   "commit": "abc1234def5678",
   "branch": "main",
   "scanDuration": "",
@@ -439,7 +478,7 @@ The top-level output of `atlas scan`. One JSON file containing everything.
   "fileFingerprints": {},
   "scanComplete": true,
   "scanWarnings": [],
-  "scanCoverage": {"discovered": 0, "parsed": 0, "reused": 0, "ignored": 0, "failed": 0},
+  "scanCoverage": {"discovered": 0, "parsed": 0, "reused": 0, "ignored": 0, "failed": 0, "sourceFiles": 0, "goFiles": 0, "unsupportedSource": 0},
   "scanFiles": [],
   "views": {},
   "questions": {}
@@ -450,6 +489,11 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `schema` — always `"codeatlas"` for the current graph contract. Identifies this file as an Atlas Graph.
 - `schemaVersion` — semver. Consumers check this to know which fields exist. Bump major on breaking changes, minor on new optional fields.
 - `entityIdentity` — identity scheme used by the scanner. Current repository scans use `repository-path-v1`; consumers must reject legacy identities when exact implementation context is required.
+- `repositoryId` — stable selector derived from `.codeatlas.yaml`, the normalized Git `origin` remote, or the Go module path. Use this to select graphs across different checkout roots.
+- `repositoryRemote` — normalized Git origin (`host/path`) without credentials or transport-specific syntax. It lets PR review validate the GitHub repository when `repository_id` supplies a custom selector.
+- `goModule` — module declaration from the repository-root `go.mod`, when present.
+- `profileDigest` — deterministic digest of the effective `.codeatlas.yaml` scope. A profile mismatch makes the graph stale for that checkout.
+- `excludedPaths` — explicit repository-relative file/directory paths omitted by the profile; default skipped directories are `.git`, `.worktrees`, `vendor`, `node_modules`, and `testdata`.
 - `generatedAt` — commit timestamp when available. It is provenance, not a wall-clock scan timestamp; this keeps the graph deterministic for a fixed commit.
 - `commit` — exact git commit that was scanned. Enables diffing two graphs.
 - `branch` — git branch. Enables comparing `release-4.19` vs `release-4.20`.
@@ -457,10 +501,10 @@ The top-level output of `atlas scan`. One JSON file containing everything.
 - `relationships` — flat array of all relationships.
 - `fileTimestamps` — per-file RFC3339 modification times used as incremental state when fingerprints are unavailable.
 - `fileFingerprints` — content fingerprints for supported files. Used to detect changes that preserve a timestamp.
-- `scanComplete` — true when all files with registered parsers were processed without warnings. An ignored file is outside the parser set and remains explicitly listed in `scanCoverage`/`scanFiles`; false means a supported parser failed or another scan warning exists.
+- `scanComplete` — true when every file the scanner claims to parse was parsed without warnings. Source files in languages CodeAtlas has no parser for do not make a graph incomplete; they are counted in `scanCoverage.unsupportedSource` so consumers can report the scope boundary. Treating them as incompleteness marked every real repository unusable, since almost every Go repository ships shell, HTML, SQL, or proto alongside its Go.
 - `scanWarnings` — deterministic parser or discovery warnings that explain why completeness is unavailable.
-- `scanCoverage` — counts of discovered files by disposition. `parsed` and `reused` are graph-file statuses accepted by the schema; current scans persist parsed facts while incremental reuse is reported by the scan result so identical repository snapshots remain deterministic.
-- `scanFiles` — deterministic per-file disposition, parser name, entity count, and reason for ignored/failed files. Unsupported extensions are explicit `ignored` entries rather than silent omissions.
+- `scanCoverage` — counts of discovered files by disposition plus `sourceFiles`, `goFiles`, and `unsupportedSource`. `parsed` and `reused` are graph-file statuses accepted by the schema; current scans persist parsed facts while incremental reuse is reported by the scan result so identical repository snapshots remain deterministic.
+- `scanFiles` — deterministic per-file disposition, `category`, parser name, entity count, and reason for ignored/failed files. Unsupported source extensions are explicit `ignored` entries counted in `unsupportedSource`; they remain visible without blocking verification.
 - `views` — pre-computed engineering views for controllers and CRDs, generated during scan. Each keyed by entity ID, containing ownership, resources, tests, files, and temporal data.
 - `questions` — deterministic Q&A pairs derived from views (for example, `"reconciles:Widget"` → `"Widget"`). Entity/relationship counts are computed by `atlas stats`; they are not stored as a top-level graph field.
 - Temporal fields are opt-in. A scan without `--temporal` leaves

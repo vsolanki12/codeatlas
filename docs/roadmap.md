@@ -34,15 +34,21 @@ Development progresses in phases. Each builds on the previous.
 
 ---
 
-### Phase 4: Cross-Repo Intelligence
+### Phase 4: Import Awareness and Package Aggregation
 
-**Delivered:** Import path classification, merge-aware dedup.
+**Delivered:** Import observations, same-graph package edges, and merge-aware dedup.
 
-- `internal/origin` — import path classifier: stdlib vs known repos vs external
+- `internal/origin` — utility for classifying standard-library and known repository import paths; its result is not yet attached to graph imports
 - Import extraction from Go AST
 - Merge-aware dedup: duplicate package entities merge Files and Imports arrays
 
 **Result:** 225 packages with import data, 154 with merged multi-file data.
+
+This phase does not create cross-repository graph edges. `atlas serve` can now
+load several repository graphs in one MCP process and route each query by
+repository ID or Go module path; imports between separate graphs remain
+unlinked. Same-graph package imports are resolved only when exactly one target
+package entity matches.
 
 ---
 
@@ -294,6 +300,25 @@ graph, retrieve high-degree entities without silently losing relationships,
 and use stronger call evidence without moving probabilistic reasoning into the
 scanner.
 
+### Phase 22: Team Repository Support
+
+**Delivered:** Safer Go-only scanning and query access across multiple
+engineering repositories.
+
+- `.codeatlas.yaml` defines repository-relative exclusions and an optional stable ID.
+- Graph identity follows the normalized Git origin or root Go module, so the
+  graph remains verifiable from a different clone path. The normalized origin
+  is persisted separately so custom repository IDs do not prevent PR checks.
+- Source files without a parser are counted in `unsupportedSource` as a scope
+  boundary; only parse failures make `scanComplete` false.
+- `atlas serve` accepts repeated `-graph` flags. Graph-scoped tools accept a
+  `repository` selector; `atlas_stats` without one lists stats for each graph.
+- PR review checks the selected graph against the PR repository before using
+  its evidence.
+
+**Limit:** This phase keeps language support on Go. Cross-graph imports are
+still observations without linked relationship edges.
+
 ---
 
 ## Vision: Deterministic Query and Evidence Engine
@@ -440,6 +465,43 @@ CLI-only:
 - MCP review responses use bounded entity summaries, preserve relationship
   evidence, and mark truncation explicitly to reduce downstream context.
 - Scanning remains CLI-only; MCP consumers cannot replace the graph they query.
+
+---
+
+## Phase: General Go Repository Support (schema 1.8.0)
+
+**Delivered:** The graph is legible for any Go repository, not only
+controller-runtime operators.
+
+- Dependency types resolve from toolchain export data located with
+  `go list -deps -test -export`, run once per module. The previous default gc
+  importer searched only GOROOT and GOPATH, which no module-mode repository
+  populates, so most packages failed to type-check. Measured on three
+  repositories: packages checked went 3/91 to 91/91 (cluster-ingress-operator),
+  82/262 to 261/262 (etcd), and 47/683 to 680/683 (hypershift); unresolved
+  calls fell from 52%/21%/52% to 17%/3%/5%.
+- `type` and `interface` entities, `contains` edges for fields and methods,
+  and `implements` edges proven by `types.Implements` over value and pointer
+  method sets.
+- openshift/library-go factory controllers are detected from
+  `WithSync(c.<method>).ToController(...)`. Their sync method name is read
+  from the registration, not assumed.
+- Views and the question index cover types, interfaces, and packages. etcd
+  went from 0 views to 1501, and 0 questions to 4015.
+- Entities resolve by package-qualified name (`canary/reconciler`), and an
+  ambiguous bare name lists the qualified candidates instead of reporting
+  "not found". Fields and methods are qualified by their declaring type so a
+  field named after its own type cannot collide with it.
+- `scanComplete` means every file the scanner claims to parse was parsed.
+  Unsupported source languages are scope, not incompleteness.
+- Parsing runs across GOMAXPROCS workers with deterministic output ordering.
+- `atlas serve` reads only each graph's header at startup and decodes a
+  repository's graph on first use. Three repositories went from 489 MB
+  resident at startup to 15 MB.
+
+**Limit:** A graph is still decoded whole when a repository is queried. The
+measured ceiling is roughly 500 MB–1 GB per repository graph, beyond which an
+out-of-core store is required.
 
 ---
 

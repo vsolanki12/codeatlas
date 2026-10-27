@@ -109,17 +109,66 @@ func TestCompile_DoesNotChooseOneOfMultipleReconciliationTargets(t *testing.T) {
 	}
 }
 
-func TestCompile_SkipsFunctionsAndPackages(t *testing.T) {
+// A view summarizes something a reader navigates to. Packages, types, and
+// interfaces qualify; an individual function is reached through them.
+func TestCompile_CoversStructuralEntitiesButNotFunctions(t *testing.T) {
 	entities := []domain.Entity{
 		{ID: "function:foo", Name: "foo", Kind: domain.KindFunction,
 			Source: domain.Source{File: "foo.go", Line: 1}},
 		{ID: "package:bar", Name: "bar", Kind: domain.KindPackage,
 			Source: domain.Source{File: "bar", Line: 0}},
+		{ID: "type:bar.Store", Name: "Store", Kind: domain.KindType, Package: "bar",
+			Source: domain.Source{File: "bar/store.go", Line: 3}},
+		{ID: "interface:bar.Reader", Name: "Reader", Kind: domain.KindInterface, Package: "bar",
+			Source: domain.Source{File: "bar/reader.go", Line: 3}},
 	}
 
 	views := Compile(entities, nil)
-	if len(views) != 0 {
-		t.Errorf("expected 0 views for non-controller/CRD entities, got %d", len(views))
+	if _, found := views["function:foo"]; found {
+		t.Error("a function should not get its own view")
+	}
+	for _, id := range []string{"package:bar", "type:bar.Store", "interface:bar.Reader"} {
+		if _, found := views[id]; !found {
+			t.Errorf("expected a view for %s", id)
+		}
+	}
+}
+
+func TestCompile_StructuralViewRecordsMembersAndImplementers(t *testing.T) {
+	entities := []domain.Entity{
+		{ID: "type:bar.Store", Name: "Store", Kind: domain.KindType, Package: "bar",
+			Source: domain.Source{File: "bar/store.go", Line: 3}},
+		{ID: "interface:bar.Reader", Name: "Reader", Kind: domain.KindInterface, Package: "bar",
+			Source: domain.Source{File: "bar/reader.go", Line: 3}},
+		{ID: "function:bar.Store.Get", Name: "Get", Kind: domain.KindFunction, Package: "bar",
+			Source: domain.Source{File: "bar/store.go", Line: 9}},
+		{ID: "field:bar.Store.path", Name: "path", Kind: domain.KindField, Package: "bar",
+			Source: domain.Source{File: "bar/store.go", Line: 4}},
+	}
+	rels := []domain.Relationship{
+		{ID: domain.NewRelationshipID("type:bar.Store", domain.RelContains, "function:bar.Store.Get"),
+			From: "type:bar.Store", To: "function:bar.Store.Get", Type: domain.RelContains},
+		{ID: domain.NewRelationshipID("type:bar.Store", domain.RelContains, "field:bar.Store.path"),
+			From: "type:bar.Store", To: "field:bar.Store.path", Type: domain.RelContains},
+		{ID: domain.NewRelationshipID("type:bar.Store", domain.RelImplements, "interface:bar.Reader"),
+			From: "type:bar.Store", To: "interface:bar.Reader", Type: domain.RelImplements},
+	}
+
+	views := Compile(entities, rels)
+	store := views["type:bar.Store"]
+	if len(store.Methods) != 1 || store.Methods[0] != "Get" {
+		t.Errorf("type methods = %v, want [Get]", store.Methods)
+	}
+	if len(store.Fields) != 1 || store.Fields[0] != "path" {
+		t.Errorf("type fields = %v, want [path]", store.Fields)
+	}
+	if len(store.Implements) != 1 || store.Implements[0] != "Reader" {
+		t.Errorf("type implements = %v, want [Reader]", store.Implements)
+	}
+
+	reader := views["interface:bar.Reader"]
+	if len(reader.ImplementedBy) != 1 || reader.ImplementedBy[0] != "Store" {
+		t.Errorf("interface implementedBy = %v, want [Store]", reader.ImplementedBy)
 	}
 }
 

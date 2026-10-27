@@ -59,15 +59,19 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 	var entities []domain.Entity
 	type controllerFacts struct {
 		isController bool
-		source       domain.Source
-		setupSource  domain.Source
-		watches      []string
-		watchMethods []string
-		watchSites   []domain.Site
-		creates      []string
-		createSites  []domain.Site
-		calls        []string
-		callSites    []domain.Site
+		// reconcileMethod is the method implementing the control loop. It is
+		// Reconcile for controller-runtime and the registered sync method for a
+		// library-go factory controller.
+		reconcileMethod string
+		source          domain.Source
+		setupSource     domain.Source
+		watches         []string
+		watchMethods    []string
+		watchSites      []domain.Site
+		creates         []string
+		createSites     []domain.Site
+		calls           []string
+		callSites       []domain.Site
 	}
 	controllers := make(map[string]*controllerFacts)
 	getController := func(name string) *controllerFacts {
@@ -101,6 +105,34 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 				if doc != "" {
 					typeComments[s.Name.Name] = doc
 				}
+				// Named types and interfaces are declarations with a file and a
+				// line, so they are entities on the same terms as functions.
+				// Without them the graph can describe a field but not the struct
+				// that owns it, and no consumer can answer what implements an
+				// interface.
+				kind := domain.KindType
+				if _, isInterface := s.Type.(*ast.InterfaceType); isInterface {
+					kind = domain.KindInterface
+				}
+				typeStart, typeEnd := s.Pos(), s.End()
+				if s.Doc != nil && s.Doc.Pos() < typeStart {
+					typeStart = s.Doc.Pos()
+				} else if genDecl.Doc != nil && len(genDecl.Specs) == 1 && genDecl.Doc.Pos() < typeStart {
+					typeStart = genDecl.Doc.Pos()
+				}
+				entities = append(entities, domain.Entity{
+					ID:          fmt.Sprintf("%s:%s.%s", kind, packagePath, s.Name.Name),
+					Name:        s.Name.Name,
+					Kind:        kind,
+					Package:     packagePath,
+					Description: doc,
+					Source: domain.Source{
+						Parser:  "go-ast",
+						File:    file.RelativePath,
+						Line:    p.fset.Position(typeStart).Line,
+						EndLine: p.fset.Position(typeEnd).Line,
+					},
+				})
 				if structure, ok := s.Type.(*ast.StructType); ok {
 					for _, field := range structure.Fields.List {
 						description := ""
@@ -224,9 +256,19 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			},
 		})
 
+		for _, found := range extractFactoryControllers(fn, file.RelativePath, p.fset) {
+			facts := getController(found.typeName)
+			facts.isController = true
+			facts.reconcileMethod = found.syncMethod
+			if facts.source.File == "" {
+				facts.source = found.source
+			}
+		}
+
 		if fn.Name.Name == "Reconcile" && recv != "" {
 			facts := getController(recv)
 			facts.isController = true
+			facts.reconcileMethod = "Reconcile"
 			facts.source = domain.Source{
 				Parser:  "go",
 				File:    file.RelativePath,
@@ -312,6 +354,20 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 		if source.File == "" {
 			source = facts.setupSource
 		}
+		// A library-go controller registers its sync method from a constructor,
+		// so the control-loop body is a sibling declaration rather than the one
+		// that identified the controller. Adopt its calls when the controller
+		// was not identified from the loop body itself.
+		if len(facts.calls) == 0 && facts.reconcileMethod != "" {
+			loopID := fmt.Sprintf("function:%s.%s.%s", packagePath, controllerTypeName, facts.reconcileMethod)
+			for _, candidate := range entities {
+				if candidate.ID == loopID {
+					facts.calls = candidate.Calls
+					facts.callSites = candidate.CallSites
+					break
+				}
+			}
+		}
 		entities = append(entities, domain.Entity{
 			ID:                  fmt.Sprintf("controller:%s.%s", packagePath, controllerTypeName),
 			Name:                controllerTypeName,
@@ -319,6 +375,7 @@ func (p *GoParser) Parse(file domain.File) ([]domain.Entity, error) {
 			Description:         typeComments[controllerTypeName],
 			Package:             packagePath,
 			Files:               []string{file.RelativePath},
+			ReconcileMethod:     facts.reconcileMethod,
 			Source:              source,
 			Watches:             facts.watches,
 			WatchMethods:        facts.watchMethods,
@@ -418,6 +475,131 @@ func extractCallsAndEnvVars(body *ast.BlockStmt, importAliases map[string]string
 		return true
 	})
 	return calls, sites, envVars
+}
+
+type factoryController struct {
+	typeName   string
+	syncMethod string
+	source     domain.Source
+}
+
+// extractFactoryControllers detects openshift/library-go factory controllers.
+// They register a sync function from a constructor instead of declaring a
+// Reconcile method, so controller-runtime name matching never sees them:
+//
+//	factory.New().WithInformers(...).WithSync(c.sync).ToController("Name", rec)
+//
+// The controller identity is the type whose method is registered as the sync
+// function. That keeps it the same kind of entity as a controller-runtime
+// reconciler rather than inventing a second controller model.
+func extractFactoryControllers(fn *ast.FuncDecl, filePath string, fset *token.FileSet) []factoryController {
+	if fn.Body == nil {
+		return nil
+	}
+	variables := collectVariableTypes(fn.Body)
+	if receiver := receiverTypeName(fn); receiver != "" && len(fn.Recv.List[0].Names) > 0 {
+		variables[fn.Recv.List[0].Names[0].Name] = receiver
+	}
+
+	var found []factoryController
+	seen := make(map[string]bool)
+	ast.Inspect(fn.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "ToController" {
+			return true
+		}
+		typeName, syncMethod := factorySyncRegistration(selector.X, variables)
+		if typeName == "" || syncMethod == "" {
+			return true
+		}
+		if seen[typeName] {
+			return true
+		}
+		seen[typeName] = true
+		position := fset.Position(call.Pos())
+		found = append(found, factoryController{
+			typeName:   typeName,
+			syncMethod: syncMethod,
+			source:     domain.Source{Parser: "go", File: filePath, Line: position.Line},
+		})
+		return true
+	})
+	return found
+}
+
+// factorySyncRegistration walks the builder chain beneath ToController to the
+// WithSync registration and resolves the variable the method value belongs to.
+// A registration whose receiver cannot be resolved yields nothing rather than
+// a guessed controller type.
+func factorySyncRegistration(expr ast.Expr, variables map[string]string) (string, string) {
+	for {
+		call, ok := expr.(*ast.CallExpr)
+		if !ok {
+			return "", ""
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return "", ""
+		}
+		if selector.Sel.Name == "WithSync" && len(call.Args) == 1 {
+			if method, ok := call.Args[0].(*ast.SelectorExpr); ok {
+				if ident, ok := method.X.(*ast.Ident); ok {
+					if typeName := variables[ident.Name]; typeName != "" {
+						return typeName, method.Sel.Name
+					}
+				}
+			}
+		}
+		expr = selector.X
+	}
+}
+
+// collectVariableTypes maps local variable names to the composite literal type
+// they were assigned. extractCreateSites keeps its own order-sensitive version
+// so that changing this one cannot alter existing create observations.
+func collectVariableTypes(body *ast.BlockStmt) map[string]string {
+	variables := make(map[string]string)
+	add := func(name string, expr ast.Expr) {
+		if typeName := createTypeName(expr, variables); typeName != "" {
+			variables[name] = typeName
+		}
+	}
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.AssignStmt:
+			for i, left := range value.Lhs {
+				ident, ok := left.(*ast.Ident)
+				if !ok || i >= len(value.Rhs) {
+					continue
+				}
+				add(ident.Name, value.Rhs[i])
+			}
+		case *ast.DeclStmt:
+			declaration, ok := value.Decl.(*ast.GenDecl)
+			if !ok {
+				break
+			}
+			for _, spec := range declaration.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						add(name.Name, valueSpec.Values[i])
+					} else if valueSpec.Type != nil {
+						add(name.Name, valueSpec.Type)
+					}
+				}
+			}
+		}
+		return true
+	})
+	return variables
 }
 
 var createMethodNames = map[string]bool{

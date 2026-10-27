@@ -141,6 +141,10 @@ func runScan(args []string) {
 		fmt.Printf("Full scan (%s)\n", result.Duration.Round(time.Millisecond))
 	}
 	fmt.Printf("%d entities, %d relationships\n", result.EntityCount, result.RelCount)
+	if coverage := result.Graph.ScanCoverage; coverage != nil {
+		fmt.Printf("scan coverage: Go files=%d, source files=%d, unsupported source=%d, ignored assets=%d\n",
+			coverage.GoFiles, coverage.SourceFiles, coverage.UnsupportedSource, coverage.Ignored-coverage.UnsupportedSource)
+	}
 
 	if len(result.Warnings) > 0 {
 		fmt.Printf("Warnings (%d):\n", len(result.Warnings))
@@ -433,6 +437,8 @@ func runView(args []string) {
 	v := idx.ResolveView(entity)
 	if v == nil {
 		fmt.Fprintf(os.Stderr, "no view found for: %s\n", entity)
+		_, candidates := idx.Resolve(entity)
+		reportAmbiguity(entity, candidates)
 		os.Exit(1)
 	}
 	if *jsonOutput {
@@ -641,6 +647,15 @@ func runFreshness(args []string) {
 	}
 	fmt.Fprintf(os.Stdout, "repository: %s\n", result.Repository)
 	fmt.Fprintf(os.Stdout, "graph repository: %s\n", result.GraphRepository)
+	if result.RepositoryID != "" {
+		fmt.Fprintf(os.Stdout, "repository ID: %s\n", result.RepositoryID)
+	}
+	if result.RepositoryRemote != "" {
+		fmt.Fprintf(os.Stdout, "repository remote: %s\n", result.RepositoryRemote)
+	}
+	if result.GoModule != "" {
+		fmt.Fprintf(os.Stdout, "Go module: %s\n", result.GoModule)
+	}
 	fmt.Fprintf(os.Stdout, "graph commit: %s\n", result.GraphCommit)
 	fmt.Fprintf(os.Stdout, "repo HEAD: %s\n", result.RepoHead)
 	fmt.Fprintf(os.Stdout, "schema: %s\n", result.SchemaVersion)
@@ -656,6 +671,10 @@ func runFreshness(args []string) {
 		fmt.Fprintf(os.Stdout, "scan warning: %s\n", warning)
 	}
 	fmt.Fprintf(os.Stdout, "repository match: %t\n", result.RepositoryMatch)
+	fmt.Fprintf(os.Stdout, "profile match: %t\n", result.ProfileMatch)
+	if result.ProfileError != "" {
+		fmt.Fprintf(os.Stdout, "profile error: %s\n", result.ProfileError)
+	}
 	fmt.Fprintf(os.Stdout, "state verification: %t\n", result.StateVerifiable)
 	fmt.Fprintf(os.Stdout, "dirty: %t\n", result.Dirty)
 	for _, path := range result.ChangedFiles {
@@ -674,6 +693,7 @@ func runVerify(args []string) {
 	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
 	repo := fs.String("repo", "", "path to the repository checkout")
 	requireComplete := fs.Bool("require-complete", true, "require a complete scan with no parser failures")
+	requireGoSource := fs.Bool("require-go-source", true, "require scan coverage to include at least one Go source file")
 	failOnIgnored := fs.Bool("fail-on-ignored", false, "also fail when discovered files have no registered parser")
 	jsonOutput := fs.Bool("json", false, "emit machine-readable JSON")
 	fs.Parse(reorderArgs(fs, args))
@@ -693,6 +713,7 @@ func runVerify(args []string) {
 		RequireCurrentExtractor: true,
 		ExpectedExtractorBuild:  extractorBuild,
 		RequireComplete:         *requireComplete,
+		RequireGoSource:         *requireGoSource,
 		FailOnIgnored:           *failOnIgnored,
 	})
 	if *jsonOutput {
@@ -711,13 +732,30 @@ func formatVerification(result freshness.Verification) string {
 	b.WriteString("===========================\n")
 	f := result.Freshness
 	fmt.Fprintf(&b, "Graph repository: %s\n", f.GraphRepository)
+	if f.RepositoryID != "" {
+		fmt.Fprintf(&b, "Repository ID: %s\n", f.RepositoryID)
+	}
+	if f.RepositoryRemote != "" {
+		fmt.Fprintf(&b, "Repository remote: %s\n", f.RepositoryRemote)
+	}
+	if f.GoModule != "" {
+		fmt.Fprintf(&b, "Go module: %s\n", f.GoModule)
+	}
 	fmt.Fprintf(&b, "Repository checked: %s\n", f.Repository)
 	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", f.SchemaVersion, f.SchemaCurrent)
 	fmt.Fprintf(&b, "Extractor: %s (current=%t) | signature: %s\n", f.ExtractorVersion, f.ExtractorCurrent, f.ExtractionSignature)
 	fmt.Fprintf(&b, "Graph commit: %s\n", f.GraphCommit)
 	fmt.Fprintf(&b, "Repository HEAD: %s\n", f.RepoHead)
 	fmt.Fprintf(&b, "Scan complete: %t\n", f.ScanComplete)
+	if f.ScanCoverage != nil {
+		fmt.Fprintf(&b, "Go files: %d | source files: %d | unsupported source: %d | ignored assets: %d\n",
+			f.ScanCoverage.GoFiles, f.ScanCoverage.SourceFiles, f.ScanCoverage.UnsupportedSource, f.ScanCoverage.Ignored-f.ScanCoverage.UnsupportedSource)
+	}
 	fmt.Fprintf(&b, "Repository match: %t\n", f.RepositoryMatch)
+	fmt.Fprintf(&b, "Profile match: %t\n", f.ProfileMatch)
+	if f.ProfileError != "" {
+		fmt.Fprintf(&b, "Profile error: %s\n", f.ProfileError)
+	}
 	fmt.Fprintf(&b, "Commit verifiable: %t\n", f.Verifiable)
 	fmt.Fprintf(&b, "File state verifiable: %t\n", f.StateVerifiable)
 	fmt.Fprintf(&b, "Valid: %t\n", result.Valid)
@@ -739,18 +777,31 @@ func freshnessStatus(complete bool) string {
 
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	graphPath := fs.String("graph", "atlas.json", "path to graph JSON")
+	var graphPaths stringListFlag
+	fs.Var(&graphPaths, "graph", "path to graph JSON (repeat to serve multiple repositories)")
 	fs.Parse(reorderArgs(fs, args))
+	if len(graphPaths) == 0 {
+		graphPaths = append(graphPaths, "atlas.json")
+	}
 
 	extractorBuild, err := scanner.ExecutableBuildIdentity()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "extractor identity: %v\n", err)
 		os.Exit(1)
 	}
-	if err := mcpserver.Run(context.Background(), *graphPath, extractorBuild); err != nil {
+	if err := mcpserver.RunMany(context.Background(), graphPaths, extractorBuild); err != nil {
 		fmt.Fprintf(os.Stderr, "serve failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+type stringListFlag []string
+
+func (values *stringListFlag) String() string { return strings.Join(*values, ",") }
+
+func (values *stringListFlag) Set(value string) error {
+	*values = append(*values, value)
+	return nil
 }
 
 func runReview(args []string) {
@@ -830,6 +881,30 @@ func printJSON(value any) {
 }
 
 func resolveEntity(idx *query.Index, nameOrID string) *domain.Entity {
-	entity, _ := idx.Resolve(nameOrID)
+	entity, candidates := idx.Resolve(nameOrID)
+	if entity == nil {
+		reportAmbiguity(nameOrID, candidates)
+	}
 	return entity
+}
+
+// reportAmbiguity prints the qualified names a shared bare name matched. A
+// repository where many packages declare the same type name otherwise reports
+// only "not found" for a name that exists many times.
+func reportAmbiguity(value string, candidates []*domain.Entity) {
+	if len(candidates) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%q matches %d entities; use a qualified name or ID:\n", value, len(candidates))
+	for i, candidate := range candidates {
+		if i == 10 {
+			fmt.Fprintf(os.Stderr, "  ... and %d more\n", len(candidates)-i)
+			break
+		}
+		if qualified := domain.QualifiedName(candidate.ID, candidate.Package, candidate.Name); qualified != "" {
+			fmt.Fprintf(os.Stderr, "  %s  (%s)\n", qualified, candidate.ID)
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  %s\n", candidate.ID)
+	}
 }

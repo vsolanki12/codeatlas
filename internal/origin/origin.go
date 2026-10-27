@@ -23,7 +23,7 @@ func Classify(importPath string) string {
 	best := ""
 	bestLen := 0
 	for prefix, repo := range known {
-		if strings.HasPrefix(importPath, prefix) && len(prefix) > bestLen {
+		if (importPath == prefix || strings.HasPrefix(importPath, prefix+"/")) && len(prefix) > bestLen {
 			best = repo
 			bestLen = len(prefix)
 		}

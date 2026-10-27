@@ -28,6 +28,8 @@ const (
 	KindTemplate
 	KindUnknown
 	KindField
+	KindType
+	KindInterface
 )
 
 // Entity is a single discovered element in the codebase, such as controller, CRD,
@@ -42,6 +44,7 @@ type Entity struct {
 	ReferenceSites      []ReferenceSite     `json:"referenceSites,omitempty"`
 	Package             string              `json:"package,omitempty"`
 	Files               []string            `json:"files,omitempty"`
+	ReconcileMethod     string              `json:"reconcileMethod,omitempty"`
 	Watches             []string            `json:"watches,omitempty"`
 	WatchMethods        []string            `json:"watchMethods,omitempty"`
 	WatchSites          []Site              `json:"watchSites,omitempty"`
@@ -80,6 +83,56 @@ type ReferenceSite struct {
 	Source Source `json:"source"`
 }
 
+// QualifiedName returns the scoped display name for an entity, such as
+// "canary/reconciler" or "v3rpc/quotaLeaseServer.LeaseServer".
+//
+// Repositories legitimately declare the same name in many packages — every
+// OpenShift operator controller package declares its own unexported
+// reconciler — which leaves the bare name ambiguous and unusable for lookup.
+// A field or method is declared inside a type rather than directly in the
+// package, so it is qualified by its declaring type as well; without that, a
+// field named after its own type collides with the type itself.
+//
+// The result depends only on this entity, so adding or removing other
+// entities never renames it. It is empty when it would add nothing.
+func QualifiedName(id, packagePath, name string) string {
+	if packagePath == "" || name == "" {
+		return ""
+	}
+	segment := packagePath
+	if index := strings.LastIndex(segment, "/"); index >= 0 {
+		segment = segment[index+1:]
+	}
+	if segment == "" {
+		return ""
+	}
+	if owner := declaringType(id, packagePath, name); owner != "" {
+		return segment + "/" + owner + "." + name
+	}
+	if strings.EqualFold(segment, name) {
+		return ""
+	}
+	return segment + "/" + name
+}
+
+// declaringType reads the owning type out of a member entity's deterministic
+// ID. It returns empty for anything declared directly in a package.
+func declaringType(id, packagePath, name string) string {
+	colon := strings.Index(id, ":")
+	if colon < 0 {
+		return ""
+	}
+	remainder, found := strings.CutPrefix(id[colon+1:], packagePath+".")
+	if !found {
+		return ""
+	}
+	owner, member, found := strings.Cut(remainder, ".")
+	if !found || owner == "" || member != name {
+		return ""
+	}
+	return owner
+}
+
 // String returns the lowercase name of the entity kind.
 func (k EntityKind) String() string {
 	name := [...]string{
@@ -94,6 +147,8 @@ func (k EntityKind) String() string {
 		"template",
 		"unknown",
 		"field",
+		"type",
+		"interface",
 	}
 	if int(k) < len(name) {
 		return name[k]
@@ -130,6 +185,10 @@ func (k *EntityKind) UnmarshalJSON(data []byte) error {
 		*k = KindTemplate
 	case "field":
 		*k = KindField
+	case "type":
+		*k = KindType
+	case "interface":
+		*k = KindInterface
 	default:
 		*k = KindUnknown
 	}

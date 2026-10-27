@@ -21,6 +21,16 @@ type View struct {
 	CreatedBy    []string `json:"createdBy,omitempty"`
 	CalledBy     []string `json:"calledBy,omitempty"`
 
+	// Structure (Go types, interfaces, packages). These answer the questions
+	// asked when reading an unfamiliar repository: what is this type, what
+	// satisfies this interface, what does this package depend on.
+	Implements    []string `json:"implements,omitempty"`
+	ImplementedBy []string `json:"implementedBy,omitempty"`
+	Methods       []string `json:"methods,omitempty"`
+	Fields        []string `json:"fields,omitempty"`
+	Imports       []string `json:"imports,omitempty"`
+	ImportedBy    []string `json:"importedBy,omitempty"`
+
 	// Test coverage
 	Tests     []string `json:"tests,omitempty"`
 	TestCount int      `json:"testCount"`

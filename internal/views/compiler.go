@@ -34,10 +34,75 @@ func Compile(entities []domain.Entity, rels []domain.Relationship) map[string]do
 			views[e.ID] = compileController(e, from[e.ID], to[e.ID], byID)
 		case domain.KindCRD:
 			views[e.ID] = compileCRD(e, from[e.ID], to[e.ID], byID)
+		case domain.KindType, domain.KindInterface, domain.KindPackage:
+			views[e.ID] = compileStructure(e, from[e.ID], to[e.ID], byID)
 		}
 	}
 
 	return views
+}
+
+// memberLimit bounds the denormalized name lists on a structural view. A
+// generated package can declare hundreds of types; a view is a summary, and
+// the complete set is always available by traversing the graph itself.
+const memberLimit = 50
+
+// compileStructure builds the view for a Go type, interface, or package.
+// These are the entities a reader of an unfamiliar repository starts from,
+// and before they existed the view layer produced nothing at all for a
+// repository without controllers.
+func compileStructure(e *domain.Entity, outRels, inRels []domain.Relationship, byID map[string]*domain.Entity) domain.View {
+	v := baseView(e)
+	appendViewRelationships(&v, outRels, "outgoing", byID)
+	appendViewRelationships(&v, inRels, "incoming", byID)
+
+	for _, r := range outRels {
+		target := byID[r.To]
+		if target == nil {
+			continue
+		}
+		switch r.Type {
+		case domain.RelImplements:
+			v.Implements = appendUniqueName(v.Implements, target.Name)
+		case domain.RelContains:
+			switch target.Kind {
+			case domain.KindFunction:
+				v.Methods = appendUniqueName(v.Methods, target.Name)
+			case domain.KindField:
+				v.Fields = appendUniqueName(v.Fields, target.Name)
+			}
+		case domain.RelImports:
+			v.Imports = appendUniqueName(v.Imports, target.Name)
+		case domain.RelTestedBy:
+			v.Tests = appendUniqueName(v.Tests, target.Name)
+		case domain.RelCalls:
+			v.Calls = appendUniqueName(v.Calls, target.Name)
+		}
+	}
+
+	for _, r := range inRels {
+		source := byID[r.From]
+		if source == nil {
+			continue
+		}
+		switch r.Type {
+		case domain.RelImplements:
+			v.ImplementedBy = appendUniqueName(v.ImplementedBy, source.Name)
+		case domain.RelImports:
+			v.ImportedBy = appendUniqueName(v.ImportedBy, source.Name)
+		case domain.RelCalls:
+			v.CalledBy = appendUniqueName(v.CalledBy, source.Name)
+		}
+	}
+
+	for _, list := range []*[]string{&v.Implements, &v.ImplementedBy, &v.Methods, &v.Fields, &v.Imports, &v.ImportedBy, &v.Calls, &v.CalledBy} {
+		if len(*list) > memberLimit {
+			*list = (*list)[:memberLimit]
+		}
+	}
+	v.TestCount = len(v.Tests)
+	sortAll(&v)
+	return v
 }
 
 func compileController(e *domain.Entity, outRels, inRels []domain.Relationship, byID map[string]*domain.Entity) domain.View {
@@ -155,44 +220,76 @@ func CompileQuestions(views map[string]domain.View) map[string]string {
 	}
 	sort.Strings(ids)
 	nameCounts := make(map[string]int, len(ids))
+	qualifiedCounts := make(map[string]int, len(ids))
 	for _, id := range ids {
 		nameCounts[strings.ToLower(views[id].EntityName)]++
+		if qualified := qualifiedName(views[id]); qualified != "" {
+			qualifiedCounts[strings.ToLower(qualified)]++
+		}
 	}
 	for _, id := range ids {
 		v := views[id]
-		name := v.EntityName
 		// A name-keyed Q&A is safe only when the graph proves that the
 		// name identifies one view. Never let map iteration decide which
-		// same-named controller/CRD wins.
-		if nameCounts[strings.ToLower(name)] != 1 {
-			continue
+		// same-named controller/CRD wins. A repository that declares the same
+		// type name in many packages still answers under the qualified name.
+		var subjects []string
+		if nameCounts[strings.ToLower(v.EntityName)] == 1 {
+			subjects = append(subjects, v.EntityName)
 		}
-		if v.Reconciles != "" {
-			qa["reconciles:"+name] = v.Reconciles
+		if qualified := qualifiedName(v); qualified != "" && qualifiedCounts[strings.ToLower(qualified)] == 1 {
+			subjects = append(subjects, qualified)
 		}
-		if v.ReconciledBy != "" {
-			qa["reconciled-by:"+name] = v.ReconciledBy
-		}
-		if len(v.Creates) > 0 {
-			qa["creates:"+name] = join(v.Creates)
-		}
-		if len(v.CreatedBy) > 0 {
-			qa["created-by:"+name] = join(v.CreatedBy)
-		}
-		if len(v.Tests) > 0 {
-			qa["tests:"+name] = join(v.Tests)
-		}
-		if len(v.Owners) > 0 {
-			qa["owns:"+name] = join(v.Owners)
-		}
-		if len(v.Files) > 0 {
-			qa["files:"+name] = join(v.Files)
-		}
-		if len(v.Watches) > 0 {
-			qa["watches:"+name] = join(v.Watches)
+		for _, name := range subjects {
+			if v.Reconciles != "" {
+				qa["reconciles:"+name] = v.Reconciles
+			}
+			if v.ReconciledBy != "" {
+				qa["reconciled-by:"+name] = v.ReconciledBy
+			}
+			if len(v.Creates) > 0 {
+				qa["creates:"+name] = join(v.Creates)
+			}
+			if len(v.CreatedBy) > 0 {
+				qa["created-by:"+name] = join(v.CreatedBy)
+			}
+			if len(v.Tests) > 0 {
+				qa["tests:"+name] = join(v.Tests)
+			}
+			if len(v.Owners) > 0 {
+				qa["owns:"+name] = join(v.Owners)
+			}
+			if len(v.Files) > 0 {
+				qa["files:"+name] = join(v.Files)
+			}
+			if len(v.Watches) > 0 {
+				qa["watches:"+name] = join(v.Watches)
+			}
+			if len(v.Implements) > 0 {
+				qa["implements:"+name] = join(v.Implements)
+			}
+			if len(v.ImplementedBy) > 0 {
+				qa["implemented-by:"+name] = join(v.ImplementedBy)
+			}
+			if len(v.Methods) > 0 {
+				qa["methods:"+name] = join(v.Methods)
+			}
+			if len(v.Fields) > 0 {
+				qa["fields:"+name] = join(v.Fields)
+			}
+			if len(v.Imports) > 0 {
+				qa["imports:"+name] = join(v.Imports)
+			}
+			if len(v.ImportedBy) > 0 {
+				qa["imported-by:"+name] = join(v.ImportedBy)
+			}
 		}
 	}
 	return qa
+}
+
+func qualifiedName(v domain.View) string {
+	return domain.QualifiedName(v.EntityID, v.Package, v.EntityName)
 }
 
 func sortAll(v *domain.View) {
@@ -204,6 +301,12 @@ func sortAll(v *domain.View) {
 	sort.Strings(v.CalledBy)
 	sort.Strings(v.Files)
 	sort.Strings(v.Owners)
+	sort.Strings(v.Implements)
+	sort.Strings(v.ImplementedBy)
+	sort.Strings(v.Methods)
+	sort.Strings(v.Fields)
+	sort.Strings(v.Imports)
+	sort.Strings(v.ImportedBy)
 	sort.Slice(v.Relationships, func(i, j int) bool {
 		if v.Relationships[i].ID != v.Relationships[j].ID {
 			return v.Relationships[i].ID < v.Relationships[j].ID

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -10,38 +11,47 @@ import (
 )
 
 func Run(ctx context.Context, graphPath string, extractorBuild ...string) error {
-	idx, err := query.LoadGraph(graphPath)
+	return RunMany(ctx, []string{graphPath}, extractorBuild...)
+}
+
+func RunMany(ctx context.Context, graphPaths []string, extractorBuild ...string) error {
+	catalog, err := loadGraphCatalog(graphPaths)
 	if err != nil {
-		return fmt.Errorf("load graph: %w", err)
+		return err
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "codeatlas",
-		Version: "0.3.0",
+		Version: "0.4.0",
 	}, nil)
 
-	registerTools(server, idx, graphPath, extractorBuild...)
+	registerCatalogTools(server, catalog, extractorBuild...)
 
 	return server.Run(ctx, &mcp.StdioTransport{})
 }
 
 func registerTools(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
-	registerSearch(s, idx)
-	registerEntity(s, idx)
-	registerContext(s, idx)
-	registerWhere(s, idx)
-	registerStats(s, idx)
-	registerFreshness(s, idx, graphPath, extractorBuild...)
-	registerTemporal(s, idx)
-	registerInvestigate(s, idx)
-	registerExplain(s, idx)
-	registerImpact(s, idx)
-	registerView(s, idx)
-	registerAsk(s, idx)
-	registerReview(s, idx, graphPath, extractorBuild...)
+	registerCatalogTools(s, singleGraphCatalog(idx, graphPath), extractorBuild...)
+}
+
+func registerCatalogTools(s *mcp.Server, catalog *graphCatalog, extractorBuild ...string) {
+	registerSearch(s, catalog)
+	registerEntity(s, catalog)
+	registerContext(s, catalog)
+	registerWhere(s, catalog)
+	registerStats(s, catalog)
+	registerFreshness(s, catalog, extractorBuild...)
+	registerTemporal(s, catalog)
+	registerInvestigate(s, catalog)
+	registerExplain(s, catalog)
+	registerImpact(s, catalog)
+	registerView(s, catalog)
+	registerAsk(s, catalog)
+	registerReview(s, catalog, extractorBuild...)
 }
 
 type entityInput struct {
+	Repository         string   `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
 	ID                 string   `json:"id,omitempty" jsonschema:"exact entity ID, e.g. controller:hostedclusters.HostedClusterReconciler"`
 	IDs                []string `json:"ids,omitempty" jsonschema:"list of entity IDs to fetch"`
 	Brief              bool     `json:"brief,omitempty" jsonschema:"if true, return only ID, file, line, description (saves tokens)"`
@@ -49,11 +59,16 @@ type entityInput struct {
 	RelationshipLimit  int      `json:"relationship_limit,omitempty" jsonschema:"maximum relationships to return (default 40, maximum 100)"`
 }
 
-func registerEntity(s *mcp.Server, idx *query.Index) {
+func registerEntity(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_entity",
 		Description: "Get full details for a CodeAtlas entity by exact ID. Shows name, kind, package, file, description, watches, calls, and a bounded evidence-bearing relationship page. Use brief=true for compact output; use relationship_offset to continue high-degree relationship results.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input entityInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		if len(input.IDs) > 0 {
 			const maxBatch = 50
 			ids := input.IDs
@@ -128,15 +143,21 @@ func registerEntity(s *mcp.Server, idx *query.Index) {
 }
 
 type contextInput struct {
-	EntityID string `json:"entity_id" jsonschema:"entity ID to center the subgraph on"`
-	Depth    int    `json:"depth,omitempty" jsonschema:"BFS traversal depth (default 1, max 3)"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	EntityID   string `json:"entity_id" jsonschema:"entity ID to center the subgraph on"`
+	Depth      int    `json:"depth,omitempty" jsonschema:"BFS traversal depth (default 1, max 3)"`
 }
 
-func registerContext(s *mcp.Server, idx *query.Index) {
+func registerContext(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_context",
 		Description: "Get a subgraph around a CodeAtlas entity. Shows the entity and all connected entities within the given depth.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input contextInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		depth := input.Depth
 		if depth <= 0 {
 			depth = 1
@@ -151,17 +172,23 @@ func registerContext(s *mcp.Server, idx *query.Index) {
 }
 
 type searchInput struct {
-	Query  string `json:"query,omitempty" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
-	Kind   string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource, template"`
-	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	Query      string `json:"query,omitempty" jsonschema:"search text, matches name, description, package, ID, imports, literals, and properties. Space-separated terms are AND-ed (all must match)."`
+	Kind       string `json:"kind,omitempty" jsonschema:"entity kind: controller, crd, function, package, test, document, resource, template"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
-func registerSearch(s *mcp.Server, idx *query.Index) {
+func registerSearch(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_search",
 		Description: "Find entities in the codebase by text and/or kind. Returns bounded entity summaries with file locations and total/nextOffset pagination metadata; use offset to continue a result set and atlas_entity for full details.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
 		if err != nil {
 			return nil, nil, err
@@ -180,17 +207,23 @@ func registerSearch(s *mcp.Server, idx *query.Index) {
 }
 
 type whereInput struct {
-	Path   string `json:"path" jsonschema:"file path substring to search for"`
-	Detail bool   `json:"detail,omitempty" jsonschema:"if true, return full entity details (name, calls, watches, description) instead of brief ID|file:line. Use for deep-diving a single file."`
-	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	Path       string `json:"path" jsonschema:"file path substring to search for"`
+	Detail     bool   `json:"detail,omitempty" jsonschema:"if true, return full entity details (name, calls, watches, description) instead of brief ID|file:line. Use for deep-diving a single file."`
+	Offset     int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
-func registerWhere(s *mcp.Server, idx *query.Index) {
+func registerWhere(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_where",
 		Description: "Find entities by file path. Returns entities defined in files matching the path substring with total/nextOffset pagination metadata. Use offset to continue and detail=true for full entity info.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input whereInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
 		if err != nil {
 			return nil, nil, err
@@ -215,20 +248,26 @@ func registerWhere(s *mcp.Server, idx *query.Index) {
 }
 
 type temporalInput struct {
-	Kind   string `json:"kind,omitempty" jsonschema:"entity kind filter: controller, function, package, etc."`
-	Name   string `json:"name,omitempty" jsonschema:"function/entity name substring to filter"`
-	Since  string `json:"since,omitempty" jsonschema:"ISO date cutoff, e.g. 2026-05-01"`
-	Author string `json:"author,omitempty" jsonschema:"author email/name substring"`
-	Stale  bool   `json:"stale,omitempty" jsonschema:"if true, sort by oldest modification instead of most changes"`
-	Offset int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
-	Limit  int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	Kind       string `json:"kind,omitempty" jsonschema:"entity kind filter: controller, function, package, etc."`
+	Name       string `json:"name,omitempty" jsonschema:"function/entity name substring to filter"`
+	Since      string `json:"since,omitempty" jsonschema:"ISO date cutoff, e.g. 2026-05-01"`
+	Author     string `json:"author,omitempty" jsonschema:"author email/name substring"`
+	Stale      bool   `json:"stale,omitempty" jsonschema:"if true, sort by oldest modification instead of most changes"`
+	Offset     int    `json:"offset,omitempty" jsonschema:"zero-based result offset for deterministic pagination"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum results to return (default 20, maximum 100)"`
 }
 
-func registerTemporal(s *mcp.Server, idx *query.Index) {
+func registerTemporal(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_temporal",
 		Description: "Search entities by git history: who changed what and when. Requires --temporal scan and returns total/nextOffset pagination metadata.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input temporalInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		offset, limit, err := query.NormalizePage(input.Offset, input.Limit)
 		if err != nil {
 			return nil, nil, err
@@ -267,13 +306,38 @@ func joinLines(lines []string) string {
 	return result
 }
 
-type statsInput struct{}
+type statsInput struct {
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+}
 
-func registerStats(s *mcp.Server, idx *query.Index) {
+func registerStats(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_stats",
-		Description: "Get CodeAtlas graph statistics: entity counts by kind and relationship counts by type.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ statsInput) (*mcp.CallToolResult, any, error) {
+		Description: "Get CodeAtlas graph statistics: entity counts by kind and relationship counts by type. With multiple loaded graphs, omit repository to list stats for every graph; use a returned repository ID or Go module path on later calls.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input statsInput) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(input.Repository) == "" && len(catalog.targets) > 1 {
+			type repositoryStats struct {
+				Repository repositorySummary `json:"repository"`
+				Stats      *query.GraphStats `json:"stats"`
+			}
+			entries := make([]repositoryStats, 0, len(catalog.targets))
+			var text strings.Builder
+			for _, target := range catalog.targets {
+				stats := target.Index.Stats()
+				summary := repositorySummary{ID: target.Key, RepositoryID: target.RepositoryID, RepositoryRemote: target.RepositoryRemote, GoModule: target.GoModule, Commit: stats.Commit}
+				entries = append(entries, repositoryStats{Repository: summary, Stats: stats})
+				fmt.Fprintf(&text, "Repository: %s\n%s\n", summary.ID, query.FormatStats(stats))
+			}
+			return &mcp.CallToolResult{
+				Content:           []mcp.Content{&mcp.TextContent{Text: text.String()}},
+				StructuredContent: map[string]any{"repositories": entries},
+			}, nil, nil
+		}
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		text := query.FormatStats(idx.Stats())
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
@@ -283,15 +347,21 @@ func registerStats(s *mcp.Server, idx *query.Index) {
 }
 
 type investigateInput struct {
-	EntityID string `json:"entity_id" jsonschema:"entity ID to investigate"`
-	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	EntityID   string `json:"entity_id" jsonschema:"entity ID to investigate"`
+	Detail     bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
-func registerInvestigate(s *mcp.Server, idx *query.Index) {
+func registerInvestigate(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_investigate",
 		Description: "Get bounded details about an entity in one call: relationships grouped by type, callers, tests, and same-file siblings. Default text is compact; use detail=true for verbose text, or atlas_entity for full entity fields.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input investigateInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		r := idx.Investigate(input.EntityID)
 		if r == nil {
 			return &mcp.CallToolResult{
@@ -310,16 +380,22 @@ func registerInvestigate(s *mcp.Server, idx *query.Index) {
 }
 
 type explainInput struct {
-	EntityID string `json:"entity_id" jsonschema:"entity ID to explain"`
-	Depth    int    `json:"depth,omitempty" jsonschema:"traversal depth (default 2, max 3)"`
-	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	EntityID   string `json:"entity_id" jsonschema:"entity ID to explain"`
+	Depth      int    `json:"depth,omitempty" jsonschema:"traversal depth (default 2, max 3)"`
+	Detail     bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
-func registerExplain(s *mcp.Server, idx *query.Index) {
+func registerExplain(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_explain",
 		Description: "Follow the reconciliation chain from an entity: controller implementation methods (contains), reconciles, creates, calls, and tested_by. Returns a bounded tree showing the architectural narrative. Default text is compact; use detail=true for verbose text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input explainInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		r := idx.Explain(input.EntityID, input.Depth)
 		if r.Root == nil {
 			return &mcp.CallToolResult{
@@ -338,15 +414,21 @@ func registerExplain(s *mcp.Server, idx *query.Index) {
 }
 
 type impactInput struct {
-	EntityID string `json:"entity_id" jsonschema:"entity ID to analyze blast radius for"`
-	Detail   bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	EntityID   string `json:"entity_id" jsonschema:"entity ID to analyze blast radius for"`
+	Detail     bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
 }
 
-func registerImpact(s *mcp.Server, idx *query.Index) {
+func registerImpact(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_impact",
 		Description: "Blast radius analysis: walk the call chain upstream to find bounded controllers, tests, resources, files, owners, and supporting relationship evidence. Default text is compact; use detail=true for verbose text.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input impactInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		r := idx.Impact(input.EntityID)
 		if r == nil {
 			return &mcp.CallToolResult{
@@ -365,14 +447,20 @@ func registerImpact(s *mcp.Server, idx *query.Index) {
 }
 
 type viewInput struct {
-	Entity string `json:"entity" jsonschema:"entity ID or name to get pre-computed knowledge view for"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	Entity     string `json:"entity" jsonschema:"entity ID or name to get pre-computed knowledge view for"`
 }
 
-func registerView(s *mcp.Server, idx *query.Index) {
+func registerView(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_view",
 		Description: "Get a pre-computed engineering view for a controller or CRD: what it manages, what manages it, tests, files, and ownership. Generated during scanning, zero graph traversal.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input viewInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		v := idx.ResolveView(input.Entity)
 		if v == nil {
 			return &mcp.CallToolResult{
@@ -388,6 +476,7 @@ func registerView(s *mcp.Server, idx *query.Index) {
 }
 
 type askInput struct {
+	Repository       string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
 	Entity           string `json:"entity,omitempty" jsonschema:"exact entity name or ID; optional when question is provided"`
 	Question         string `json:"question,omitempty" jsonschema:"complete scoped question; selects a deduplicated evidence manifest"`
 	Scope            string `json:"scope,omitempty" jsonschema:"package, file path, or entity scope"`
@@ -399,11 +488,16 @@ type askInput struct {
 	Detail           bool   `json:"detail,omitempty" jsonschema:"true for full verbose output with complete entity IDs and paths. Default: compact"`
 }
 
-func registerAsk(s *mcp.Server, idx *query.Index) {
+func registerAsk(s *mcp.Server, catalog *graphCatalog) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "atlas_ask",
 		Description: "Retrieve engineering evidence. Prefer question with optional scope for a versioned, deduplicated manifest of implementation, definitions, relationships, tests, and source spans under budget_bytes. Use graph_fingerprint and offset to continue. Entity alone retains the legacy entity report; evidence=true selects the manifest.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := target.Index
 		if input.Question != "" || input.Evidence || input.Scope != "" || input.BudgetBytes != 0 || input.Offset != 0 || input.GraphFingerprint != "" {
 			packet, err := idx.Evidence(query.EvidenceRequest{Question: input.Question, Entity: input.Entity, Scope: input.Scope,
 				Intent: input.Intent, BudgetBytes: input.BudgetBytes, Offset: input.Offset, GraphFingerprint: input.GraphFingerprint})

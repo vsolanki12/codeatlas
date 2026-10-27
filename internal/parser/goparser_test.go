@@ -147,8 +147,8 @@ func TestParseFixtures(t *testing.T) {
 	}{
 		{"empty file", "testdata/empty.go", 1, 0, 0},
 		{"standalone functions", "testdata/functions.go", 4, 3, 0},
-		{"methods", "testdata/methods.go", 3, 2, 0},
-		{"controller with watches", "testdata/controller.go", 12, 9, 1},
+		{"methods", "testdata/methods.go", 4, 2, 0},
+		{"controller with watches", "testdata/controller.go", 18, 9, 1},
 	}
 
 	p := NewGoParser()
@@ -580,4 +580,48 @@ func TestParseEntityDetails(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A library-go factory controller registers a sync method from a constructor
+// instead of declaring Reconcile, so controller-runtime matching never sees it.
+func TestParseDetectsLibraryGoFactoryControllers(t *testing.T) {
+	entities, err := NewGoParser().Parse(domain.File{RelativePath: "testdata/factorycontroller.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	loops := make(map[string]string)
+	for _, entity := range entities {
+		if entity.Kind == domain.KindController {
+			loops[entity.Name] = entity.ReconcileMethod
+		}
+	}
+
+	want := map[string]string{
+		"TargetConfigController": "sync",
+		"RevocationController":   "syncRevocationRequest",
+	}
+	if len(loops) != len(want) {
+		t.Fatalf("controllers = %v, want %v", loops, want)
+	}
+	for name, method := range want {
+		if loops[name] != method {
+			t.Errorf("controller %s loop method = %q, want %q", name, loops[name], method)
+		}
+	}
+	if _, found := loops["Unrelated"]; found {
+		t.Error("a WithSync chain that never reaches ToController must not create a controller")
+	}
+}
+
+func TestParseRecordsReconcileAsTheControllerRuntimeLoopMethod(t *testing.T) {
+	entities, err := NewGoParser().Parse(domain.File{RelativePath: "testdata/controller.go"})
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	for _, entity := range entities {
+		if entity.Kind == domain.KindController && entity.ReconcileMethod != "Reconcile" {
+			t.Fatalf("controller %s loop method = %q, want Reconcile", entity.Name, entity.ReconcileMethod)
+		}
+	}
 }

@@ -195,3 +195,58 @@ func TestParseKind(t *testing.T) {
 		}
 	}
 }
+
+func TestQualifiedNameDisambiguatesSharedTypeNames(t *testing.T) {
+	for _, testCase := range []struct {
+		id          string
+		packagePath string
+		name        string
+		want        string
+	}{
+		{"controller:example.com/repo/pkg/operator/controller/canary.reconciler", "example.com/repo/pkg/operator/controller/canary", "reconciler", "canary/reconciler"},
+		{"controller:example.com/repo/pkg/dns.reconciler", "example.com/repo/pkg/dns", "reconciler", "dns/reconciler"},
+		{"type:canary.reconciler", "canary", "reconciler", "canary/reconciler"},
+		{"type:example.com/repo/reconciler.reconciler", "example.com/repo/reconciler", "reconciler", ""},
+		{"type:.reconciler", "", "reconciler", ""},
+		{"package:example.com/repo/pkg", "example.com/repo/pkg", "", ""},
+		// A field is declared in a type, not the package. Qualifying it by
+		// package alone collides with the type it is named after.
+		{"field:example.com/repo/v3rpc.quotaLeaseServer.LeaseServer", "example.com/repo/v3rpc", "LeaseServer", "v3rpc/quotaLeaseServer.LeaseServer"},
+		{"type:example.com/repo/v3rpc.LeaseServer", "example.com/repo/v3rpc", "LeaseServer", "v3rpc/LeaseServer"},
+		{"function:example.com/repo/v3rpc.Store.Get", "example.com/repo/v3rpc", "Get", "v3rpc/Store.Get"},
+	} {
+		if got := domain.QualifiedName(testCase.id, testCase.packagePath, testCase.name); got != testCase.want {
+			t.Errorf("QualifiedName(%q, %q, %q) = %q, want %q", testCase.id, testCase.packagePath, testCase.name, got, testCase.want)
+		}
+	}
+}
+
+// Every OpenShift operator controller package declares its own unexported
+// reconciler, so the bare name identifies nothing while the qualified name
+// identifies exactly one entity.
+func TestResolveUsesQualifiedNameWhenBareNameIsShared(t *testing.T) {
+	graph := testGraph()
+	for _, pkg := range []string{"repo/pkg/controller/canary", "repo/pkg/controller/dns"} {
+		graph.Entities = append(graph.Entities, domain.Entity{
+			ID:      "controller:" + pkg + ".reconciler",
+			Name:    "reconciler",
+			Kind:    domain.KindController,
+			Package: pkg,
+			Source:  domain.Source{Parser: "go", File: pkg + "/controller.go", Line: 1},
+		})
+	}
+	idx := newIndex(graph)
+
+	entity, candidates := idx.Resolve("reconciler")
+	if entity != nil {
+		t.Fatalf("shared bare name must stay ambiguous, resolved to %s", entity.ID)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("expected 2 ambiguous candidates, got %d", len(candidates))
+	}
+
+	entity, _ = idx.Resolve("canary/reconciler")
+	if entity == nil || entity.ID != "controller:repo/pkg/controller/canary.reconciler" {
+		t.Fatalf("qualified name did not resolve, got %v", entity)
+	}
+}

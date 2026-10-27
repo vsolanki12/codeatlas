@@ -45,6 +45,17 @@ func (g Graph) Validate() error {
 	if g.EntityIdentity != "" && g.EntityIdentity != CurrentEntityIdentity {
 		problems = append(problems, fmt.Sprintf("unsupported entity identity: %q", g.EntityIdentity))
 	}
+	excludedPaths := make(map[string]bool, len(g.ExcludedPaths))
+	for _, excluded := range g.ExcludedPaths {
+		normalized := path.Clean(strings.ReplaceAll(excluded, "\\", "/"))
+		if strings.TrimSpace(excluded) == "" || normalized == "." || normalized != excluded || path.IsAbs(normalized) || normalized == ".." || strings.HasPrefix(normalized, "../") {
+			problems = append(problems, fmt.Sprintf("graph has invalid excluded path: %q", excluded))
+		}
+		if excludedPaths[excluded] {
+			problems = append(problems, fmt.Sprintf("graph has duplicate excluded path: %q", excluded))
+		}
+		excludedPaths[excluded] = true
+	}
 	if g.ScanComplete && len(g.ScanWarnings) > 0 {
 		problems = append(problems, "complete graph contains scan warnings")
 	}
@@ -76,7 +87,7 @@ func (g Graph) Validate() error {
 		if strings.TrimSpace(e.Name) == "" {
 			problems = append(problems, fmt.Sprintf("entity %s has empty name", e.ID))
 		}
-		if e.Kind < KindOperator || e.Kind > KindField {
+		if e.Kind < KindOperator || e.Kind > KindInterface {
 			problems = append(problems, fmt.Sprintf("entity %s has invalid kind: %d", e.ID, e.Kind))
 		} else if e.Kind == KindUnknown {
 			problems = append(problems, fmt.Sprintf("entity %s has unknown kind", e.ID))
@@ -142,8 +153,11 @@ func (g Graph) Validate() error {
 	}
 	if g.ScanCoverage != nil {
 		coverage := g.ScanCoverage
-		if coverage.Discovered < 0 || coverage.Parsed < 0 || coverage.Reused < 0 || coverage.Ignored < 0 || coverage.Failed < 0 {
+		if coverage.Discovered < 0 || coverage.Parsed < 0 || coverage.Reused < 0 || coverage.Ignored < 0 || coverage.Failed < 0 || coverage.SourceFiles < 0 || coverage.GoFiles < 0 || coverage.UnsupportedSource < 0 {
 			problems = append(problems, "scan coverage contains a negative count")
+		}
+		if coverage.SourceFiles > coverage.Discovered || coverage.GoFiles > coverage.SourceFiles || coverage.UnsupportedSource > coverage.Ignored {
+			problems = append(problems, "scan source coverage counts are inconsistent")
 		}
 		if coverage.Discovered != len(g.ScanFiles) {
 			problems = append(problems, fmt.Sprintf("scan coverage discovered=%d but scan files=%d", coverage.Discovered, len(g.ScanFiles)))
@@ -151,13 +165,17 @@ func (g Graph) Validate() error {
 		if coverage.Discovered != coverage.Parsed+coverage.Reused+coverage.Ignored+coverage.Failed {
 			problems = append(problems, "scan coverage counts do not add up to discovered files")
 		}
+		// Completeness covers the files this scanner claims to parse. Source in
+		// a language CodeAtlas has no parser for is recorded in
+		// UnsupportedSource and describes scope, not a missing fact.
 		if g.ScanComplete && coverage.Failed > 0 {
-			problems = append(problems, "complete graph contains failed scan files")
+			problems = append(problems, "complete graph contains failed source files")
 		}
 	}
 	scanFiles := make(map[string]bool, len(g.ScanFiles))
 	scanStatuses := make(map[string]ScanFileStatus, len(g.ScanFiles))
 	scanCounts := make(map[ScanFileStatus]int)
+	categoryCounts := make(map[ScanFileCategory]int)
 	for _, file := range g.ScanFiles {
 		if file.EntityCount < 0 {
 			problems = append(problems, fmt.Sprintf("scan file %s has a negative entity count", file.Path))
@@ -173,6 +191,19 @@ func (g Graph) Validate() error {
 		scanFiles[file.Path] = true
 		scanStatuses[file.Path] = file.Status
 		scanCounts[file.Status]++
+		if file.Category != "" {
+			switch file.Category {
+			case ScanCategorySource, ScanCategoryTest, ScanCategoryConfiguration, ScanCategoryDocumentation, ScanCategoryAsset:
+				categoryCounts[file.Category]++
+			default:
+				problems = append(problems, fmt.Sprintf("scan file %s has invalid category: %q", file.Path, file.Category))
+			}
+			if file.Category == ScanCategorySource || file.Category == ScanCategoryTest {
+				if file.Status == ScanFileIgnored && file.Category != ScanCategorySource {
+					problems = append(problems, fmt.Sprintf("scan test file %s is ignored without a parser", file.Path))
+				}
+			}
+		}
 		switch file.Status {
 		case ScanFileParsed, ScanFileReused:
 			if strings.TrimSpace(file.Parser) == "" {
@@ -203,6 +234,25 @@ func (g Graph) Validate() error {
 			if scanCounts[status] != expected {
 				problems = append(problems, fmt.Sprintf("scan coverage %s=%d but scan files=%d", status, expected, scanCounts[status]))
 			}
+		}
+		if categoryCounts[ScanCategorySource]+categoryCounts[ScanCategoryTest] != coverage.SourceFiles && (coverage.SourceFiles > 0 || len(categoryCounts) > 0) {
+			problems = append(problems, "scan coverage sourceFiles does not match scan file categories")
+		}
+		goFiles := 0
+		unsupportedSources := 0
+		for _, file := range g.ScanFiles {
+			if (file.Category == ScanCategorySource || file.Category == ScanCategoryTest) && strings.HasSuffix(strings.ToLower(file.Path), ".go") {
+				goFiles++
+			}
+			if file.Category == ScanCategorySource && file.Status == ScanFileIgnored {
+				unsupportedSources++
+			}
+		}
+		if (coverage.GoFiles > 0 || len(categoryCounts) > 0) && coverage.GoFiles != goFiles {
+			problems = append(problems, "scan coverage goFiles does not match scan file categories")
+		}
+		if (coverage.UnsupportedSource > 0 || len(categoryCounts) > 0) && coverage.UnsupportedSource != unsupportedSources {
+			problems = append(problems, "scan coverage unsupportedSource does not match scan file categories")
 		}
 	}
 

@@ -1,8 +1,8 @@
 # CodeAtlas in 5 Minutes
 
-Understand any codebase in minutes instead of hours by generating architecture directly from source code.
+Understand a Go codebase in minutes instead of hours by generating architecture directly from source code.
 
-CodeAtlas is a code intelligence platform that works with any Go repository. It parses Go source, YAML, docs, and tests to produce a structured graph of every entity and relationship in the codebase.
+CodeAtlas is a code intelligence platform for Go repositories. It parses Go source, YAML, Markdown, and tests into a graph of source-backed entities and relationships. Unsupported source formats are reported as incomplete coverage rather than treated as parsed facts.
 
 CodeAtlas never invents architecture. Every entity and relationship must be traceable back to source code.
 
@@ -38,7 +38,7 @@ Source Repository
 | Layer | What | Changes |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Every scan |
-| **Retrieval** | 13 MCP tools | Quarterly |
+| **Retrieval** | 13 MCP tools with multi-repository selection | Quarterly |
 | **Guidance** | Intent-aware query planning (`atlas_ask`) | As capabilities evolve |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Consumer-driven |
 
@@ -49,7 +49,7 @@ Source Repository
 | MCP tools | 13 |
 | CLI commands | 15 |
 | Go packages | 11 |
-| Schema version | 1.5.0 |
+| Schema version | 1.8.0 |
 
 Run `atlas serve` then `atlas_stats` for current entity/relationship counts, or
 `atlas_freshness` reports graph provenance; use `atlas verify` to enforce the

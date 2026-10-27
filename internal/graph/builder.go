@@ -99,11 +99,19 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 			continue
 		}
 		controllerIdentity := strings.TrimPrefix(e.ID, "controller:")
+		// The control-loop method is whatever the parser observed: Reconcile for
+		// controller-runtime, the registered sync method for a library-go
+		// factory controller. Legacy graphs predate the field and still describe
+		// controller-runtime controllers.
+		loopMethod := e.ReconcileMethod
+		if loopMethod == "" {
+			loopMethod = "Reconcile"
+		}
 		for _, method := range []struct {
 			name   string
 			reason string
 		}{
-			{name: "Reconcile", reason: "method declaration on the controller receiver is the reconciliation implementation"},
+			{name: loopMethod, reason: "method declaration on the controller receiver is the reconciliation implementation"},
 			{name: "SetupWithManager", reason: "method declaration on the controller receiver configures manager watches"},
 		} {
 			functionID := "function:" + controllerIdentity + "." + method.name
@@ -206,6 +214,54 @@ func (b *RelationshipBuilder) Build(entities []domain.Entity) []domain.Relations
 				Evidence:   evidence,
 			})
 		}
+	}
+
+	// Named types contain their declared fields and methods. Both members
+	// already carry the owning type in their deterministic ID, so membership is
+	// an exact identity match rather than a name guess.
+	typeIdentities := make(map[string]domain.Entity)
+	for _, e := range entities {
+		if e.Kind == domain.KindType || e.Kind == domain.KindInterface {
+			typeIdentities[e.Package+"."+e.Name] = e
+		}
+	}
+	for _, e := range entities {
+		var prefix, reason string
+		switch e.Kind {
+		case domain.KindField:
+			prefix, reason = "field:", "field declared in this type"
+		case domain.KindFunction:
+			prefix, reason = "function:", "method declared on this type's receiver"
+		default:
+			continue
+		}
+		owner, ok := memberOwner(e, prefix)
+		if !ok {
+			continue
+		}
+		target, ok := typeIdentities[owner]
+		if !ok || e.Source.File == "" || e.Source.Line <= 0 {
+			continue
+		}
+		relID := domain.NewRelationshipID(target.ID, domain.RelContains, e.ID)
+		if seen[relID] {
+			continue
+		}
+		seen[relID] = true
+		relationships = append(relationships, domain.Relationship{
+			ID:         relID,
+			From:       target.ID,
+			To:         e.ID,
+			Type:       domain.RelContains,
+			Confidence: domain.ConfidenceProven,
+			Evidence: domain.Evidence{
+				Parser:  "go-ast",
+				File:    e.Source.File,
+				Line:    e.Source.Line,
+				Snippet: ReadSnippet(filepath.Join(b.RootDir, e.Source.File), e.Source.Line),
+				Reason:  reason,
+			},
+		})
 	}
 
 	// Build function indexes for call matching
@@ -442,6 +498,24 @@ func (b *RelationshipBuilder) evidenceForNamedSite(entity domain.Entity, sites [
 		Snippet: ReadSnippet(filepath.Join(b.RootDir, entity.Source.File), entity.Source.Line),
 		Reason:  reason + " (entity-level fallback)",
 	}
+}
+
+// memberOwner returns the "package.Type" identity that declares a field or
+// method entity. The owning type is read from the entity's own ID relative to
+// its package, so a package path containing dots cannot be mistaken for one.
+func memberOwner(member domain.Entity, prefix string) (string, bool) {
+	if member.Package == "" {
+		return "", false
+	}
+	remainder, found := strings.CutPrefix(member.ID, prefix+member.Package+".")
+	if !found {
+		return "", false
+	}
+	dot := strings.Index(remainder, ".")
+	if dot <= 0 {
+		return "", false
+	}
+	return member.Package + "." + remainder[:dot], true
 }
 
 func resourcesByKind(entities []domain.Entity, kind string) []domain.Entity {

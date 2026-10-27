@@ -11,7 +11,7 @@ import (
 // CurrentExtractorVersion identifies the extraction contract, independently of
 // the target repository commit and wire schema. Bump it when unchanged source
 // would produce different parser observations or identities.
-const CurrentExtractorVersion = "go-evidence-v2"
+const CurrentExtractorVersion = "go-evidence-v3"
 
 // BuildContext records the effective environment used for Go type enrichment.
 // AST parsing still inventories all source files, including inactive variants.

@@ -2,7 +2,7 @@
 
 This file provides guidance to AI coding agents when working with code in this repository. `CLAUDE.md` is a symlink to this file so that Claude Code auto-loads it; the `AGENTS.md` name is canonical.
 
-CodeAtlas is a deterministic engineering knowledge layer for large Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to CLI users, AI assistants, and review tooling via 13 MCP tools.
+CodeAtlas is a deterministic engineering knowledge layer for Go repositories. It parses Go AST, YAML, Markdown, and tests into a typed, evidence-backed graph, then serves that graph to CLI users, AI assistants, and review tooling via 13 MCP tools.
 
 This file is intentionally minimal — detailed guidance lives in the referenced files below and should be updated there, not here.
 
@@ -47,27 +47,30 @@ The codebase follows a strict dependency hierarchy. Violating these rules breaks
 | `cmd/atlas` | CLI entry point: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, verify, serve, query, review |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup |
 | `internal/discovery` | Walks the repository, returns files with metadata |
+| `internal/profile` | Loads repository scope exclusions and optional stable repository IDs |
+| `internal/repoid` | Resolves portable repository identity from profile, Git remote, or Go module |
 | `internal/parser` | Go AST, YAML, Markdown, Test parsers — produces entities |
 | `internal/graph` | Builds typed, evidenced relationships between entities; upgrades statically resolved calls with `go/types` evidence |
-| `internal/origin` | Import path classifier (stdlib vs known repos vs external) |
+| `internal/origin` | Utility for known import path classification; results are not yet attached to graph imports |
+| `internal/graph` (export data) | Locates dependency export data with `go list -deps -test -export` so the type checker can resolve module dependencies |
 | `internal/temporal` | Optional git history enrichment (LastAuthor, LastModified, ChangeCount) |
 | `internal/views` | Pre-computed controller/CRD knowledge views and question index |
 | `internal/storage` | JSON graph read/write |
 | `internal/query` | In-memory index, search, explain, impact, investigate, ask |
 | `internal/freshness` | Read-only graph/check-out provenance and file-state verification |
 | `internal/review` | PR diff parsing, entity-to-hunk mapping, blast radius, test coverage |
-| `internal/mcpserver` | 13 MCP tools served via stdio transport: graph queries, freshness, and deterministic review |
+| `internal/mcpserver` | 13 MCP tools served via stdio transport: multi-repository graph queries, freshness, and deterministic review |
 
 ## Graph Schema Invariants
 
-The Atlas Graph JSON (schema 1.6.0) is the product. All consumers read the same file. Key rules:
+The Atlas Graph JSON (schema 1.8.0) is the product. All consumers read the same file. Key rules:
 
 1. **No entity without a source.** If the scanner can't point to a file and line, the entity is not created.
 2. **No relationship without evidence.** Every edge carries `evidence` (parser, file, line, snippet, reason).
 3. **No manual entries.** If a fact must be added by hand, that's a missing parser — not a data entry task.
 4. **IDs are deterministic.** Same commit produces the same graph. No UUIDs, no timestamps in IDs.
 5. **Store forward, compute inverse.** Supported forward edges such as `calls`, `imports`, `owns`, and `tested_by` are stored once; query direction computes the reverse traversal instead of persisting a second copy.
-6. **Verify before implementation.** `atlas verify` is the machine-readable/non-zero-exit contract for current schema, repository identity, freshness, file state, and complete scan coverage.
+6. **Verify before implementation.** `atlas verify` is the machine-readable/non-zero-exit contract for current schema, portable repository identity, freshness, profile, Go source presence, file state, and parse success. Source files in languages with no registered parser are reported as scope, not as incompleteness.
 
 See [docs/data-model.md](docs/data-model.md) for the full schema specification.
 

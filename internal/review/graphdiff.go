@@ -63,7 +63,7 @@ func RunWithBaseGraph(base, head, repo, graphPath, baseGraphPath string, expecte
 	if baseMeta.EntityIdentity != domain.CurrentEntityIdentity || baseMeta.SchemaVersion != domain.CurrentSchemaVersion || !baseMeta.ScanComplete || baseGraph.ExtractorVersion != domain.CurrentExtractorVersion || baseGraph.ExtractorBuild == "" {
 		return nil, fmt.Errorf("base graph requires a complete scan with current schema and entity identity")
 	}
-	if existingRepositoryPath(baseMeta.Repository) != existingRepositoryPath(repo) {
+	if !graphRepositoryMatches(baseGraph, repo) {
 		return nil, fmt.Errorf("base graph repository differs from the review checkout")
 	}
 	if baseGraph.ExtractionSignature == "" || baseGraph.ExtractionSignature != headGraph.ExtractionSignature {

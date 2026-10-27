@@ -6,24 +6,24 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/vsolanki12/codeatlas/internal/query"
 	"github.com/vsolanki12/codeatlas/internal/review"
 )
 
 const maxMCPReviewDiffBytes = 4 * 1024 * 1024
 
 type reviewInput struct {
-	PR        string `json:"pr,omitempty" jsonschema:"GitHub pull request in owner/repository/number form"`
-	Diff      string `json:"diff,omitempty" jsonschema:"raw unified diff text; use this instead of pr for a supplied diff"`
-	Base      string `json:"base,omitempty" jsonschema:"base git ref for verified local review; requires repo"`
-	BaseGraph string `json:"base_graph,omitempty" jsonschema:"graph scanned at the review merge base; local ref review only"`
-	Head      string `json:"head,omitempty" jsonschema:"head git ref for verified local review; defaults to HEAD"`
-	Repo      string `json:"repo,omitempty" jsonschema:"repository checkout path for verified local review"`
-	Detail    bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
-	OmitDiff  bool   `json:"omit_diff,omitempty" jsonschema:"true to omit the bounded diff excerpt and reduce tokens"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	PR         string `json:"pr,omitempty" jsonschema:"GitHub pull request in owner/repository/number form"`
+	Diff       string `json:"diff,omitempty" jsonschema:"raw unified diff text; use this instead of pr for a supplied diff"`
+	Base       string `json:"base,omitempty" jsonschema:"base git ref for verified local review; requires repo"`
+	BaseGraph  string `json:"base_graph,omitempty" jsonschema:"graph scanned at the review merge base; local ref review only"`
+	Head       string `json:"head,omitempty" jsonschema:"head git ref for verified local review; defaults to HEAD"`
+	Repo       string `json:"repo,omitempty" jsonschema:"repository checkout path for verified local review"`
+	Detail     bool   `json:"detail,omitempty" jsonschema:"true for verbose human-readable output; default is bounded"`
+	OmitDiff   bool   `json:"omit_diff,omitempty" jsonschema:"true to omit the bounded diff excerpt and reduce tokens"`
 }
 
-func registerReview(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
+func registerReview(s *mcp.Server, catalog *graphCatalog, extractorBuild ...string) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "atlas_review",
 		Description: "Run deterministic CodeAtlas PR review preparation. Choose exactly one mode: " +
@@ -37,11 +37,13 @@ func registerReview(s *mcp.Server, idx *query.Index, graphPath string, extractor
 		if err := input.validate(); err != nil {
 			return nil, nil, err
 		}
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx, graphPath := target.Index, target.GraphPath
 
-		var (
-			result *review.ReviewResult
-			err    error
-		)
+		var result *review.ReviewResult
 		switch {
 		case strings.TrimSpace(input.PR) != "":
 			result, err = review.RunFromPR(strings.TrimSpace(input.PR), graphPath)

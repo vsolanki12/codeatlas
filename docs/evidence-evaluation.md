@@ -6,6 +6,9 @@ LLM answer-quality comparison. The inputs were HyperShift at `c28a4f2`, includin
 its current checkout file state, schema 1.6.0, evidence version 1.0, and Go 1.26.4
 on darwin/arm64. Fixtures use revision-specific source coordinates.
 
+This is a historical retrieval report for schema 1.6.0. It does not evaluate
+the schema 1.8.0 repository-profile, source-coverage, or multi-graph changes.
+
 ## Correctness before size
 
 All six fixtures pass with the default 16,384-byte evidence budget and
@@ -61,7 +64,7 @@ entity and relationship, and rejected a mismatched merge-base graph.
 Both configured repository graphs pass current schema, file-state, and exact
 executable provenance verification. Type enrichment remains partial:
 HyperShift reports 47 fully checked package variants out of 683. External
-imports use host compiler export data, and unresolved calls remain reported.
+imports use toolchain export data from `go list`, and unresolved calls remain reported.
 Parser completeness does not imply complete typed or runtime coverage.
 
 See [machine-readable measurements](evidence-evaluation.json), the Assistant

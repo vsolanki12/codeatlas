@@ -150,7 +150,7 @@ atlas view -graph atlas-graph.json HostedClusterReconciler
 # Verify that the graph still describes the checkout before implementation work
 atlas freshness -graph atlas-graph.json -repo /path/to/your/project
 
-# Enforce current schema, verifiable checkout state, and complete scanning
+# Enforce repository identity, Go coverage, current provenance, and full source coverage
 atlas verify -graph atlas-graph.json -repo /path/to/your/project
 
 # Compact JSON for assistants and other token-sensitive consumers
@@ -162,6 +162,36 @@ atlas ask -graph atlas-graph.json HostedClusterReconciler -intent debug --json -
 the same status so consumers can reject stale or incomplete evidence before
 asking an LLM to reason over it. Use `--json` for machine-facing commands to
 avoid repeating human-readable formatting in prompts.
+
+### Set repository scope
+
+CodeAtlas reads an optional `.codeatlas.yaml` from the repository root. Use it
+to assign an explicit stable repository ID or exclude paths that are outside
+the Go graph's intended scope:
+
+```yaml
+version: 1
+repository_id: team/hypershift # optional; overrides the Git remote identity
+exclude:
+  - console
+  - hack/fixtures
+```
+
+`exclude` entries are repository-relative file or directory paths; a directory
+excludes all descendants. CodeAtlas always skips `.git`, `.worktrees`,
+`vendor`, `node_modules`, and `testdata`. A scan reports unsupported source
+files in `scanCoverage.unsupportedSource` as a scope boundary; they do not
+make the graph incomplete, because almost every Go repository ships shell,
+HTML, SQL, or proto alongside its Go. `atlas verify` fails on files that
+failed to parse and requires at least one Go file by default. Exclude
+intentionally out-of-scope paths in the profile. Ordinary unparsed assets
+remain visible in coverage and do not block verification unless
+`-fail-on-ignored` is requested.
+
+Graph identity uses the normalized `origin` Git remote when available, then
+the root Go module path. `repository_id` overrides both for repositories with
+multiple remotes, forks, or no stable remote. The normalized remote is still
+stored separately so GitHub PR review can validate the target repository.
 
 ### Review a PR
 
@@ -232,9 +262,19 @@ codex mcp list
 ```
 
 Restart the local Codex app or CLI, then use `/mcp` in the Codex TUI to confirm
-the server. The server loads one graph at startup; configure one server per
-repository graph when working across repositories. Prefer `atlas_ask`,
-`atlas_freshness`, and compact responses before requesting verbose details.
+the server. Load multiple repository graphs by repeating `-graph`:
+
+```bash
+/absolute/path/to/atlas serve \
+  --graph /graphs/hypershift.json \
+  --graph /graphs/api.json
+```
+
+Call `atlas_stats` without `repository` to list stats for every loaded graph.
+Use a stable repository ID or Go module path from that result in the
+`repository` field on graph-scoped tools.
+Prefer `atlas_ask`, `atlas_freshness`, and compact responses before requesting
+verbose details.
 
 The graph-query tools are read-only. `atlas_review` is deterministic, but `pr`
 mode may call the authenticated `gh` CLI to retrieve GitHub metadata and a diff.
@@ -288,7 +328,7 @@ review; it intentionally omits changed source text.
 | `atlas_where` | Find entities by file path with bounded, resumable pagination |
 | `atlas_context` | BFS subgraph around an entity |
 | `atlas_temporal` | Git history: most-changed, stalest, or recently-modified entities with bounded, resumable pagination |
-| `atlas_stats` | Graph statistics |
+| `atlas_stats` | Graph statistics; with multiple loaded graphs and no `repository`, returns stats for each graph |
 | `atlas_freshness` | Verify graph provenance and stored file state against a checkout |
 | `atlas_review` | Deterministic PR/diff review; supports `pr`, raw `diff`, and verified local `base`/`head` modes |
 
@@ -318,7 +358,8 @@ text/JSON formatting and no server needed.
 | `atlas serve` | Start the MCP server |
 | `atlas query <kind> [name]` | Legacy: lookup entities by kind (controller, function, crd, etc.); use relationship offset/limit for resumable evidence |
 
-All commands accept `--graph path` (defaults to `atlas.json`). JSON-capable
+Graph queries accept `--graph path` (defaults to `atlas.json`). `atlas serve`
+accepts repeated `--graph` flags for a team repository catalog. JSON-capable
 queries also accept `--compact`, which keeps graph metadata, entity identity,
 source locations, bounded fields, and relationship evidence while removing
 repeated full entities. Use the default JSON form or `--detail` when inspecting
@@ -355,6 +396,6 @@ arguments.
 
 ## Status
 
-**Schema:** 1.6.0 · **MCP Tools:** 13 · **Parsers:** Go AST, template-aware YAML, Markdown, Test · **Current:** deterministic graph, extractor provenance, type-analysis coverage, shared bounded evidence manifests, source-linked fields and test calls, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
+**Schema:** 1.8.0 · **MCP Tools:** 13 · **Parsers:** Go AST, template-aware YAML, Markdown, Test · **Current:** deterministic graph, Go types and interfaces with type-checked `implements` edges, controller-runtime and openshift/library-go controller detection, repository profiles and portable identity, explicit source coverage, multi-repository MCP routing with per-repository lazy loading, extractor provenance, type-analysis coverage, shared bounded evidence manifests, source-linked fields and test calls, freshness verification, and evidence-based PR review; LLM reasoning remains downstream in `codeatlas-assistant`
 
 See [roadmap.md](docs/roadmap.md) for full history and future plans.

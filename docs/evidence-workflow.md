@@ -21,8 +21,9 @@ versions are installed. Each repository needs its own graph. A graph describes
 supported Go, YAML, Markdown, and test evidence; ignored files and unresolved
 type information remain explicit limitations.
 
-Schema 1.6.0 records the extractor version, executable SHA256, extraction signature, Go build
-context, and type-analysis coverage. A scanner upgrade or a changed build
+Schema 1.8.0 records portable repository identity, normalized Git origin,
+repository profile scope, the extractor version, executable SHA256, extraction
+signature, Go build context, and type-analysis coverage. A scanner upgrade or a changed build
 context invalidates incompatible incremental facts. Verification also checks
 that the graph was produced by the current Atlas executable. Use `--goos`, `--goarch`,
 and comma-separated `--tags` to select a build context. Parser completeness and

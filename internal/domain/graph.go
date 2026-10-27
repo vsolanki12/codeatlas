@@ -12,12 +12,25 @@ const CurrentEntityIdentity = "repository-path-v1"
 
 // CurrentSchemaVersion is the graph schema emitted by the current scanner.
 // New fields are optional so older graphs remain readable by newer consumers.
-const CurrentSchemaVersion = "1.6.0"
+const CurrentSchemaVersion = "1.8.0"
 
 // ScanFileStatus describes how the scanner accounted for a discovered file.
 // A status is deliberately more precise than a warning string: consumers can
 // distinguish parsed facts, reused facts, intentional omissions, and failures.
 type ScanFileStatus string
+
+// ScanFileCategory identifies the role of a discovered file so coverage
+// checks can distinguish unsupported source code from ordinary repository
+// assets.
+type ScanFileCategory string
+
+const (
+	ScanCategorySource        ScanFileCategory = "source"
+	ScanCategoryTest          ScanFileCategory = "test"
+	ScanCategoryConfiguration ScanFileCategory = "configuration"
+	ScanCategoryDocumentation ScanFileCategory = "documentation"
+	ScanCategoryAsset         ScanFileCategory = "asset"
+)
 
 const (
 	ScanFileParsed  ScanFileStatus = "parsed"
@@ -30,22 +43,26 @@ const (
 // Files with no supported parser are retained as ignored instead of silently
 // disappearing from the graph's coverage accounting.
 type ScanFile struct {
-	Path        string         `json:"path"`
-	Status      ScanFileStatus `json:"status"`
-	Parser      string         `json:"parser,omitempty"`
-	EntityCount int            `json:"entityCount,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
+	Path        string           `json:"path"`
+	Status      ScanFileStatus   `json:"status"`
+	Category    ScanFileCategory `json:"category,omitempty"`
+	Parser      string           `json:"parser,omitempty"`
+	EntityCount int              `json:"entityCount,omitempty"`
+	Reason      string           `json:"reason,omitempty"`
 }
 
 // ScanCoverage summarizes the file inventory represented by ScanFiles.
 // Parsed and reused both mean that the graph has facts for the file; reused
 // identifies facts carried forward by an incremental scan.
 type ScanCoverage struct {
-	Discovered int `json:"discovered"`
-	Parsed     int `json:"parsed"`
-	Reused     int `json:"reused"`
-	Ignored    int `json:"ignored"`
-	Failed     int `json:"failed"`
+	Discovered        int `json:"discovered"`
+	Parsed            int `json:"parsed"`
+	Reused            int `json:"reused"`
+	Ignored           int `json:"ignored"`
+	Failed            int `json:"failed"`
+	SourceFiles       int `json:"sourceFiles,omitempty"`
+	GoFiles           int `json:"goFiles,omitempty"`
+	UnsupportedSource int `json:"unsupportedSource,omitempty"`
 }
 
 // Graph is the top-level container for an Atlas scan result.
@@ -60,6 +77,11 @@ type Graph struct {
 	TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
 	GeneratedAt         string                `json:"generatedAt"`
 	Repository          string                `json:"repository"`
+	RepositoryID        string                `json:"repositoryId,omitempty"`
+	RepositoryRemote    string                `json:"repositoryRemote,omitempty"`
+	GoModule            string                `json:"goModule,omitempty"`
+	ProfileDigest       string                `json:"profileDigest,omitempty"`
+	ExcludedPaths       []string              `json:"excludedPaths,omitempty"`
 	Commit              string                `json:"commit"`
 	Branch              string                `json:"branch"`
 	ScanDuration        string                `json:"scanDuration"`
@@ -90,6 +112,11 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 		TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
 		GeneratedAt         string                `json:"generatedAt"`
 		Repository          string                `json:"repository"`
+		RepositoryID        string                `json:"repositoryId,omitempty"`
+		RepositoryRemote    string                `json:"repositoryRemote,omitempty"`
+		GoModule            string                `json:"goModule,omitempty"`
+		ProfileDigest       string                `json:"profileDigest,omitempty"`
+		ExcludedPaths       []string              `json:"excludedPaths,omitempty"`
 		Commit              string                `json:"commit"`
 		Branch              string                `json:"branch"`
 		ScanDuration        string                `json:"scanDuration"`
@@ -107,7 +134,8 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 	return json.Marshal(wireGraph{
 		Schema: g.Schema, SchemaVersion: g.SchemaVersion, EntityIdentity: g.EntityIdentity, GeneratedAt: g.GeneratedAt,
 		ExtractorVersion: g.ExtractorVersion, ExtractorBuild: g.ExtractorBuild, ExtractionSignature: g.ExtractionSignature, BuildContext: g.BuildContext, TypeAnalysis: g.TypeAnalysis,
-		Repository: g.Repository, Commit: g.Commit, Branch: g.Branch,
+		Repository: g.Repository, RepositoryID: g.RepositoryID, RepositoryRemote: g.RepositoryRemote, GoModule: g.GoModule,
+		ProfileDigest: g.ProfileDigest, ExcludedPaths: g.ExcludedPaths, Commit: g.Commit, Branch: g.Branch,
 		ScanDuration: g.ScanDuration, ScanComplete: g.ScanComplete, ScanWarnings: g.ScanWarnings,
 		ScanFiles: g.ScanFiles, ScanCoverage: g.ScanCoverage,
 		Entities: g.Entities, Relationships: g.Relationship,
@@ -130,6 +158,11 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 		TypeAnalysis        *TypeAnalysisCoverage `json:"typeAnalysis"`
 		GeneratedAt         string                `json:"generatedAt"`
 		Repository          string                `json:"repository"`
+		RepositoryID        string                `json:"repositoryId"`
+		RepositoryRemote    string                `json:"repositoryRemote"`
+		GoModule            string                `json:"goModule"`
+		ProfileDigest       string                `json:"profileDigest"`
+		ExcludedPaths       []string              `json:"excludedPaths"`
 		Commit              string                `json:"commit"`
 		Branch              string                `json:"branch"`
 		ScanDuration        string                `json:"scanDuration"`
@@ -159,7 +192,8 @@ func (g *Graph) UnmarshalJSON(data []byte) error {
 	*g = Graph{
 		Schema: w.Schema, SchemaVersion: w.SchemaVersion, EntityIdentity: w.EntityIdentity, GeneratedAt: w.GeneratedAt,
 		ExtractorVersion: w.ExtractorVersion, ExtractorBuild: w.ExtractorBuild, ExtractionSignature: w.ExtractionSignature, BuildContext: w.BuildContext, TypeAnalysis: w.TypeAnalysis,
-		Repository: w.Repository, Commit: w.Commit, Branch: w.Branch,
+		Repository: w.Repository, RepositoryID: w.RepositoryID, RepositoryRemote: w.RepositoryRemote, GoModule: w.GoModule,
+		ProfileDigest: w.ProfileDigest, ExcludedPaths: w.ExcludedPaths, Commit: w.Commit, Branch: w.Branch,
 		ScanDuration: w.ScanDuration, ScanComplete: w.ScanComplete, ScanWarnings: w.ScanWarnings,
 		ScanFiles: w.ScanFiles, ScanCoverage: w.ScanCoverage,
 		Entities: w.Entities, Relationship: relations,

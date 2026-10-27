@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/storage"
@@ -15,12 +16,14 @@ import (
 type Index struct {
 	graph              domain.Graph
 	graphFingerprint   string
+	fingerprintOnce    sync.Once
 	evidenceVocabulary map[string]bool
 
-	byID      map[string]*domain.Entity
-	byKind    map[domain.EntityKind][]*domain.Entity
-	byName    map[string][]*domain.Entity
-	byPackage map[string][]*domain.Entity
+	byID        map[string]*domain.Entity
+	byKind      map[domain.EntityKind][]*domain.Entity
+	byName      map[string][]*domain.Entity
+	byQualified map[string][]*domain.Entity
+	byPackage   map[string][]*domain.Entity
 
 	fromEntity map[string][]*domain.Relationship
 	toEntity   map[string][]*domain.Relationship
@@ -32,11 +35,13 @@ type Index struct {
 }
 
 func LoadGraph(path string) (*Index, error) {
-	g, err := storage.ReadGraph(path)
+	g, digest, err := storage.ReadGraphWithDigest(path)
 	if err != nil {
 		return nil, fmt.Errorf("load graph: %w", err)
 	}
-	return newIndex(g), nil
+	index := newIndex(g)
+	index.graphFingerprint = digest
+	return index, nil
 }
 
 // EntitiesInFile returns entities whose declared source file or implementation
@@ -82,6 +87,11 @@ type GraphMetadata struct {
 	TypeAnalysis                *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
 	TypeAnalysisDiagnosticCount int                          `json:"typeAnalysisDiagnosticCount,omitempty"`
 	Repository                  string                       `json:"repository"`
+	RepositoryID                string                       `json:"repositoryId,omitempty"`
+	RepositoryRemote            string                       `json:"repositoryRemote,omitempty"`
+	GoModule                    string                       `json:"goModule,omitempty"`
+	ProfileDigest               string                       `json:"profileDigest,omitempty"`
+	ExcludedPaths               []string                     `json:"excludedPaths,omitempty"`
 	Commit                      string                       `json:"commit"`
 	Branch                      string                       `json:"branch"`
 	GeneratedAt                 string                       `json:"generatedAt"`
@@ -109,6 +119,11 @@ func (idx *Index) GraphMetadata() GraphMetadata {
 		TypeAnalysis:                analysis,
 		TypeAnalysisDiagnosticCount: diagnosticCount,
 		Repository:                  idx.graph.Repository,
+		RepositoryID:                idx.graph.RepositoryID,
+		RepositoryRemote:            idx.graph.RepositoryRemote,
+		GoModule:                    idx.graph.GoModule,
+		ProfileDigest:               idx.graph.ProfileDigest,
+		ExcludedPaths:               append([]string(nil), idx.graph.ExcludedPaths...),
 		Commit:                      idx.graph.Commit,
 		Branch:                      idx.graph.Branch,
 		GeneratedAt:                 idx.graph.GeneratedAt,
@@ -127,15 +142,13 @@ func copyScanCoverage(coverage *domain.ScanCoverage) *domain.ScanCoverage {
 }
 
 func newIndex(g domain.Graph) *Index {
-	encoded, _ := json.Marshal(g)
-	digest := sha256.Sum256(encoded)
 	idx := &Index{
 		graph:              g,
-		graphFingerprint:   hex.EncodeToString(digest[:]),
 		evidenceVocabulary: buildEvidenceVocabulary(g.Entities),
 		byID:               make(map[string]*domain.Entity, len(g.Entities)),
 		byKind:             make(map[domain.EntityKind][]*domain.Entity),
 		byName:             make(map[string][]*domain.Entity),
+		byQualified:        make(map[string][]*domain.Entity),
 		byPackage:          make(map[string][]*domain.Entity),
 		fromEntity:         make(map[string][]*domain.Relationship),
 		toEntity:           make(map[string][]*domain.Relationship),
@@ -148,6 +161,10 @@ func newIndex(g domain.Graph) *Index {
 		idx.byKind[e.Kind] = append(idx.byKind[e.Kind], e)
 		lower := strings.ToLower(e.Name)
 		idx.byName[lower] = append(idx.byName[lower], e)
+		if qualified := domain.QualifiedName(e.ID, e.Package, e.Name); qualified != "" {
+			key := strings.ToLower(qualified)
+			idx.byQualified[key] = append(idx.byQualified[key], e)
+		}
 		if e.Package != "" {
 			idx.byPackage[e.Package] = append(idx.byPackage[e.Package], e)
 		}
@@ -186,12 +203,36 @@ func newIndex(g domain.Graph) *Index {
 
 	idx.questions = g.Questions
 
+	// Per-file scan bookkeeping is for freshness and incremental rescans, both
+	// of which read the graph file directly. A query index never consults it,
+	// so holding it keeps one entry per repository file resident for the whole
+	// process. The view map is likewise superseded by viewByID, which holds
+	// its own copies.
+	idx.graph.ScanFiles = nil
+	idx.graph.FileTimestamps = nil
+	idx.graph.FileFingerprints = nil
+	idx.graph.Views = nil
+
 	return idx
 }
 
 // GraphFingerprint identifies the entire loaded graph snapshot, including its
 // extraction provenance. Offsets are only meaningful within this snapshot.
-func (idx *Index) GraphFingerprint() string { return idx.graphFingerprint }
+//
+// LoadGraph supplies the digest of the file it read. An index built directly
+// from an in-memory graph has no file to hash, so it serializes once on
+// demand rather than on every construction.
+func (idx *Index) GraphFingerprint() string {
+	idx.fingerprintOnce.Do(func() {
+		if idx.graphFingerprint != "" {
+			return
+		}
+		encoded, _ := json.Marshal(idx.graph)
+		digest := sha256.Sum256(encoded)
+		idx.graphFingerprint = hex.EncodeToString(digest[:])
+	})
+	return idx.graphFingerprint
+}
 
 func (idx *Index) GetView(entityID string) *domain.View {
 	return idx.viewByID[entityID]
@@ -201,18 +242,18 @@ func (idx *Index) SearchView(name string) *domain.View {
 	return idx.viewByName[strings.ToLower(name)]
 }
 
-// ResolveView accepts an exact view/entity ID or an exact entity name only
-// when that name identifies one graph entity. A view must never be selected
-// merely because a different entity happens to share its display name.
+// ResolveView accepts an exact view/entity ID, or a name that identifies one
+// graph entity. A view must never be selected merely because a different
+// entity happens to share its display name.
 func (idx *Index) ResolveView(value string) *domain.View {
 	if view, ok := idx.viewByID[value]; ok {
 		return view
 	}
-	candidates := idx.byName[strings.ToLower(value)]
-	if len(candidates) != 1 {
+	entity, _ := idx.Resolve(value)
+	if entity == nil {
 		return nil
 	}
-	return idx.viewByID[candidates[0].ID]
+	return idx.viewByID[entity.ID]
 }
 
 func (idx *Index) LookupQuestion(verb, subject string) (string, bool) {
@@ -246,6 +287,10 @@ func ParseKind(s string) (domain.EntityKind, bool) {
 		return domain.KindTemplate, true
 	case "field":
 		return domain.KindField, true
+	case "type":
+		return domain.KindType, true
+	case "interface":
+		return domain.KindInterface, true
 	default:
 		return domain.KindUnknown, false
 	}

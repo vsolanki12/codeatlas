@@ -60,3 +60,40 @@ func TestRoundTrip(t *testing.T) {
 		t.Errorf("Data mismatch after round-trip!\nExpected: %+v\nGot:      %+v", originalGraph, recoveredGraph)
 	}
 }
+
+func TestReadGraphHeaderSkipsFactsAndReadsIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graph.json")
+	source := domain.Source{Parser: "go", File: "main.go", Line: 1}
+	g := domain.Graph{
+		Schema: "codeatlas", SchemaVersion: domain.CurrentSchemaVersion, EntityIdentity: domain.CurrentEntityIdentity,
+		Repository: "/repo", RepositoryID: "git:example.com/repo", RepositoryRemote: "example.com/repo",
+		GoModule: "example.com/repo", Commit: "abc123", Branch: "main",
+		GeneratedAt: "2026-01-01T00:00:00Z",
+		Entities: []domain.Entity{
+			{ID: "function:p.Run", Name: "Run", Kind: domain.KindFunction, Package: "p", Source: source},
+		},
+	}
+	if err := WriteGraph(path, g); err != nil {
+		t.Fatalf("WriteGraph: %v", err)
+	}
+
+	header, err := ReadGraphHeader(path)
+	if err != nil {
+		t.Fatalf("ReadGraphHeader: %v", err)
+	}
+	if header.RepositoryID != "git:example.com/repo" || header.Repository != "/repo" ||
+		header.GoModule != "example.com/repo" || header.Commit != "abc123" ||
+		header.Branch != "main" || header.SchemaVersion != domain.CurrentSchemaVersion {
+		t.Fatalf("header = %+v", header)
+	}
+}
+
+func TestReadGraphHeaderRejectsNonObject(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "graph.json")
+	if err := os.WriteFile(path, []byte("[1,2,3]"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadGraphHeader(path); err == nil {
+		t.Fatal("expected an error for a graph file that is not a JSON object")
+	}
+}

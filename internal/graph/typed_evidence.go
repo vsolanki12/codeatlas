@@ -4,7 +4,7 @@ import (
 	"fmt"
 	goast "go/ast"
 	"go/build"
-	"go/importer"
+	"go/token"
 	"go/types"
 	"path/filepath"
 	"sort"
@@ -19,7 +19,7 @@ import (
 // Resource observations on entities are upgraded in place before edge building.
 func BuildTypedRelationships(root string, files []domain.File, entities []domain.Entity, context domain.BuildContext) ([]domain.Relationship, domain.TypeAnalysisCoverage) {
 	var coverage domain.TypeAnalysisCoverage
-	coverage.DependencyMode = "repository source; external dependencies use host compiler export data"
+	coverage.DependencyMode = "repository source; external dependencies use toolchain export data from go list"
 	rootAbs, err := filepath.Abs(root)
 	if err != nil {
 		coverage.Diagnostics = []domain.TypeAnalysisDiagnostic{{Message: err.Error()}}
@@ -100,7 +100,15 @@ func BuildTypedRelationships(root string, files []domain.File, entities []domain
 		}
 	}
 	coverage.Packages = len(specs)
-	loader := &sourcePackageLoader{root: rootAbs, specs: specs, checked: make(map[string]*typedPackage), checking: make(map[string]bool), attempted: make(map[string]bool), fallback: importer.Default(), buildContext: &buildContext, coverage: &coverage}
+	exports, exportDiagnostics := newExportIndex(rootAbs, files, context)
+	for _, message := range exportDiagnostics {
+		coverage.DiagnosticCount++
+		coverage.Diagnostics = append(coverage.Diagnostics, domain.TypeAnalysisDiagnostic{Variant: "dependencies", Message: message})
+	}
+	if len(exports) == 0 {
+		coverage.DependencyMode = "repository source; toolchain export data unavailable, falling back to GOROOT/GOPATH lookup"
+	}
+	loader := &sourcePackageLoader{root: rootAbs, specs: specs, checked: make(map[string]*typedPackage), checking: make(map[string]bool), attempted: make(map[string]bool), fallback: exports.importerFor(token.NewFileSet()), buildContext: &buildContext, coverage: &coverage}
 	keys := make([]string, 0, len(specs))
 	for key := range specs {
 		keys = append(keys, key)
@@ -224,6 +232,7 @@ func BuildTypedRelationships(root string, files []domain.File, entities []domain
 			}
 		}
 	}
+	addImplementsRelationships(rootAbs, entities, loader, specs, keys, add)
 	linkTypedTestHelpers(entities, byID)
 	result := make([]domain.Relationship, 0, len(byID))
 	for _, relationship := range byID {
@@ -295,6 +304,97 @@ func linkTypedTestHelpers(entities []domain.Entity, relationships map[string]dom
 					queue = append(queue, helperPath{entity: target.ID, path: path})
 				}
 			}
+		}
+	}
+}
+
+// addImplementsRelationships proves interface satisfaction with the type
+// checker. Go has no declaration site for it, so a parser can only observe the
+// `var _ Iface = (*T)(nil)` convention most code does not write. Method sets
+// are the only complete answer, and they are exact rather than inferred.
+//
+// Only interfaces and types the graph already contains participate, so no edge
+// can point outside the repository. Empty interfaces are skipped: every type
+// satisfies them, which is true and useless.
+func addImplementsRelationships(root string, entities []domain.Entity, loader *sourcePackageLoader, specs map[string]*sourcePackageSpec, keys []string, add func(from, to string, relation domain.RelationshipType, evidence domain.Evidence)) {
+	declared := make(map[string]domain.Entity)
+	for _, entity := range entities {
+		if entity.Kind == domain.KindType || entity.Kind == domain.KindInterface {
+			declared[entity.ID] = entity
+		}
+	}
+	if len(declared) == 0 {
+		return
+	}
+
+	namedTypes := make(map[string]*types.Named)
+	interfaces := make(map[string]*types.Interface)
+	for _, key := range keys {
+		// Production and internal-test variants share package-level type
+		// declarations; visiting one variant keeps each type collected once.
+		if specs[key].variant == "internal-test" {
+			continue
+		}
+		checked := loader.check(key)
+		if checked == nil || checked.pkg == nil {
+			continue
+		}
+		scope := checked.pkg.Scope()
+		for _, name := range scope.Names() {
+			typeName, ok := scope.Lookup(name).(*types.TypeName)
+			if !ok || typeName.IsAlias() {
+				continue
+			}
+			named, ok := typeName.Type().(*types.Named)
+			if !ok || named.TypeParams().Len() > 0 {
+				continue
+			}
+			identity := checked.pkg.Path() + "." + name
+			if iface, ok := named.Underlying().(*types.Interface); ok {
+				if _, tracked := declared["interface:"+identity]; tracked && iface.NumMethods() > 0 {
+					interfaces["interface:"+identity] = iface
+				}
+				continue
+			}
+			if _, tracked := declared["type:"+identity]; tracked {
+				namedTypes["type:"+identity] = named
+			}
+		}
+	}
+
+	typeIDs := make([]string, 0, len(namedTypes))
+	for id := range namedTypes {
+		typeIDs = append(typeIDs, id)
+	}
+	sort.Strings(typeIDs)
+	interfaceIDs := make([]string, 0, len(interfaces))
+	for id := range interfaces {
+		interfaceIDs = append(interfaceIDs, id)
+	}
+	sort.Strings(interfaceIDs)
+
+	for _, typeID := range typeIDs {
+		named := namedTypes[typeID]
+		pointer := types.NewPointer(named)
+		entity := declared[typeID]
+		for _, interfaceID := range interfaceIDs {
+			iface := interfaces[interfaceID]
+			receiver := ""
+			switch {
+			case types.Implements(named, iface):
+				receiver = "value"
+			case types.Implements(pointer, iface):
+				receiver = "pointer"
+			default:
+				continue
+			}
+			add(typeID, interfaceID, domain.RelImplements, domain.Evidence{
+				Parser:  "go-types",
+				File:    entity.Source.File,
+				Line:    entity.Source.Line,
+				Snippet: ReadSnippet(filepath.Join(root, entity.Source.File), entity.Source.Line),
+				Reason:  "Go type checker found the " + receiver + " method set satisfies this interface",
+			})
 		}
 	}
 }

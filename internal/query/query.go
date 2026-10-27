@@ -210,6 +210,11 @@ type GraphStats struct {
 	BuildContext        *domain.BuildContext         `json:"buildContext,omitempty"`
 	TypeAnalysis        *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
 	Repository          string                       `json:"repository"`
+	RepositoryID        string                       `json:"repositoryId,omitempty"`
+	RepositoryRemote    string                       `json:"repositoryRemote,omitempty"`
+	GoModule            string                       `json:"goModule,omitempty"`
+	ProfileDigest       string                       `json:"profileDigest,omitempty"`
+	ExcludedPaths       []string                     `json:"excludedPaths,omitempty"`
 	Commit              string                       `json:"commit"`
 	Branch              string                       `json:"branch"`
 	GeneratedAt         string                       `json:"generatedAt"`
@@ -258,6 +263,17 @@ func (idx *Index) Resolve(value string) (*domain.Entity, []*domain.Entity) {
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].ID < candidates[j].ID })
 	if len(candidates) == 1 {
 		return candidates[0], nil
+	}
+	// A bare name shared by several packages cannot select one entity, but the
+	// package-qualified form can. Offer the ambiguous bare-name candidates back
+	// to the caller so it can show which qualified names exist.
+	if len(candidates) == 0 {
+		qualified := append([]*domain.Entity(nil), idx.byQualified[strings.ToLower(value)]...)
+		sort.Slice(qualified, func(i, j int) bool { return qualified[i].ID < qualified[j].ID })
+		if len(qualified) == 1 {
+			return qualified[0], nil
+		}
+		return nil, qualified
 	}
 	return nil, candidates
 }
@@ -625,6 +641,11 @@ func (idx *Index) Stats() *GraphStats {
 		BuildContext:        idx.graph.BuildContext,
 		TypeAnalysis:        idx.graph.TypeAnalysis,
 		Repository:          idx.graph.Repository,
+		RepositoryID:        idx.graph.RepositoryID,
+		RepositoryRemote:    idx.graph.RepositoryRemote,
+		GoModule:            idx.graph.GoModule,
+		ProfileDigest:       idx.graph.ProfileDigest,
+		ExcludedPaths:       append([]string(nil), idx.graph.ExcludedPaths...),
 		Commit:              idx.graph.Commit,
 		Branch:              idx.graph.Branch,
 		GeneratedAt:         idx.graph.GeneratedAt,
@@ -877,6 +898,7 @@ var explainEdgeOrder = []domain.RelationshipType{
 	domain.RelReconciles,
 	domain.RelCreates,
 	domain.RelContains,
+	domain.RelImplements,
 	domain.RelCalls,
 	domain.RelTestedBy,
 }

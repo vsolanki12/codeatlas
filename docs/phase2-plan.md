@@ -107,6 +107,6 @@ Add to `~/.claude/settings.json`:
 ## Future Phases
 
 - **Phase 3**: Deeper code analysis — full call graph, interface implementations, struct field tracking
-- **Phase 4**: Cross-repo intelligence — api, library-go, cluster-api, enhancements
+- **Phase 4**: Federated graph queries and cross-repository relationships (future; MCP can currently route among separate graphs)
 - **Phase 5**: Temporal layer — git blame per entity, change frequency, PR history
 - **Phase 6**: Semantic/AI layer — natural language queries, embeddings

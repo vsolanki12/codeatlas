@@ -7,12 +7,15 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vsolanki12/codeatlas/internal/discovery"
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/graph"
 	"github.com/vsolanki12/codeatlas/internal/parser"
+	"github.com/vsolanki12/codeatlas/internal/profile"
+	"github.com/vsolanki12/codeatlas/internal/repoid"
 	"github.com/vsolanki12/codeatlas/internal/storage"
 	"github.com/vsolanki12/codeatlas/internal/temporal"
 	"github.com/vsolanki12/codeatlas/internal/views"
@@ -74,6 +77,15 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}
 	repoPath = absRepo
 
+	repoProfile, err := profile.Load(repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("load repository profile: %w", err)
+	}
+	repositoryID := repoid.Identity(repoPath, repoProfile.RepositoryID)
+	repositoryRemote := repoid.OriginRemote(repoPath)
+	goModule := repoid.GoModule(repoPath)
+	profileDigest := repoProfile.Digest()
+
 	// Resolve output path before chdir changes working directory
 	absOutput, err := filepath.Abs(outputPath)
 	if err != nil {
@@ -82,7 +94,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	outputPath = absOutput
 
 	// Step 1: Validate repo and discover files
-	disc, err := discovery.New(domain.Repository{RootPath: repoPath})
+	disc, err := discovery.New(domain.Repository{RootPath: repoPath, ExcludePaths: repoProfile.Exclude})
 	if err != nil {
 		return nil, fmt.Errorf("discovery init: %w", err)
 	}
@@ -107,7 +119,7 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 		// marking the new graph complete would turn an unknown into a false fact.
 		// Legacy graphs also have ScanComplete=false, so they receive one full
 		// migration scan before incremental mode is enabled.
-		if err == nil && prev.ScanComplete && prev.SchemaVersion == domain.CurrentSchemaVersion && prev.ExtractorVersion == domain.CurrentExtractorVersion && prev.ExtractorBuild == extractorBuild && prev.ExtractionSignature == signature && prev.EntityIdentity == domain.CurrentEntityIdentity && sameRepository(prev.Repository, repoPath) && (len(prev.FileTimestamps) > 0 || len(prev.FileFingerprints) > 0) {
+		if err == nil && prev.ScanComplete && prev.SchemaVersion == domain.CurrentSchemaVersion && prev.ExtractorVersion == domain.CurrentExtractorVersion && prev.ExtractorBuild == extractorBuild && prev.ExtractionSignature == signature && prev.EntityIdentity == domain.CurrentEntityIdentity && prev.ProfileDigest == profileDigest && repoid.Matches(prev.RepositoryID, prev.Repository, repoPath, repoProfile.RepositoryID) && (len(prev.FileTimestamps) > 0 || len(prev.FileFingerprints) > 0) {
 			previousState := prev.FileFingerprints
 			if len(previousState) == 0 {
 				previousState = prev.FileTimestamps
@@ -143,73 +155,47 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	var entities []domain.Entity
 	var warnings []string
 
-	// Go source files (skip _test.go — those go to TestParser)
-	goParser := parser.NewGoParserForRepo(repoPath)
-	for _, f := range groups[".go"] {
-		if strings.HasSuffix(f.RelativePath, "_test.go") {
-			continue
-		}
-		ents, err := goParser.Parse(f)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("go: %s: %v", f.RelativePath, err))
-			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "go", 0, err.Error())
-			continue
-		}
-		entities = append(entities, ents...)
-		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "go", len(ents), "")
-	}
-
-	// Test files
-	testParser := parser.NewTestParserForRepo(repoPath)
-	for _, f := range groups[".go"] {
-		if !strings.HasSuffix(f.RelativePath, "_test.go") {
-			continue
-		}
-		ents, err := testParser.Parse(f)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("test: %s: %v", f.RelativePath, err))
-			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "test", 0, err.Error())
-			continue
-		}
-		entities = append(entities, ents...)
-		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "test", len(ents), "")
-	}
-
-	// YAML files (.yaml and .yml)
-	yamlParser := parser.NewYAMLParserForRepo(repoPath)
-	for _, ext := range []string{".yaml", ".yml"} {
-		for _, f := range groups[ext] {
-			ents, err := yamlParser.Parse(f)
-			if err != nil {
-				warnings = append(warnings, fmt.Sprintf("yaml: %s: %v", f.RelativePath, err))
-				parserName := "yaml"
-				if parser.IsTemplateFile(repoPath, f) {
-					parserName = "yaml-template"
-				}
-				markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, parserName, 0, err.Error())
+	// Each group is parsed concurrently with one parser instance per worker:
+	// a parser owns a token.FileSet and a package resolver, so instances are
+	// not shared. Results are returned in input order, which keeps the entity
+	// sequence identical to a serial scan.
+	collect := func(group string, files []domain.File, newParser func() parser.Parser, parserName func(domain.File) string) {
+		for _, outcome := range parseConcurrently(files, newParser) {
+			name := parserName(outcome.File)
+			if outcome.Err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: %s: %v", group, outcome.File.RelativePath, outcome.Err))
+				markScanFile(scanFiles, outcome.File.RelativePath, domain.ScanFileFailed, name, 0, outcome.Err.Error())
 				continue
 			}
-			entities = append(entities, ents...)
-			parserName := "yaml"
-			if parser.IsTemplateFile(repoPath, f) {
-				parserName = "yaml-template"
-			}
-			markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, parserName, len(ents), "")
+			entities = append(entities, outcome.Entities...)
+			markScanFile(scanFiles, outcome.File.RelativePath, domain.ScanFileParsed, name, len(outcome.Entities), "")
 		}
+	}
+	constantName := func(name string) func(domain.File) string {
+		return func(domain.File) string { return name }
 	}
 
-	// Markdown files
-	mdParser := parser.NewMarkdownParserForRepo(repoPath)
-	for _, f := range groups[".md"] {
-		ents, err := mdParser.Parse(f)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("md: %s: %v", f.RelativePath, err))
-			markScanFile(scanFiles, f.RelativePath, domain.ScanFileFailed, "markdown", 0, err.Error())
-			continue
+	var goFiles, testFiles, yamlFiles []domain.File
+	for _, f := range groups[".go"] {
+		if strings.HasSuffix(f.RelativePath, "_test.go") {
+			testFiles = append(testFiles, f)
+		} else {
+			goFiles = append(goFiles, f)
 		}
-		entities = append(entities, ents...)
-		markScanFile(scanFiles, f.RelativePath, domain.ScanFileParsed, "markdown", len(ents), "")
 	}
+	for _, ext := range []string{".yaml", ".yml"} {
+		yamlFiles = append(yamlFiles, groups[ext]...)
+	}
+
+	collect("go", goFiles, func() parser.Parser { return parser.NewGoParserForRepo(repoPath) }, constantName("go"))
+	collect("test", testFiles, func() parser.Parser { return parser.NewTestParserForRepo(repoPath) }, constantName("test"))
+	collect("yaml", yamlFiles, func() parser.Parser { return parser.NewYAMLParserForRepo(repoPath) }, func(f domain.File) string {
+		if parser.IsTemplateFile(repoPath, f) {
+			return "yaml-template"
+		}
+		return "yaml"
+	})
+	collect("md", groups[".md"], func() parser.Parser { return parser.NewMarkdownParserForRepo(repoPath) }, constantName("markdown"))
 
 	// Step 3b: Merge old entities from unchanged files
 	if incremental {
@@ -235,6 +221,9 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 			}
 			if deduped[idx].Description == "" && e.Description != "" && (!existingActive || incomingActive) {
 				deduped[idx].Description = e.Description
+			}
+			if deduped[idx].ReconcileMethod == "" {
+				deduped[idx].ReconcileMethod = e.ReconcileMethod
 			}
 			deduped[idx].Files = appendUnique(deduped[idx].Files, e.Files)
 			deduped[idx].Watches, deduped[idx].WatchMethods, deduped[idx].WatchSites = appendUniqueWatchFacts(
@@ -303,6 +292,11 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	g.ExtractionSignature = signature
 	g.BuildContext = &buildContext
 	g.TypeAnalysis = &typeCoverage
+	g.RepositoryID = repositoryID
+	g.RepositoryRemote = repositoryRemote
+	g.GoModule = goModule
+	g.ProfileDigest = profileDigest
+	g.ExcludedPaths = append([]string(nil), repoProfile.Exclude...)
 
 	// Step 7b: Store file timestamps for incremental scanning
 	timestamps := make(map[string]string, len(allFiles))
@@ -322,6 +316,12 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	g.ScanFiles = scanFiles
 	coverage := summarizeScanFiles(scanFiles)
 	g.ScanCoverage = &coverage
+	// Completeness means every file this scanner claims to parse was parsed.
+	// A source file in a language CodeAtlas has no parser for is a statement
+	// about scope, not a gap in the facts that were extracted: almost every Go
+	// repository ships shell, HTML, SQL, or proto alongside its Go, and treating
+	// those as incompleteness marked every real repository unusable. The count
+	// stays in ScanCoverage.UnsupportedSource so consumers can still report it.
 	g.ScanComplete = coverage.Failed == 0 && len(warnings) == 0
 	g.ScanWarnings = append([]string(nil), warnings...)
 
@@ -353,6 +353,51 @@ func Scan(repoPath string, outputPath string, opts ScanOptions) (*Result, error)
 	}, nil
 }
 
+// parseOutcome is one file's parse result, kept with its file so results can
+// be reassembled in input order.
+type parseOutcome struct {
+	File     domain.File
+	Entities []domain.Entity
+	Err      error
+}
+
+// parseConcurrently parses files across GOMAXPROCS workers and returns the
+// outcomes in input order. Each worker builds its own parser because a parser
+// carries a mutable FileSet and package resolver.
+func parseConcurrently(files []domain.File, newParser func() parser.Parser) []parseOutcome {
+	outcomes := make([]parseOutcome, len(files))
+	if len(files) == 0 {
+		return outcomes
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(files) {
+		workers = len(files)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+
+	indexes := make(chan int)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			fileParser := newParser()
+			for i := range indexes {
+				entities, err := fileParser.Parse(files[i])
+				outcomes[i] = parseOutcome{File: files[i], Entities: entities, Err: err}
+			}
+		}()
+	}
+	for i := range files {
+		indexes <- i
+	}
+	close(indexes)
+	group.Wait()
+	return outcomes
+}
+
 func activeGoSourceFiles(root string, files []domain.File, context domain.BuildContext) map[string]bool {
 	buildContext := build.Default
 	buildContext.GOOS = context.GOOS
@@ -376,13 +421,14 @@ func initializeScanFiles(files []domain.File, reused map[string]bool) []domain.S
 	result := make([]domain.ScanFile, 0, len(files))
 	for _, file := range files {
 		parserName, supported := parserForFile(file.RelativePath)
+		category := fileCategory(file.RelativePath)
 		if supported && reused[file.RelativePath] {
-			result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileParsed, Parser: parserName})
+			result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileParsed, Category: category, Parser: parserName})
 			continue
 		}
 		if supported {
 			result = append(result, domain.ScanFile{
-				Path: file.RelativePath, Status: domain.ScanFileFailed, Parser: parserName,
+				Path: file.RelativePath, Status: domain.ScanFileFailed, Category: category, Parser: parserName,
 				Reason: "parser did not complete",
 			})
 			continue
@@ -391,9 +437,29 @@ func initializeScanFiles(files []domain.File, reused map[string]bool) []domain.S
 		if ext := filepath.Ext(file.RelativePath); ext != "" {
 			reason = "no parser registered for extension " + ext
 		}
-		result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileIgnored, Reason: reason})
+		result = append(result, domain.ScanFile{Path: file.RelativePath, Status: domain.ScanFileIgnored, Category: category, Reason: reason})
 	}
 	return result
+}
+
+func fileCategory(path string) domain.ScanFileCategory {
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext == ".go" {
+		if strings.HasSuffix(path, "_test.go") {
+			return domain.ScanCategoryTest
+		}
+		return domain.ScanCategorySource
+	}
+	switch ext {
+	case ".yaml", ".yml", ".json", ".toml", ".ini", ".xml", ".properties", ".conf":
+		return domain.ScanCategoryConfiguration
+	case ".md", ".rst", ".adoc", ".txt":
+		return domain.ScanCategoryDocumentation
+	}
+	if discovery.IsSourceFile(path) {
+		return domain.ScanCategorySource
+	}
+	return domain.ScanCategoryAsset
 }
 
 func parserForFile(path string) (string, bool) {
@@ -447,6 +513,15 @@ func containsPath(paths []string, want string) bool {
 func summarizeScanFiles(files []domain.ScanFile) domain.ScanCoverage {
 	coverage := domain.ScanCoverage{Discovered: len(files)}
 	for _, file := range files {
+		if file.Category == domain.ScanCategorySource || file.Category == domain.ScanCategoryTest {
+			coverage.SourceFiles++
+			if strings.EqualFold(filepath.Ext(file.Path), ".go") {
+				coverage.GoFiles++
+			}
+			if file.Status == domain.ScanFileIgnored {
+				coverage.UnsupportedSource++
+			}
+		}
 		switch file.Status {
 		case domain.ScanFileParsed:
 			coverage.Parsed++
@@ -596,29 +671,6 @@ func packageRescanRequired(previous []domain.Entity, changed []domain.File, dele
 		}
 	}
 	return false
-}
-
-func sameRepository(previous, current string) bool {
-	if previous == "" || current == "" {
-		return false
-	}
-	previousAbs, err := filepath.Abs(previous)
-	if err != nil {
-		return false
-	}
-	currentAbs, err := filepath.Abs(current)
-	if err != nil {
-		return false
-	}
-	previousResolved, previousErr := filepath.EvalSymlinks(previousAbs)
-	currentResolved, currentErr := filepath.EvalSymlinks(currentAbs)
-	if previousErr == nil {
-		previousAbs = previousResolved
-	}
-	if currentErr == nil {
-		currentAbs = currentResolved
-	}
-	return filepath.Clean(previousAbs) == filepath.Clean(currentAbs)
 }
 
 func fileFingerprint(f domain.File) string {

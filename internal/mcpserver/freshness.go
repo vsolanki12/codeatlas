@@ -8,13 +8,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/vsolanki12/codeatlas/internal/domain"
 	"github.com/vsolanki12/codeatlas/internal/freshness"
-	"github.com/vsolanki12/codeatlas/internal/query"
 )
 
 const maxMCPFreshnessFiles = 50
 
 type freshnessInput struct {
-	Repo string `json:"repo,omitempty" jsonschema:"absolute path to the repository checkout; defaults to the repository recorded in the graph"`
+	Repository string `json:"repository,omitempty" jsonschema:"repository ID or Go module path when multiple graphs are loaded"`
+	Repo       string `json:"repo,omitempty" jsonschema:"absolute path to the repository checkout; defaults to the repository recorded in the graph"`
 }
 
 type compactFreshnessResult struct {
@@ -31,6 +31,13 @@ type compactFreshnessResult struct {
 	TypeAnalysis                *domain.TypeAnalysisCoverage `json:"typeAnalysis,omitempty"`
 	TypeAnalysisDiagnosticCount int                          `json:"typeAnalysisDiagnosticCount,omitempty"`
 	GraphRepository             string                       `json:"graphRepository,omitempty"`
+	RepositoryID                string                       `json:"repositoryId,omitempty"`
+	RepositoryRemote            string                       `json:"repositoryRemote,omitempty"`
+	GoModule                    string                       `json:"goModule,omitempty"`
+	ProfileDigest               string                       `json:"profileDigest,omitempty"`
+	ProfileMatch                bool                         `json:"profileMatch"`
+	ProfileError                string                       `json:"profileError,omitempty"`
+	ExcludedPaths               []string                     `json:"excludedPaths,omitempty"`
 	Repository                  string                       `json:"repository,omitempty"`
 	GraphCommit                 string                       `json:"graphCommit,omitempty"`
 	RepoHead                    string                       `json:"repoHead,omitempty"`
@@ -50,19 +57,23 @@ type compactFreshnessResult struct {
 	Truncated                   bool                         `json:"truncated,omitempty"`
 }
 
-func registerFreshness(s *mcp.Server, idx *query.Index, graphPath string, extractorBuild ...string) {
+func registerFreshness(s *mcp.Server, catalog *graphCatalog, extractorBuild ...string) {
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "atlas_freshness",
 		Description: "Verify whether the loaded CodeAtlas graph describes a repository checkout. " +
 			"Use before implementation guidance or verified review. This is read-only. " +
 			"A dirty, stale, incomplete, or unverifiable result is a limitation, not proof that a fact is absent.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input freshnessInput) (*mcp.CallToolResult, any, error) {
+		target, err := catalog.resolve(input.Repository)
+		if err != nil {
+			return nil, nil, err
+		}
 		repo := strings.TrimSpace(input.Repo)
 		expected := ""
 		if len(extractorBuild) > 0 {
 			expected = extractorBuild[0]
 		}
-		result := freshness.Verify(repo, idx.Graph(), graphPath, freshness.VerifyOptions{ExpectedExtractorBuild: expected}).Freshness
+		result := freshness.Verify(repo, target.Index.Graph(), target.GraphPath, freshness.VerifyOptions{ExpectedExtractorBuild: expected}).Freshness
 		compact := compactFreshness(result)
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: formatFreshness(compact)}},
@@ -84,6 +95,13 @@ func compactFreshness(result freshness.Result) compactFreshnessResult {
 		ExtractionSignature:    result.ExtractionSignature,
 		BuildContext:           result.BuildContext,
 		GraphRepository:        result.GraphRepository,
+		RepositoryID:           result.RepositoryID,
+		RepositoryRemote:       result.RepositoryRemote,
+		GoModule:               result.GoModule,
+		ProfileDigest:          result.ProfileDigest,
+		ProfileMatch:           result.ProfileMatch,
+		ProfileError:           result.ProfileError,
+		ExcludedPaths:          append([]string(nil), result.ExcludedPaths...),
 		Repository:             result.Repository,
 		GraphCommit:            result.GraphCommit,
 		RepoHead:               result.RepoHead,
@@ -135,6 +153,15 @@ func formatFreshness(result compactFreshnessResult) string {
 	b.WriteString("CODEATLAS GRAPH FRESHNESS\n")
 	b.WriteString("========================\n")
 	fmt.Fprintf(&b, "Graph repository: %s\n", result.GraphRepository)
+	if result.RepositoryID != "" {
+		fmt.Fprintf(&b, "Repository ID: %s\n", result.RepositoryID)
+	}
+	if result.RepositoryRemote != "" {
+		fmt.Fprintf(&b, "Repository remote: %s\n", result.RepositoryRemote)
+	}
+	if result.GoModule != "" {
+		fmt.Fprintf(&b, "Go module: %s\n", result.GoModule)
+	}
 	fmt.Fprintf(&b, "Repository checked: %s\n", result.Repository)
 	fmt.Fprintf(&b, "Schema: %s (current=%t)\n", result.SchemaVersion, result.SchemaCurrent)
 	fmt.Fprintf(&b, "Extractor: %s (current=%t) | signature: %s\n", result.ExtractorVersion, result.ExtractorCurrent, result.ExtractionSignature)
@@ -147,14 +174,18 @@ func formatFreshness(result compactFreshnessResult) string {
 	fmt.Fprintf(&b, "Entity identity: %s\n", result.EntityIdentity)
 	fmt.Fprintf(&b, "Scan complete: %t\n", result.ScanComplete)
 	if result.ScanCoverage != nil {
-		fmt.Fprintf(&b, "Scan coverage: discovered=%d parsed=%d reused=%d ignored=%d failed=%d\n",
+		fmt.Fprintf(&b, "Scan coverage: discovered=%d parsed=%d reused=%d ignored=%d failed=%d GoFiles=%d unsupportedSource=%d\n",
 			result.ScanCoverage.Discovered, result.ScanCoverage.Parsed, result.ScanCoverage.Reused,
-			result.ScanCoverage.Ignored, result.ScanCoverage.Failed)
+			result.ScanCoverage.Ignored, result.ScanCoverage.Failed, result.ScanCoverage.GoFiles, result.ScanCoverage.UnsupportedSource)
 	}
 	for _, warning := range result.ScanWarnings {
 		fmt.Fprintf(&b, "Scan warning: %s\n", warning)
 	}
 	fmt.Fprintf(&b, "Repository match: %t\n", result.RepositoryMatch)
+	fmt.Fprintf(&b, "Profile match: %t\n", result.ProfileMatch)
+	if result.ProfileError != "" {
+		fmt.Fprintf(&b, "Profile error: %s\n", result.ProfileError)
+	}
 	fmt.Fprintf(&b, "Commit verifiable: %t\n", result.Verifiable)
 	fmt.Fprintf(&b, "Stale: %t\n", result.Stale)
 	fmt.Fprintf(&b, "Checkout dirty: %t\n", result.Dirty)

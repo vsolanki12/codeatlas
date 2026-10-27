@@ -12,6 +12,8 @@ import (
 
 	"github.com/vsolanki12/codeatlas/internal/discovery"
 	"github.com/vsolanki12/codeatlas/internal/domain"
+	"github.com/vsolanki12/codeatlas/internal/profile"
+	"github.com/vsolanki12/codeatlas/internal/repoid"
 )
 
 type Result struct {
@@ -19,6 +21,13 @@ type Result struct {
 	SchemaVersion          string                       `json:"schemaVersion,omitempty"`
 	SchemaCurrent          bool                         `json:"schemaCurrent"`
 	GraphRepository        string                       `json:"graphRepository,omitempty"`
+	RepositoryID           string                       `json:"repositoryId,omitempty"`
+	RepositoryRemote       string                       `json:"repositoryRemote,omitempty"`
+	GoModule               string                       `json:"goModule,omitempty"`
+	ProfileDigest          string                       `json:"profileDigest,omitempty"`
+	ProfileMatch           bool                         `json:"profileMatch"`
+	ProfileError           string                       `json:"profileError,omitempty"`
+	ExcludedPaths          []string                     `json:"excludedPaths,omitempty"`
 	Repository             string                       `json:"repository,omitempty"`
 	GraphCommit            string                       `json:"graphCommit,omitempty"`
 	RepoHead               string                       `json:"repoHead,omitempty"`
@@ -54,6 +63,7 @@ type VerifyOptions struct {
 	RequireCurrentExtractor bool
 	ExpectedExtractorBuild  string
 	RequireComplete         bool
+	RequireGoSource         bool
 	FailOnIgnored           bool
 }
 
@@ -110,6 +120,11 @@ func verificationIssues(result Result, opts VerifyOptions) []string {
 	if !result.RepositoryMatch {
 		issues = append(issues, "graph repository does not match the requested checkout")
 	}
+	if result.ProfileError != "" {
+		issues = append(issues, "repository profile is invalid: "+result.ProfileError)
+	} else if result.ProfileDigest != "" && !result.ProfileMatch {
+		issues = append(issues, "graph was generated with a different repository profile; rescan before using it")
+	}
 	if !result.Verifiable {
 		issues = append(issues, "graph commit could not be verified against the repository")
 	}
@@ -127,6 +142,13 @@ func verificationIssues(result Result, opts VerifyOptions) []string {
 			issues = append(issues, fmt.Sprintf("graph scan is incomplete: %d file(s) failed to parse", result.ScanCoverage.Failed))
 		} else {
 			issues = append(issues, "graph scan is incomplete")
+		}
+	}
+	if opts.RequireGoSource {
+		if result.ScanCoverage == nil {
+			issues = append(issues, "graph has no Go source coverage metadata; perform a full scan with the current extractor")
+		} else if result.ScanCoverage.GoFiles == 0 {
+			issues = append(issues, "repository scan found no Go source files")
 		}
 	}
 	if opts.FailOnIgnored && result.ScanCoverage != nil && result.ScanCoverage.Ignored > 0 {
@@ -155,6 +177,11 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 		SchemaVersion:       graph.SchemaVersion,
 		SchemaCurrent:       graph.SchemaVersion == domain.CurrentSchemaVersion,
 		GraphRepository:     graph.Repository,
+		RepositoryID:        graph.RepositoryID,
+		RepositoryRemote:    graph.RepositoryRemote,
+		GoModule:            graph.GoModule,
+		ProfileDigest:       graph.ProfileDigest,
+		ExcludedPaths:       append([]string(nil), graph.ExcludedPaths...),
 		Repository:          repoPath,
 		GraphCommit:         graph.Commit,
 		EntityIdentity:      graph.EntityIdentity,
@@ -167,7 +194,6 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 		ScanComplete:        graph.ScanComplete,
 		ScanWarnings:        append([]string(nil), graph.ScanWarnings...),
 		ScanCoverage:        copyScanCoverage(graph.ScanCoverage),
-		RepositoryMatch:     samePath(graph.Repository, repoPath),
 	}
 	if repoPath == "" {
 		return result
@@ -176,13 +202,24 @@ func CheckWithGraphPath(repoPath string, graph domain.Graph, graphPath string) R
 		return result
 	}
 
+	repoProfile, err := profile.Load(repoPath)
+	if err != nil {
+		result.ProfileError = err.Error()
+		return result
+	}
+	result.ProfileMatch = graph.ProfileDigest == "" || graph.ProfileDigest == repoProfile.Digest()
+	result.RepositoryMatch = repoid.Matches(graph.RepositoryID, graph.Repository, repoPath, repoProfile.RepositoryID)
+	if graph.RepositoryID == "" {
+		result.RepositoryMatch = samePath(graph.Repository, repoPath)
+	}
+
 	result.RepoHead = gitHead(repoPath)
 	if result.GraphCommit != "" && result.RepoHead != "" {
 		result.Verifiable = true
 		result.Stale = result.GraphCommit != result.RepoHead
 	}
 
-	disc, err := discovery.New(domain.Repository{RootPath: repoPath})
+	disc, err := discovery.New(domain.Repository{RootPath: repoPath, ExcludePaths: repoProfile.Exclude})
 	if err != nil {
 		return result
 	}

@@ -36,6 +36,14 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 			if name == ".git" || name == ".worktrees" || name == "vendor" || name == "node_modules" || name == "testdata" {
 				return filepath.SkipDir // skip this directory and its contents
 			}
+			relPath, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			relPath = filepath.ToSlash(relPath)
+			if isExcluded(relPath, d.repo.ExcludePaths) {
+				return filepath.SkipDir
+			}
 			return nil // keep going, it's a directory we want to scan
 		}
 		relPath, err := filepath.Rel(root, path)
@@ -43,6 +51,9 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 			return err // stop walking and return the error
 		}
 		relPath = strings.ReplaceAll(relPath, string(filepath.Separator), "/")
+		if isExcluded(relPath, d.repo.ExcludePaths) {
+			return nil
+		}
 
 		info, err := entry.Info()
 		if err != nil {
@@ -66,11 +77,22 @@ func (d *Discovery) Scan() ([]domain.File, error) {
 	return files, nil
 }
 
+func isExcluded(relativePath string, excluded []string) bool {
+	for _, value := range excluded {
+		if relativePath == value || strings.HasPrefix(relativePath, value+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func contentHash(path, extension string) (string, error) {
 	switch extension {
 	case ".go", ".yaml", ".yml", ".md":
 	default:
-		return "", nil
+		if !sourceExtensions[strings.ToLower(extension)] {
+			return "", nil
+		}
 	}
 
 	f, err := os.Open(path)
@@ -84,6 +106,27 @@ func contentHash(path, extension string) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), nil
+}
+
+var sourceExtensions = map[string]bool{
+	".go": true, ".py": true, ".pyi": true, ".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
+	".ts": true, ".tsx": true, ".java": true, ".kt": true, ".kts": true, ".rs": true,
+	".rb": true, ".php": true, ".c": true, ".h": true, ".cc": true, ".cpp": true,
+	".hpp": true, ".cs": true, ".swift": true, ".scala": true, ".sc": true, ".sh": true,
+	".bash": true, ".zsh": true, ".sql": true, ".proto": true, ".tf": true, ".vue": true,
+	".svelte": true, ".ex": true, ".exs": true, ".clj": true, ".cljs": true, ".dart": true,
+	".lua": true, ".pl": true, ".pm": true, ".r": true, ".m": true, ".mm": true,
+	".groovy": true, ".gradle": true, ".ipynb": true,
+	".html": true, ".htm": true, ".css": true, ".scss": true, ".sass": true, ".less": true,
+	".tmpl": true, ".gotmpl": true, ".tpl": true, ".ejs": true, ".hbs": true,
+	".handlebars": true, ".mustache": true, ".twig": true, ".jinja": true,
+	".jinja2": true, ".j2": true, ".jsp": true, ".aspx": true, ".cshtml": true,
+}
+
+// IsSourceFile reports whether the extension contains source code that needs
+// an explicit parser or an explicit repository-profile exclusion.
+func IsSourceFile(relativePath string) bool {
+	return sourceExtensions[strings.ToLower(filepath.Ext(relativePath))]
 }
 
 // Fingerprint returns the stable file identity used by incremental scans and

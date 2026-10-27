@@ -36,7 +36,7 @@ Four-layer model:
 | Layer | What | Purpose |
 |-------|------|---------|
 | **Knowledge** | Scanner → Graph | Extract architecture from code |
-| **Retrieval** | 13 MCP tools (primitives + compounds + views + review/freshness) | Answer questions about the graph and prepare deterministic review evidence |
+| **Retrieval** | 13 MCP tools (primitives + compounds + views + repository selection + review/freshness) | Answer questions about a selected repository graph and prepare deterministic review evidence |
 | **Guidance** | Tool descriptions | Teach consumers which engineering intent a tool serves |
 | **Experience** | Claude Code, VS Code, Cursor, any MCP client | Where engineers interact with CodeAtlas |
 
@@ -51,10 +51,17 @@ evidence.
 ### Operational contract
 
 The scanner is the only component that parses repository files. It records
-content fingerprints for supported source, configuration, and document files
-and marks a graph `scanComplete: false` when a file cannot be parsed.
+content fingerprints for source, configuration, and document files and marks a
+graph `scanComplete: false` when a parser fails or emits a warning. Source
+files outside the parser set are counted in `scanCoverage.unsupportedSource`
+as a scope boundary and do not make a graph incomplete. Repository-specific
+exclusions come from
+`.codeatlas.yaml`; they are persisted in graph provenance and freshness checks.
+Stable repository IDs use the normalized Git origin or root Go module unless
+the profile supplies an explicit ID. The normalized origin is retained as
+separate metadata for repository checks during PR review.
 Incremental reuse is allowed only for a previously complete graph whose file
-state still matches the repository; incomplete graphs trigger a full scan.
+state and profile still match the repository; incomplete graphs trigger a full scan.
 Consumers must carry graph metadata and warnings into their own output.
 Compound MCP tools return bounded text by default; `detail=true` is an
 explicit request for verbose human-readable text. Their structured results
@@ -129,6 +136,8 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `cmd/atlas` | CLI: scan, search, explain, impact, investigate, ask, view, context, where, stats, freshness, verify, serve, query, review | `domain`, `scanner`, `query`, `mcpserver`, `review`, `freshness` |
 | `internal/scanner` | Orchestrates the full scan pipeline with merge-aware dedup and type-aware call enrichment | `domain`, `discovery`, `parser`, `graph`, `storage`, `temporal`, `views` |
 | `internal/discovery` | Walks the repository, returns files with metadata | `domain` |
+| `internal/profile` | Loads `.codeatlas.yaml` repository scope and stable ID | Standard library, YAML library |
+| `internal/repoid` | Resolves checkout-independent identity from Git remote or Go module | Standard library |
 | `internal/parser` | Parses individual files into entities; extracts imports (including alias normalization), literals, embeds, properties | `domain` |
 | `internal/graph` | Connects entities with typed, evidenced relationships; `go/types` upgrades only statically resolved call targets already present in the graph | `domain` |
 | `internal/storage` | Serializes/deserializes the Atlas Graph JSON | `domain` |
@@ -136,11 +145,11 @@ cmd/atlas                     CLI entry point (scan, search, explain, impact, in
 | `internal/views` | Compiles pre-computed knowledge views and question index from entities + relationships | `domain` |
 | `internal/query` | Query engine: Index, Search (relevance-scored), Lookup, Where, Neighbors, Temporal, Callers, Investigate, Explain, Impact | `domain`, `storage` |
 | `internal/review` | PR review: GitHub metadata, bounded diff evidence, diff parsing, entity-to-hunk mapping, graph enrichment, evidence-backed pattern observations, conservative test analysis, human-readable formatting | `domain`, `query` |
-| `internal/mcpserver` | MCP server: 13 tools via go-sdk stdio transport; query, freshness, and review adapters | `query`, `freshness`, `review` |
+| `internal/mcpserver` | MCP server: 13 tools via go-sdk stdio transport; multi-graph selection, query, freshness, and review adapters | `query`, `freshness`, `review` |
 
 Key constraints:
 - **Graph-producing packages use `domain` as the shared vocabulary.** `docs/data-model.md` describes the same contract. Thin consumers such as `mcpserver` depend on `query` and do not need to import `domain` directly.
-- **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, and `temporal` are independent. Only `scanner` composes them.
+- **Leaf packages don't depend on each other.** `discovery`, `parser`, `graph`, `storage`, and `temporal` are independent. Only `scanner` composes producers; `profile` and `repoid` provide read-only configuration and identity helpers.
 - **`domain` depends on nothing.** Zero imports from other CodeAtlas packages. If `domain` ever imports another CodeAtlas package, the architecture is broken.
 - **`query` depends only on `domain` and `storage`.** It loads the graph and builds an in-memory index. No dependency on scanner or parsers.
 - **`mcpserver` remains a thin consumer adapter.** Query tools use `query`; `atlas_freshness` reuses the read-only freshness verifier and `atlas_review` reuses deterministic review services. It does not invoke parsers or write graphs.
@@ -173,23 +182,27 @@ not persisted into graph content.
 atlas scan -repo /path/to/repository -output atlas.json -temporal
         │
         ▼
-1. Resolve the repository and output paths; discovery validates that the
-   repository root is an existing directory.
+1. Resolve the repository and output paths, load `.codeatlas.yaml`, and
+   derive a stable repository ID from its override, Git origin, or Go module.
         │
         ▼
 2. Walk the repository deterministically, skipping .git, .worktrees, vendor,
-   node_modules, and testdata. Record timestamps and content/metadata
-   fingerprints. The graph output file is excluded when it is inside the repo.
+   node_modules, testdata, and configured profile paths. Record timestamps and
+   source/config/document fingerprints. The graph output file is excluded
+   when it is inside the repo.
         │
         ▼
 3. If a previous graph is complete, current, repository-matching, and uses the
-   current entity identity, reuse unchanged files. A changed go.mod or package
-   file that invalidates package aggregation forces the affected/full rescan.
+   current entity identity and profile digest, reuse unchanged files. A changed
+   go.mod or package file that invalidates package aggregation forces the
+   affected/full rescan.
         │
         ▼
 4. Classify .go, _test.go, YAML/YML, and Markdown files and run the matching
-   deterministic parser. Parse failures become scan warnings and make the
-   graph incomplete; unsupported file extensions are not parsed.
+   deterministic parser, one parser instance per worker across GOMAXPROCS
+   workers with results reassembled in input order. Parse failures make the
+   graph incomplete; unsupported source and assets remain reported but do not
+   block source coverage.
         │
         ▼
 5. Merge duplicate package/controller observations, deduplicate facts and
@@ -237,7 +250,7 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 |-------|-----------|--------|
 | 1–2 | Core scanner + CLI | Implemented |
 | 3a | Deep call graph (7,837 call edges), implements, env vars | Implemented |
-| 4 | Cross-repo intelligence (import classification, merge-aware dedup) | Implemented |
+| 4 | Import awareness and package aggregation (not cross-graph linking) | Implemented |
 | 5 | Temporal layer (git history: LastAuthor, LastModified, ChangeCount) | Implemented |
 | 6 | Content indexing (literals, YAML properties, go:embed) | Implemented |
 | 6b | Token optimization (AND search, brief mode, batch fetch, detail mode) | Implemented |
@@ -255,7 +268,8 @@ CodeAtlas develops in **phases** — each builds on the previous and unlocks the
 | 16 | Pattern Analysis (observed naming, error, logging, controller patterns) | Implemented |
 | 17 | Test Analysis (structural links and conservative evidence status) | Implemented |
 
-Current state: 13 MCP tools, schema 1.6.0, extractor provenance and build context,
+Current state: 13 MCP tools, schema 1.8.0, portable repository identity and
+scope profiles, explicit source coverage, multi-graph MCP routing, extractor provenance and build context,
 separate type-analysis coverage, source-linked fields and typed test calls,
 shared bounded evidence manifests, resumable retrieval, and deterministic PR
 review including optional merge-base graph evidence. The query layer selects

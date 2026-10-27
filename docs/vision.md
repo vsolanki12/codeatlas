@@ -10,7 +10,7 @@ CodeAtlas exists because architecture should be extracted from code, not reconst
 
 ## Who CodeAtlas Is For
 
-**Engineers joining a large Go project.** Instead of weeks of reading source files and asking teammates, they get a structured map of every entity and relationship on day one.
+**Engineers joining a large Go project.** Instead of weeks of reading source files and asking teammates, they get a source-backed map of the supported entities and relationships on day one, with unsupported source coverage called out.
 
 **Engineers reviewing PRs.** Instead of guessing what a change might break, they get blast radius analysis — every controller, test, resource, and file affected — in one query.
 
@@ -42,7 +42,7 @@ CodeAtlas is not for managers, PMs, or executives. It's an engineering tool that
 
 **The graph runs in CI.** Every PR triggers a scan. The diff between the old graph and the new graph shows exactly what changed architecturally — not just which lines moved, but which relationships were created, broken, or modified.
 
-**Multiple repositories.** HyperShift was the first repository CodeAtlas targeted, but the architecture is intentionally repository-agnostic. Over time, CodeAtlas will support any large Go project with controllers, CRDs, and complex call graphs using the same pipeline.
+**Multiple Go repositories.** CodeAtlas now scans Go repositories with a shared pipeline, supports repository-specific scope profiles, and serves several repository graphs from one MCP process. Cross-repository import links and federated graph queries remain future work.
 
 **AI consumer ecosystem.** Claude Code is the first AI consumer. VS Code, Cursor, Continue.dev, Copilot Chat — any MCP-compatible client can query CodeAtlas without reading source files. The four-layer architecture (Knowledge, Retrieval, Guidance, Experience) means adding a new consumer never changes the graph or the query engine.
 
