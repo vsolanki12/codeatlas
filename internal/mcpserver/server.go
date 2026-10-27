@@ -323,6 +323,11 @@ func registerStats(s *mcp.Server, catalog *graphCatalog) {
 			entries := make([]repositoryStats, 0, len(catalog.targets))
 			var text strings.Builder
 			for _, target := range catalog.targets {
+				// Listing every repository is the one path that needs all
+				// graphs decoded; targets are lazily loaded elsewhere.
+				if _, err := catalog.loaded(target); err != nil {
+					return nil, nil, err
+				}
 				stats := target.Index.Stats()
 				summary := repositorySummary{ID: target.Key, RepositoryID: target.RepositoryID, RepositoryRemote: target.RepositoryRemote, GoModule: target.GoModule, Commit: stats.Commit}
 				entries = append(entries, repositoryStats{Repository: summary, Stats: stats})
